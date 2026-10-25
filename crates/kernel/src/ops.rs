@@ -876,6 +876,9 @@ thread_local! {
     static BORES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The intersections left to the booleans running under [`with_attempt_budget`], if any.
     static ATTEMPTS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Set while the whole tool of a cut by several shells is tried before its pieces: the
+    /// retries on the whole tool give way to the piece-at-a-time cut (see [`boolean_via`]).
+    static PIECES_FIRST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// `f`, with the booleans it runs on this thread allowed `attempts` of the kernel's own
@@ -966,7 +969,40 @@ fn conical_cut_junction(a: &Body, b: &Body) -> bool {
 
 /// [`boolean`], the boolean of the whole bodies taken by `whole`.
 fn boolean_via(a: &Body, b: &Body, op: BoolOp, whole: &dyn Fn(&Body, &Body, BoolOp) -> Result<Option<Body>>) -> Result<Option<Body>> {
-    let (mut r, mut diagnostics) = capture_boolean_diagnostics(|| whole(a, b, op));
+    // A cut by a tool of several shells (the apart profiles of one extrude, joined into one tool):
+    // the whole tool gets the tries at the operands as they lie, and when those fail the cut is
+    // made a piece at a time at once, where each piece gets every retry of its own. The retries
+    // on the whole tool run long and fail where one piece is what the boolean cannot take. Only
+    // when the pieces fail too is the whole tried again with every retry, as before.
+    let piecewise_first = op == BoolOp::Cut && b.solid.boundaries().len() > 1 && !PIECES_FIRST.with(|c| c.get());
+    let (mut r, mut diagnostics) = if piecewise_first {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                PIECES_FIRST.with(|c| c.set(false));
+            }
+        }
+        let first = {
+            PIECES_FIRST.with(|c| c.set(true));
+            let _reset = Reset;
+            capture_boolean_diagnostics(|| whole(a, b, op))
+        };
+        match first {
+            (Ok(Some(_)), _) => first,
+            _ => {
+                let (la, lb) = (a.lumps()?, b.lumps()?);
+                match capture_boolean_diagnostics(|| by_lumps(a, b, la, lb, op)) {
+                    (Ok(Some(x)), mut report) => {
+                        report.push(BooleanFallback::new(BooleanStrategy::Piecewise));
+                        (Ok(Some(x)), report)
+                    }
+                    _ => capture_boolean_diagnostics(|| whole(a, b, op)),
+                }
+            }
+        }
+    } else {
+        capture_boolean_diagnostics(|| whole(a, b, op))
+    };
     // Bodies in several pieces: when the whole failed (or came out empty), a piece at a time.
     let retry = match &r {
         Err(_) => true,
@@ -1614,6 +1650,12 @@ where
         None
     };
     for (attempt, j) in JITTER.iter().enumerate() {
+        // The tool is several shells and the tries at the operands as they lie failed: the retries
+        // below would run on the whole tool and cost the most where one piece is what fails, so
+        // the cut goes back to be made a piece at a time (see [`boolean_via`]).
+        if attempt == 1 && op == BoolOp::Cut && b.solid.boundaries().len() > 1 && PIECES_FIRST.with(|c| c.get()) {
+            return Err(KernelError::Failed("a tool of several shells: cut a piece at a time".into()));
+        }
         // The operands as they lie failed. A planar tool beside the target's curved faces (a tooth
         // or a pocket cut next to a round edge) is decided exactly in the slab it lies in, where
         // the target is planar too, before the shifted tries: that is where they end anyway, as a
