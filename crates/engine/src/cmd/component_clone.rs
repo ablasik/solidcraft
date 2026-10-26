@@ -595,9 +595,9 @@ pub(super) fn paste(
             }
         }
         if let FeatureKind::Pattern { features: references, .. } | FeatureKind::Mirror { features: references, .. } = &feature.kind {
-            for name in references {
-                if !names.contains_key(name.as_ref()) {
-                    notices.push(format!("{} retains external feature reference {name}", feature.name));
+            for id in references {
+                if !features.contains_key(&id.0) {
+                    notices.push(format!("{} retains external feature reference {id}", feature.name));
                 }
             }
         }

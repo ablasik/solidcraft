@@ -5,7 +5,7 @@ use solidcraft_sketch::Sketch;
 
 use crate::construct::{AxisDef, GeoRef, PointDef};
 use crate::expr::{self, Expr, Kind};
-use crate::names::{BodyName, FeatureName, SketchId};
+use crate::names::{BodyName, FeatureId, FeatureName, SketchId};
 use crate::points::{Dir, FacePick, Position};
 use crate::{DocError, Result};
 
@@ -83,8 +83,8 @@ pub enum PlaneRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         line: Option<Box<GeoRef>>,
     },
-    /// A construction plane feature (by name).
-    Construction { name: FeatureName },
+    /// A construction plane feature (by id).
+    Construction { feature: FeatureId },
     /// `base` seen from its other side: the normal reversed by a half turn about the base's
     /// own x axis (y reversed), or about its y axis (x reversed) when `about_y`. A sketch
     /// started from behind a plane faces the viewer this way.
@@ -722,16 +722,18 @@ pub enum FeatureKind {
         keep_tools: bool,
     },
     /// Copies of other features' results, or of bodies (rectangular, circular or along a path).
+    /// The copied features are named by id (#1134).
     Pattern {
-        features: Vec<FeatureName>,
+        features: Vec<FeatureId>,
         pattern: PatternKind,
         /// Copy these bodies (as new bodies) instead of replaying features.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         bodies: Vec<BodyName>,
     },
-    /// Mirror copies of other features' results in a plane.
+    /// Mirror copies of other features' results in a plane. The copied features are named by
+    /// id (#1134).
     Mirror {
-        features: Vec<FeatureName>,
+        features: Vec<FeatureId>,
         plane: PlaneRef,
         /// Mirror these bodies instead of replaying features.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -3311,6 +3313,17 @@ impl Document {
         self.features.iter().find(|f| f.name.eq_ignore_ascii_case(r))
     }
 
+    /// The feature a pattern or mirror seed names, resolved the way `replay()` resolved seed
+    /// names before seeds were keyed by id (#1134): an exact name match on a feature that is
+    /// not a sketch or a construction plane wins — a sketch and its extrude often share a
+    /// name, and the feature that makes geometry is the one to copy — else [`find_feature`].
+    pub fn seed_feature(&self, name: &str) -> Option<&Feature> {
+        self.features
+            .iter()
+            .find(|x| x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
+            .or_else(|| self.find_feature(name))
+    }
+
     fn unique_name(&self, base: &str) -> String {
         // The numbers taken after `base`, gathered once: the thousandth cylinder of a design
         // tried Cylinder1, Cylinder2 … each against every feature's name.
@@ -3745,16 +3758,21 @@ impl Document {
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
             PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),
-            PlaneRef::Construction { name } => {
+            PlaneRef::Construction { feature } => {
                 // Evaluated already: as it came out.
-                if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| &c.name == name))
+                if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| c.feature == feature.0))
                     && let crate::construct::ConstructGeom::Plane(pl) = &c.geom
                 {
                     return Ok(*pl);
                 }
-                match self.find_feature(name).map(|f| &f.kind) {
+                match self.feature(feature.0).map(|f| &f.kind) {
                     Some(FeatureKind::ConstructionPlane { plane }) => self.resolve_plane_in(vals, plane, depth + 1, st),
-                    _ => Err(DocError::Unknown(format!("construction plane `{name}`"))),
+                    // A name that could not be resolved when an older design opened keeps id 0,
+                    // which no feature has (#1134): the reference dangles, as it always did.
+                    _ => {
+                        let shown = self.feature(feature.0).map(|f| f.name.clone()).unwrap_or_else(|| feature.to_string());
+                        Err(DocError::Unknown(format!("construction plane `{shown}`")))
+                    }
                 }
             }
             PlaneRef::Midplane { .. }

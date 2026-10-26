@@ -1581,7 +1581,9 @@ mod tests {
         run(&mut s, "timeline.rename", json!({"feature": "Cut", "name": "Cutter"}));
         assert!(s.model.results.iter().all(|r| r.error.is_none()), "the trim still finds its plane");
         let def = run(&mut s, "timeline.inspect", json!({"feature": "Trim"}));
-        assert_eq!(def["definition"]["plane"]["name"], "Cutter", "{def}");
+        // The trim keeps its plane by id (#1134): the rename changed nothing in the reference.
+        let cutter = s.doc.find_feature("Cutter").unwrap().id;
+        assert_eq!(def["definition"]["plane"], serde_json::json!({"type": "construction", "feature": cutter}), "{def}");
         assert!((area(&s, "Sheet") - trimmed).abs() < 1e-6, "{} vs {trimmed}", area(&s, "Sheet"));
         assert!(trimmed < 40.0 * 20.0 * 0.9, "the sheet is trimmed: {trimmed}");
     }

@@ -103,6 +103,55 @@ name_type!(
     FeatureName
 );
 
+/// A feature, by its id. Pattern and mirror seeds and construction planes name features by id
+/// (#1134); a reference that resolves to nothing keeps id 0, which no feature ever has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FeatureId(pub u64);
+
+impl FeatureId {
+    /// A reference that names no feature: a name that could not be resolved when an older
+    /// design was migrated (#1134). Evaluation reports it like today's dangling name.
+    pub const DANGLING: FeatureId = FeatureId(0);
+}
+
+impl Deref for FeatureId {
+    type Target = u64;
+    fn deref(&self) -> &u64 {
+        &self.0
+    }
+}
+
+impl From<u64> for FeatureId {
+    fn from(id: u64) -> Self {
+        FeatureId(id)
+    }
+}
+
+impl From<FeatureId> for u64 {
+    fn from(id: FeatureId) -> u64 {
+        id.0
+    }
+}
+
+impl PartialEq<u64> for FeatureId {
+    fn eq(&self, other: &u64) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<FeatureId> for u64 {
+    fn eq(&self, other: &FeatureId) -> bool {
+        *self == other.0
+    }
+}
+
+impl std::fmt::Display for FeatureId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// A sketch, by its feature id.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]

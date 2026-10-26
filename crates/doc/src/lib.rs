@@ -82,7 +82,7 @@ pub use eval::{
     world_state_reusing,
 };
 pub use expr::Expr;
-pub use names::{BodyName, FeatureName, SketchId};
+pub use names::{BodyName, FeatureId, FeatureName, SketchId};
 pub use params::{ParamRow, ParamUser, cycles};
 pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;

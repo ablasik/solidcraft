@@ -15,7 +15,7 @@ use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
 use crate::expr::{self, Kind, Value};
 use crate::lineage::Traced;
-use crate::{AxisRef, DocError, Document, Feature, FeatureKind, HoleKind, Operation, PlaneRef, ProfileSel, Result};
+use crate::{AxisRef, DocError, Document, Feature, FeatureId, FeatureKind, HoleKind, Operation, PlaneRef, ProfileSel, Result};
 
 type JointFaces = (Body, kernel::Result<Arc<[kernel::FaceInfo]>>);
 
@@ -1490,6 +1490,13 @@ fn adopt_solution(stored: &mut solidcraft_sketch::Sketch, solved: &solidcraft_sk
     true
 }
 
+impl Document {
+    /// The values features are evaluated with: the parameters, and the design's length unit.
+    pub fn evaluation_values(&self) -> BTreeMap<String, Value> {
+        evaluation_values(self).0
+    }
+}
+
 /// The values features are evaluated with: the parameters, and the design's length unit.
 fn evaluation_values(doc: &Document) -> (BTreeMap<String, Value>, BTreeMap<String, String>) {
     let (mut vals, perr) = doc.param_values();
@@ -1561,20 +1568,20 @@ fn chain_fingerprint(
 
 /// The features a pattern or mirror of `features` replays: each source, and the sources of one
 /// that is itself a pattern or mirror of features (see `copy_plan`), each once.
-fn replayed_sources<'a>(doc: &'a Document, features: &[crate::FeatureName]) -> Vec<&'a Feature> {
+fn replayed_sources<'a>(doc: &'a Document, features: &[crate::FeatureId]) -> Vec<&'a Feature> {
     let mut out: Vec<&Feature> = Vec::new();
-    let mut todo: Vec<String> = crate::plain(features);
+    let mut todo: Vec<crate::FeatureId> = features.to_vec();
     // A bound on the walk, as on the copy plan's nesting: a design can't make it run on.
     for _ in 0..1024 {
-        let Some(name) = todo.pop() else { break };
-        let Ok(g) = source_feature(doc, &name) else { continue };
+        let Some(id) = todo.pop() else { break };
+        let Ok(g) = source_feature(doc, id) else { continue };
         if out.iter().any(|x| x.id == g.id) {
             continue;
         }
         if let FeatureKind::Pattern { features, bodies, .. } | FeatureKind::Mirror { features, bodies, .. } = &g.kind
             && bodies.is_empty()
         {
-            todo.extend(crate::plain(features));
+            todo.extend(features.iter().copied());
         }
         out.push(g);
     }
@@ -2280,7 +2287,7 @@ impl Model {
                     // Copies made through a pattern or mirror among the sources come after (#395).
                     let mats = match &f.kind {
                         FeatureKind::Pattern { features, bodies, .. } | FeatureKind::Mirror { features, bodies, .. } if bodies.is_empty() => {
-                            copy_instances(doc, &vals, &state, &crate::plain(features), &mats).unwrap_or(mats)
+                            copy_instances(doc, &vals, &state, features, &mats).unwrap_or(mats)
                         }
                         _ => mats,
                     };
@@ -6312,27 +6319,28 @@ fn copy_misses(st: &ModelState, f: &Feature, targets: &[String], tools: &[Traced
 /// The deepest a pattern or mirror reaches through patterns and mirrors of features (#395).
 const MAX_NESTING: usize = 8;
 
-/// The feature a pattern or mirror names as a source. A sketch and its extrude often share a
-/// name; the feature that makes geometry wins.
-fn source_feature<'a>(doc: &'a Document, name: &str) -> Result<&'a Feature> {
-    doc.features
-        .iter()
-        .find(|x| x.name == name && !matches!(x.kind, FeatureKind::Sketch { .. } | FeatureKind::ConstructionPlane { .. }))
-        .or_else(|| doc.find_feature(name))
-        .ok_or_else(|| DocError::Unknown(format!("feature `{name}`")))
+/// The feature a pattern or mirror names as a source. Seeds are keyed by id (#1134): a
+/// reference that names no feature dangles, as a missing name did before.
+fn source_feature(doc: &Document, id: FeatureId) -> Result<&Feature> {
+    doc.feature(id.0).ok_or_else(|| DocError::Unknown(format!("feature `{id}`")))
+}
+
+/// How a source feature shows in a warning: its name, or its id when it names no feature.
+fn source_label(doc: &Document, id: FeatureId) -> String {
+    doc.feature(id.0).map(|f| f.name.clone()).unwrap_or_else(|| id.to_string())
 }
 
 /// What a pattern or mirror of features copies, when it is the source of another one (#395): its
 /// own sources, and the transforms of its copies. `None` for any other feature, and for a pattern
 /// or mirror of bodies (its copies are bodies, which a pattern or mirror of features can't take).
-fn copied_features(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, src: &Feature) -> Result<Option<(Vec<String>, Vec<Mat>)>> {
+fn copied_features(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, src: &Feature) -> Result<Option<(Vec<FeatureId>, Vec<Mat>)>> {
     match &src.kind {
         FeatureKind::Pattern { features, pattern, bodies } if bodies.is_empty() => {
-            Ok(Some((crate::plain(features), pattern_transforms(doc, vals, st, src.component, pattern)?)))
+            Ok(Some((features.clone(), pattern_transforms(doc, vals, st, src.component, pattern)?)))
         }
         FeatureKind::Mirror { features, plane, bodies, .. } if bodies.is_empty() => {
             let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
-            Ok(Some((crate::plain(features), vec![mirror_matrix(&pl)])))
+            Ok(Some((features.clone(), vec![mirror_matrix(&pl)])))
         }
         _ => Ok(None),
     }
@@ -6396,7 +6404,7 @@ fn copy_plan<'a>(
     doc: &'a Document,
     vals: &BTreeMap<String, Value>,
     st: &ModelState,
-    features: &[String],
+    features: &[FeatureId],
     mats: &[Mat],
 ) -> Result<Vec<(&'a Feature, Vec<Mat>, usize)>> {
     #[allow(clippy::too_many_arguments)]
@@ -6404,18 +6412,18 @@ fn copy_plan<'a>(
         doc: &'a Document,
         vals: &BTreeMap<String, Value>,
         st: &ModelState,
-        features: &[String],
+        features: &[FeatureId],
         mats: &[Mat],
         first: usize,
         next: &mut usize,
         depth: usize,
         out: &mut Vec<(&'a Feature, Vec<Mat>, usize)>,
     ) -> Result<()> {
-        for name in features {
-            if doc.find_feature(name).is_some_and(|x| x.suppressed) {
+        for id in features {
+            if doc.feature(id.0).is_some_and(|x| x.suppressed) {
                 continue;
             }
-            let src = source_feature(doc, name)?;
+            let src = source_feature(doc, *id)?;
             let Some((inner, inner_mats)) = copied_features(doc, vals, st, src)? else {
                 out.push((src, mats.to_vec(), first));
                 continue;
@@ -6442,7 +6450,7 @@ fn copy_plan<'a>(
 /// The transforms of a pattern's or mirror's copies in their instance order (instance `k + 1`
 /// is the `k`-th): `mats`, then those of the copies made through patterns and mirrors among
 /// `features` ([`copy_plan`]). Naming finds a copy's faces through them.
-fn copy_instances(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, features: &[String], mats: &[Mat]) -> Result<Vec<Mat>> {
+fn copy_instances(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, features: &[FeatureId], mats: &[Mat]) -> Result<Vec<Mat>> {
     let plan = copy_plan(doc, vals, st, features, mats)?;
     let len = plan.iter().map(|(_, ms, first)| first + ms.len()).max().unwrap_or(0).max(mats.len());
     let mut all = vec![crate::IDENTITY; len];
@@ -6465,7 +6473,7 @@ fn replay(
     vals: &BTreeMap<String, Value>,
     f: &Feature,
     st: &mut ModelState,
-    features: &[String],
+    features: &[FeatureId],
     mats: &[Mat],
     warning: &mut Option<String>,
 ) -> Result<()> {
@@ -6473,9 +6481,9 @@ fn replay(
         return Err(DocError::Invalid("no features selected".into()));
     }
     // A suppressed feature has nothing to copy: its copies go with it.
-    let suppressed: Vec<&String> = features.iter().filter(|n| doc.find_feature(n).is_some_and(|x| x.suppressed)).collect();
+    let suppressed: Vec<FeatureId> = features.iter().copied().filter(|n| doc.feature(n.0).is_some_and(|x| x.suppressed)).collect();
     if !suppressed.is_empty() {
-        let list = suppressed.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        let list = suppressed.iter().map(|n| format!("`{}`", source_label(doc, *n))).collect::<Vec<_>>().join(", ");
         *warning = Some(if suppressed.len() == features.len() {
             format!("nothing to copy: {list} suppressed")
         } else {
@@ -6484,8 +6492,8 @@ fn replay(
     }
     // The copies are made in timeline order, whatever order the features were picked in: a
     // chamfer picked before the hole it blends would otherwise find no edge to copy.
-    let mut kept: Vec<String> = features.iter().filter(|n| !suppressed.contains(n)).cloned().collect();
-    let at = |name: &String| source_feature(doc, name).ok().and_then(|f| doc.features.iter().position(|x| std::ptr::eq(x, f))).unwrap_or(usize::MAX);
+    let mut kept: Vec<FeatureId> = features.iter().copied().filter(|n| !suppressed.contains(n)).collect();
+    let at = |id: &FeatureId| doc.features.iter().position(|x| x.id == id.0).unwrap_or(usize::MAX);
     kept.sort_by_key(at);
     kept.dedup();
     let (mut missed, mut total) = (0usize, 0usize);
@@ -7435,7 +7443,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Pattern { features, pattern, bodies } => {
             let mats = pattern_transforms(doc, vals, st, f.component, pattern)?;
             if bodies.is_empty() {
-                return replay(doc, vals, f, st, &crate::plain(features), &mats, warning);
+                return replay(doc, vals, f, st, features, &mats, warning);
             }
             // Bodies: each copy is a new body named after its source.
             let mut output = 0;
@@ -7454,7 +7462,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Mirror { features, plane, bodies, combine, placements } => {
             let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
             if bodies.is_empty() {
-                return replay(doc, vals, f, st, &crate::plain(features), &[mirror_matrix(&pl)], warning);
+                return replay(doc, vals, f, st, features, &[mirror_matrix(&pl)], warning);
             }
             let m = mirror_matrix(&pl);
             let mut output = 0;

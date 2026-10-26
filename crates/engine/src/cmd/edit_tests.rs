@@ -976,19 +976,22 @@ fn renaming_a_feature_evaluates_nothing() {
     run(&mut s, "edit.redo", json!({}));
     assert_eq!(labels(&s), renamed);
     assert_eq!(s.evaluations, 0, "undo and redo of a rename evaluate nothing");
-    // A sketch on the plane names it: renaming the plane renames it there too, which is evaluated.
+    // A sketch on the plane names it by id (#1134): renaming the plane changes no reference,
+    // so it now evaluates nothing — the name follows everywhere without a rebuild.
     run(&mut s, "sketch.create", json!({"plane": "Shelf", "name": "Top"}));
     run(&mut s, "sketch.finish", json!({}));
     s.evaluations = 0;
     run(&mut s, "timeline.rename", json!({"feature": "Shelf", "name": "Ledge"}));
-    assert!(s.evaluations > 0);
+    assert_eq!(s.evaluations, 0, "renaming a plane a sketch is built on evaluates nothing");
     assert!(labels(&s).2.contains(&"Ledge".to_string()));
-    // A failed pattern's error quotes its source's name: renaming the source is evaluated, so
-    // the error names it as an evaluation does.
+    // A failed pattern's error quotes its source's name (the seed is keyed by id, #1134, and
+    // the error is rendered from the source feature at evaluation): renaming the source is
+    // evaluated, so the error names it as an evaluation does.
     run(&mut s, "solid.pattern.rectangular", json!({"features": ["Base plate"], "dir1": [0, 0, 1], "count1": 2, "spacing1": 10, "name": "Copies"}));
     let copies = s.doc.find_feature("Copies").unwrap().id;
+    let top = s.doc.find_feature("Top").unwrap().id;
     if let Some(solidcraft_doc::FeatureKind::Pattern { features, .. }) = s.doc_mut().feature_mut(copies).map(|f| &mut f.kind) {
-        *features = vec!["Top".into()];
+        *features = vec![top.into()];
     }
     s.refresh();
     let failed = |s: &Session| s.model.results.iter().filter_map(|r| r.error.clone()).collect::<Vec<_>>();
@@ -1030,11 +1033,13 @@ fn renaming_a_plane_keeps_its_projections_canvases_and_hidden_state() {
         r["points"].as_array().unwrap().iter().find(|p| p["link"] == "j1").unwrap()["world"][2].as_f64().unwrap()
     };
     let warnings = |s: &Session| s.model.results.iter().filter_map(|r| r.warning.clone()).collect::<Vec<_>>();
+    // The canvas keeps its plane by id (#1134): the rename leaves the reference alone.
+    let shelf = s.doc.find_feature("Shelf").unwrap().id;
     run(&mut s, "select.set", json!({"items": [{"type": "plane", "name": "Shelf"}]}));
     run(&mut s, "timeline.rename", json!({"feature": "Shelf", "name": "Ledge"}));
     run(&mut s, "timeline.rename", json!({"feature": "Guide", "name": "Rail"}));
     assert_eq!(plane_link(&s), "Ledge");
-    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { name: "Ledge".into() });
+    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { feature: shelf.into() });
     assert_eq!(s.visibility.hidden_origin, ["Rail"]);
     assert_eq!(s.selection, [Sel::Plane { name: "Ledge".into() }]);
     assert!(warnings(&s).is_empty(), "{:?}", warnings(&s));
@@ -1047,7 +1052,7 @@ fn renaming_a_plane_keeps_its_projections_canvases_and_hidden_state() {
         run(&mut s, "edit.undo", json!({}));
     }
     assert_eq!(plane_link(&s), "Shelf");
-    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { name: "Shelf".into() });
+    assert_eq!(canvas_plane(&s), solidcraft_doc::PlaneRef::Construction { feature: shelf.into() });
     assert_eq!(s.visibility.hidden_origin, ["Guide"], "the hidden plane stays hidden");
     assert!(warnings(&s).is_empty(), "{:?}", warnings(&s));
     assert!((projected_z(&mut s) - 20.0).abs() < 1e-9);

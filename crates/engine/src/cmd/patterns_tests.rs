@@ -436,23 +436,42 @@ fn patterns_of_a_blind_hole_drill_every_copy() {
     assert!((c - 2.0 * one).abs() < 1e-3 * one, "{c} vs 2 × {one}");
 }
 
-/// Feature patterns and mirrors reference features by name; a rename follows (#401).
+/// Feature patterns and mirrors reference features by id (#1134): a rename leaves the
+/// references alone, and they keep pointing at the same feature (#401).
 #[test]
-fn renaming_a_source_feature_follows_pattern_and_mirror_references() {
+fn renaming_a_source_feature_leaves_pattern_and_mirror_references_alone() {
     let mut s = plate_with_hole();
     run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 0, "name": "Mirror plane"}));
     run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole1"], "dir1": [1, 0, 0], "count1": 2, "spacing1": 20, "name": "Copies"}));
     run(&mut s, "solid.mirror", json!({"features": ["Hole1"], "plane": "Mirror plane", "name": "Mirrored"}));
+    let hole = s.doc.find_feature("Hole1").unwrap().id;
+    let mirror_plane = s.doc.find_feature("Mirror plane").unwrap().id;
     let renamed = run(&mut s, "timeline.rename", json!({"feature": "Hole1", "name": "Single hole"}));
     assert_eq!(renamed["name"], "Single hole", "{renamed}");
     run(&mut s, "timeline.rename", json!({"feature": "Mirror plane", "name": "Renamed plane"}));
     for feature in ["Copies", "Mirrored"] {
         let inspected = run(&mut s, "timeline.inspect", json!({"feature": feature}));
         assert!(inspected["error"].is_null(), "{feature}: {inspected}");
-        assert_eq!(inspected["definition"]["features"], json!(["Single hole"]), "{inspected}");
+        assert_eq!(inspected["definition"]["features"], json!([hole]), "{inspected}");
     }
     let inspected = run(&mut s, "timeline.inspect", json!({"feature": "Mirrored"}));
-    assert_eq!(inspected["definition"]["plane"]["name"], "Renamed plane", "{inspected}");
+    assert_eq!(inspected["definition"]["plane"], json!({"type": "construction", "feature": mirror_plane}), "{inspected}");
+}
+
+/// timeline.edit keeps accepting seed and plane names as input: they resolve to ids (#1134).
+#[test]
+fn editing_a_pattern_by_seed_name_resolves_it_to_the_id() {
+    let mut s = plate_with_hole();
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole1"], "dir1": [1, 0, 0], "count1": 2, "spacing1": 20, "name": "Copies"}));
+    run(&mut s, "timeline.rename", json!({"feature": "Hole1", "name": "Single hole"}));
+    run(&mut s, "timeline.edit", json!({"feature": "Copies", "set": {"features": ["Single hole"]}}));
+    let inspected = run(&mut s, "timeline.inspect", json!({"feature": "Copies"}));
+    assert!(inspected["error"].is_null(), "{inspected}");
+    let hole = s.doc.find_feature("Single hole").unwrap().id;
+    assert_eq!(inspected["definition"]["features"], json!([hole]), "{inspected}");
+    // A name that finds no feature is refused, as the commands that take names refuse it.
+    let e = s.execute("timeline.edit", &json!({"feature": "Copies", "set": {"features": ["Nope"]}})).unwrap_err().to_string();
+    assert!(e.contains("Nope"), "{e}");
 }
 
 /// A plate with a `count1` × `count2` feature pattern of one through-hole cut: its volume and how

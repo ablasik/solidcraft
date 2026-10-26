@@ -1778,17 +1778,14 @@ fn copy_keeps_appearance(s: &mut Session, reply: &Value, sources: &[String], cmd
     Ok(())
 }
 
-fn source_features(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
+fn source_features(s: &Session, p: &Value, cmd: &str) -> Result<Vec<solidcraft_doc::FeatureId>> {
     let names = string_list(p, "features");
     if names.is_empty() {
         return Err(bad(cmd, "`features` must list features to copy"));
     }
-    for n in &names {
-        if s.doc.find_feature(n).is_none() {
-            return Err(bad(cmd, format!("no feature `{n}`")));
-        }
-    }
-    Ok(names)
+    // Names stay input only: the feature stores its seeds by id (#1134), resolved the way
+    // evaluation used to resolve them (a shared sketch name does not win over the geometry).
+    names.iter().map(|n| s.doc.seed_feature(n).map(|f| f.id.into()).ok_or_else(|| bad(cmd, format!("no feature `{n}`")))).collect()
 }
 
 /// An axis line from its parameter, with what it follows: an edge or round face of the model
@@ -1833,18 +1830,16 @@ fn named_axis_line(s: &Session, p: &Value, cmd: &str) -> Result<(Vec3, Vec3, Opt
 }
 
 /// A pattern feature, or for `components`, new occurrences of them at each placement.
-fn finish_pattern(s: &mut Session, p: &Value, features: Vec<String>, pattern: solidcraft_doc::PatternKind, bodies: Vec<String>) -> Result<Value> {
+fn finish_pattern(
+    s: &mut Session,
+    p: &Value,
+    features: Vec<solidcraft_doc::FeatureId>,
+    pattern: solidcraft_doc::PatternKind,
+    bodies: Vec<String>,
+) -> Result<Value> {
     let comps = string_list(p, "components");
     if comps.is_empty() {
-        return add_feature(
-            s,
-            p,
-            FeatureKind::Pattern {
-                features: features.into_iter().map(FeatureName).collect(),
-                pattern,
-                bodies: bodies.into_iter().map(BodyName).collect(),
-            },
-        );
+        return add_feature(s, p, FeatureKind::Pattern { features, pattern, bodies: bodies.into_iter().map(BodyName).collect() });
     }
     let cmd = "pattern (components)";
     let mats = solidcraft_doc::pattern_matrices(&s.doc, &s.model.state(), &pattern)?;
@@ -1861,7 +1856,7 @@ fn finish_pattern(s: &mut Session, p: &Value, features: Vec<String>, pattern: so
 
 /// What a pattern copies: features (replayed), bodies (`bodies: [names]`), or components
 /// (`components: [names]`, placed again as occurrences).
-fn pattern_sources(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<String>, Vec<String>)> {
+fn pattern_sources(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<solidcraft_doc::FeatureId>, Vec<String>)> {
     if !string_list(p, "components").is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -1961,17 +1956,7 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let plane = plane_param(s, p.get("plane"), cmd)?;
     let combine = bool_(p, "combine").unwrap_or(false);
     let (bodies, placements) = placed_bodies(s, bodies, cmd)?;
-    add_feature(
-        s,
-        p,
-        FeatureKind::Mirror {
-            features: features.into_iter().map(FeatureName).collect(),
-            plane,
-            bodies: bodies.into_iter().map(BodyName).collect(),
-            combine,
-            placements,
-        },
-    )
+    add_feature(s, p, FeatureKind::Mirror { features, plane, bodies: bodies.into_iter().map(BodyName).collect(), combine, placements })
 }
 
 /// Bodies picked where the viewport shows them: each world name ("Body1", or "Body1 (Occ:2)"
@@ -2031,7 +2016,7 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
     use solidcraft_doc::PlaneRef;
     const WANT: &str = "XY, XZ, YZ, a construction plane name or id, or {origin, normal} (origin coordinates may be length expressions)";
     let construction = |r: &str| match s.doc.find_feature(r) {
-        Some(f) if matches!(f.kind, FeatureKind::ConstructionPlane { .. }) => Ok(PlaneRef::Construction { name: f.name.clone().into() }),
+        Some(f) if matches!(f.kind, FeatureKind::ConstructionPlane { .. }) => Ok(PlaneRef::Construction { feature: f.id.into() }),
         Some(f) => Err(bad(cmd, format!("`{}` is not a construction plane (a plane is {WANT})", f.name))),
         None => Err(bad(cmd, format!("no plane `{r}` (a plane is {WANT})"))),
     };
