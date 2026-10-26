@@ -165,6 +165,16 @@ pub(crate) fn floating_rect(app: &SolveApp, available: Rect) -> Rect {
     Rect::from_min_max(min, pos2((min.x + strip_width(app)).min((available.right() - gap).max(min.x)), (available.bottom() - gap).max(min.y)))
 }
 
+/// Under the browser, History is one column with it and follows its translucency.
+fn card_fill(app: &SolveApp, floating: bool) -> egui::Color32 {
+    let panel = Tokens::get().panel;
+    if floating && stacked(app) && app.ui.show_browser && app.preferences.browser_float {
+        panel.gamma_multiply(crate::browser::BROWSER_FLOAT_ALPHA)
+    } else {
+        panel
+    }
+}
+
 /// Full-height left card, or a card sharing the browser column below it.
 pub fn left_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -177,7 +187,8 @@ pub fn left_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
             return;
         }
         let container = Container::new(ui.ctx(), Surface::Panel).joined(crate::ui_kit::DockEdges { left: true, top: true, ..Default::default() });
-        let frame = container.frame(ui.ctx(), t.panel, crate::frame::Side::Left).inner_margin(t.space_4);
+        let fill = card_fill(app, container.floating());
+        let frame = container.frame(ui.ctx(), fill, crate::frame::Side::Left).inner_margin(t.space_4);
         let inner = (bounds.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
         let card = Container::new(ui.ctx(), Surface::Panel)
             .area(egui::Id::new("sc_timeline_left_card"))
@@ -1668,6 +1679,28 @@ mod tests {
         harness.step(&json!({"drag": [[rail.x, rail.y], [rail.x - 40.0, rail.y]]})).unwrap();
         let narrower = harness.app.preferences.browser_width;
         assert!(narrower < wider - 20.0, "dragging it left should narrow it again: {wider} -> {narrower}");
+    }
+
+    #[test]
+    fn history_follows_the_browsers_translucency_only_under_the_browser() {
+        let opaque = Tokens::get().panel;
+        let translucent = opaque.gamma_multiply(crate::browser::BROWSER_FLOAT_ALPHA);
+        for (floating, under_browser, browser_float, expected) in [
+            (true, true, true, translucent),
+            (true, true, false, opaque),
+            (true, false, true, opaque),
+            (false, true, true, opaque),
+            (false, false, true, opaque),
+        ] {
+            let mut h = Harness::new();
+            h.app.ui.layout = if floating { crate::shell::LayoutMode::Floating } else { crate::shell::LayoutMode::Docked };
+            h.app.ui.show_timeline = true;
+            h.app.preferences.timeline_left = true;
+            h.app.preferences.timeline_under_browser = under_browser;
+            h.app.preferences.browser_float = browser_float;
+            let container = Container::for_layout(h.app.ui.layout, Surface::Panel);
+            assert_eq!(card_fill(&h.app, container.floating()), expected, "floating={floating} under_browser={under_browser} float={browser_float}");
+        }
     }
 
     #[test]
