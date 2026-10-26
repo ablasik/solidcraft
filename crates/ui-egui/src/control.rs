@@ -226,7 +226,15 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
     if r.is_ok()
         && !matches!(
             id,
-            "view.layout"
+            "view.fit"
+                | "view.home"
+                | "view.tool"
+                | "view.spin"
+                | "view.visual_style"
+                | "view.grid"
+                | "view.ground_shadow"
+                | "view.navigation_bar"
+                | "view.layout"
                 | "view.navigate"
                 | "view.ambient_occlusion"
                 | "view.perspective"

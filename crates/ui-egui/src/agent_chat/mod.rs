@@ -36,6 +36,7 @@ pub mod paste;
 #[cfg(not(target_arch = "wasm32"))]
 mod process;
 pub mod settings;
+pub mod summary;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -64,6 +65,8 @@ const APPROVAL_TIMEOUT_MS: f64 = 240_000.0;
 const VIEW_IMAGE: (u32, u32) = (960, 600);
 /// A picture kept for the user to open later, at most this big.
 const MAX_PICTURE_BYTES: usize = 4 << 20;
+/// A tool call's arguments kept for its card, at most this big (as JSON text).
+const MAX_TOOL_INPUT: usize = 64 << 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -212,6 +215,9 @@ pub enum Item {
         title: String,
         kind: String,
         status: Option<ToolStatus>,
+        /// The arguments it was called with, when the agent says (shown under Details, and read
+        /// for the card's summary, #1457).
+        input: Option<Value>,
         output: Option<String>,
     },
     Plan(Vec<(String, String)>),
@@ -615,12 +621,14 @@ impl AgentChat {
                     self.push(Item::Agent { thought, text });
                 }
             }
-            Event::Tool { id, title, kind, status, output } => {
+            Event::Tool { id, title, kind, status, input, output } => {
                 if let Some(turn) = self.turn.as_mut() {
                     turn.tool_called = true;
                 }
+                // Arguments too large to show or read are left with the agent.
+                let input = input.filter(|v| serde_json::to_string(v).is_ok_and(|s| s.len() <= MAX_TOOL_INPUT));
                 let existing = self.items.iter_mut().rev().find(|i| matches!(i, Item::Tool { id: x, .. } if *x == id));
-                if let Some(Item::Tool { title: t, kind: k, status: s, output: o, .. }) = existing {
+                if let Some(Item::Tool { title: t, kind: k, status: s, input: i, output: o, .. }) = existing {
                     if let Some(v) = title {
                         *t = v;
                     }
@@ -630,11 +638,14 @@ impl AgentChat {
                     if status.is_some() {
                         *s = status;
                     }
+                    if input.is_some() {
+                        *i = input;
+                    }
                     if output.is_some() {
                         *o = output;
                     }
                 } else {
-                    self.push(Item::Tool { id, title: title.unwrap_or_default(), kind: kind.unwrap_or_default(), status, output });
+                    self.push(Item::Tool { id, title: title.unwrap_or_default(), kind: kind.unwrap_or_default(), status, input, output });
                 }
             }
             Event::Plan(entries) => {
@@ -2008,8 +2019,8 @@ pub fn status(app: &SolveApp) -> Value {
         .map(|i| match i {
             Item::User { text, image, pictures, context, files } => json!({"user": text, "image": image, "pictures": pictures.len(), "files": files, "context": context.items.iter().map(|i| json!({"label": i.label, "detail": i.detail})).collect::<Vec<_>>(), "context_omitted": context.omitted}),
             Item::Agent { thought, text } => json!({"agent": text, "thought": thought}),
-            Item::Tool { id, title, kind, status, output } => {
-                json!({"tool": id, "title": title, "kind": kind, "status": status.map(|s| format!("{s:?}")), "output": output})
+            Item::Tool { id, title, kind, status, input, output } => {
+                json!({"tool": id, "title": title, "kind": kind, "status": status.map(|s| format!("{s:?}")), "input": input, "output": output})
             }
             Item::Plan(p) => json!({"plan": p}),
             Item::Permission { title, options, answer, .. } => {

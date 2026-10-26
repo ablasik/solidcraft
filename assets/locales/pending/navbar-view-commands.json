@@ -1,0 +1,32 @@
+{
+  "en": {
+    "cmd.view_fit": "Fit",
+    "cmd.view_home": "Home view",
+    "cmd.view_tool": "Navigation tool",
+    "cmd.view_spin": "Continuous orbit",
+    "cmd.view_visual_style": "Visual style",
+    "cmd.view_grid": "Grid",
+    "cmd.view_ground_shadow": "Ground shadow",
+    "cmd.view_navigation_bar": "Navigation bar"
+  },
+  "ja": {
+    "cmd.view_fit": "フィット",
+    "cmd.view_home": "ホームビュー",
+    "cmd.view_tool": "ナビゲーションツール",
+    "cmd.view_spin": "連続オービット",
+    "cmd.view_visual_style": "表示スタイル",
+    "cmd.view_grid": "グリッド",
+    "cmd.view_ground_shadow": "地面の影",
+    "cmd.view_navigation_bar": "ナビゲーションバー"
+  },
+  "zh": {
+    "cmd.view_fit": "适合视图",
+    "cmd.view_home": "主视图",
+    "cmd.view_tool": "导航工具",
+    "cmd.view_spin": "连续环绕",
+    "cmd.view_visual_style": "视觉样式",
+    "cmd.view_grid": "网格",
+    "cmd.view_ground_shadow": "地面阴影",
+    "cmd.view_navigation_bar": "导航栏"
+  }
+}

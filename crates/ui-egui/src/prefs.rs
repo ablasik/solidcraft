@@ -755,6 +755,7 @@ struct Snapshot {
     dark: bool,
     layout: crate::shell::LayoutMode,
     grid: bool,
+    navigation_bar: bool,
     shadow: bool,
     perspective: bool,
     style: u8,
@@ -772,6 +773,7 @@ impl Snapshot {
             dark: app.ui.dark,
             layout: app.ui.layout,
             grid: app.ui.show_grid,
+            navigation_bar: app.ui.show_navigation_bar,
             shadow: app.ui.ground_shadow,
             perspective: app.ui.perspective,
             style: app.ui.visual_style,
@@ -795,6 +797,7 @@ impl Snapshot {
         app.ui.dark = self.dark;
         app.ui.layout = self.layout;
         app.ui.show_grid = self.grid;
+        app.ui.show_navigation_bar = self.navigation_bar;
         app.ui.ground_shadow = self.shadow;
         app.ui.perspective = self.perspective;
         app.ui.visual_style = self.style;
@@ -973,6 +976,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_INTERFACE => {
             app.ui.dark = true;
             app.ui.layout = app.preferences.layout;
+            app.ui.show_navigation_bar = true;
         }
         PAGE_AI => app.ui.agent_cursor = Default::default(),
         PAGE_NAVIGATION | PAGE_DESIGN => {}
