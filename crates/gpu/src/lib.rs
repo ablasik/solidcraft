@@ -11,7 +11,7 @@
 //! frame's command encoder, and the render pass reads [`GpuMesh::vertices`] as its vertex buffer
 //! with [`GpuMesh::indices`]; nothing comes back to the CPU.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 #[cfg(not(target_arch = "wasm32"))]
 use solidcraft_geom::Mesh;

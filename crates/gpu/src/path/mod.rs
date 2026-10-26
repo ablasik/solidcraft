@@ -22,6 +22,7 @@ use wgpu::util::DeviceExt;
 
 mod adaptive;
 mod denoise;
+mod hardware;
 mod dispatch;
 mod media_hierarchy;
 mod scene;
@@ -41,6 +42,14 @@ const SHADER: &str = concat!(
 ",
     include_str!("aging.wgsl")
 );
+// Ray-query variant: the software traversals are renamed away and `rq.wgsl` defines them over `rayQuery`.
+fn shader_source(ray: bool) -> std::borrow::Cow<'static, str> {
+    if !ray {
+        return SHADER.into();
+    }
+    let software = SHADER.replace("fn trace_precise_within(", "fn trace_precise_within_sw(").replace("fn trace_ordered_within(", "fn trace_ordered_within_sw(");
+    format!("enable wgpu_ray_query;\n{software}\n{}", include_str!("rq.wgsl")).into()
+}
 const MAX_TRIANGLES: u64 = MAX_GPU_PATH_TRIANGLES;
 const PARAMETER_BYTES: usize = 1168;
 // Eight u32 words: count low, pixel, bounce, sample, code, count high, first-writer flag, spare.
@@ -134,10 +143,19 @@ fn device_limits(supported: wgpu::Limits) -> Result<wgpu::Limits> {
     Ok(limits)
 }
 fn open_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
-    let required_limits = device_limits(adapter.limits())?;
+    let mut required_limits = device_limits(adapter.limits())?;
+    let ray = hardware::requested(adapter);
+    if ray {
+        let supported = adapter.limits();
+        required_limits.max_blas_primitive_count = supported.max_blas_primitive_count;
+        required_limits.max_blas_geometry_count = supported.max_blas_geometry_count;
+        required_limits.max_tlas_instance_count = supported.max_tlas_instance_count;
+        required_limits.max_acceleration_structures_per_shader_stage = supported.max_acceleration_structures_per_shader_stage.min(1);
+    }
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("solidcraft progressive path"),
-        required_features: crate::depth_features(adapter),
+        required_features: crate::depth_features(adapter) | if ray { hardware::FEATURE } else { wgpu::Features::empty() },
+        experimental_features: if ray { hardware::token() } else { Default::default() },
         required_limits,
         ..Default::default()
     }))
@@ -159,6 +177,7 @@ struct Context {
     // Built and warmed by the first denoised job, then shared by later ones.
     denoise: std::sync::OnceLock<denoise::Pipelines>,
     layout: wgpu::BindGroupLayout,
+    ray: bool,
 }
 impl Context {
     fn ensure_available(&self) -> Result<()> {
@@ -207,10 +226,11 @@ impl Executor {
             lost.store(false, Ordering::Release);
             log::warn!("gpu-path device lost ({reason:?}); executor unavailable: {message}");
         });
+        let ray = device.features().contains(hardware::FEATURE);
         let scopes = scopes(&device);
         let shader =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gpu-path"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
-        let entries: Vec<_> = (0..7)
+            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gpu-path"), source: wgpu::ShaderSource::Wgsl(shader_source(ray).into()) });
+        let mut entries: Vec<_> = (0..7)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -226,6 +246,14 @@ impl Executor {
                 count: None,
             })
             .collect();
+        if ray {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
+                count: None,
+            });
+        }
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("gpu-path"), entries: &entries });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gpu-path"),
@@ -241,8 +269,10 @@ impl Executor {
             cache: None,
         });
         checked(scopes)?;
-        warm_up(&device, &queue, &pipeline, &placeholder_bind(&device, &layout, 7)?, &healthy)?;
-        Ok(Self { context: Arc::new(Context { healthy, device, queue, pipeline, layout, denoise: std::sync::OnceLock::new() }) })
+        if !ray {
+            warm_up(&device, &queue, &pipeline, &placeholder_bind(&device, &layout, 7)?, &healthy)?;
+        }
+        Ok(Self { context: Arc::new(Context { healthy, device, queue, pipeline, layout, ray, denoise: std::sync::OnceLock::new() }) })
     }
 }
 
@@ -521,6 +551,7 @@ struct Task {
     failures: wgpu::Buffer,
     readback: wgpu::Buffer,
     bind: wgpu::BindGroup,
+    _rq: Option<hardware::Scene>,
     denoiser: Option<denoise::Resources>,
     sample: u32,
     lane: u32,
@@ -570,6 +601,11 @@ impl Task {
         let uploading = Instant::now();
         drop(scene);
         let device = &context.device;
+        let rq_started = Instant::now();
+        let rq = if context.ray { Some(hardware::build(device, &context.queue, &upload.geometry)?) } else { None };
+        if rq.is_some() {
+            eprintln!("gpu-path hardware BLAS/TLAS build {:.1} ms", rq_started.elapsed().as_secs_f64() * 1000.0);
+        }
         let (uniform, accumulation, failures, readback, bind, denoiser) = checked_creation(device, || {
             let make = |label, bytes: &[u8], usage| {
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: bytes, usage })
@@ -607,6 +643,9 @@ impl Task {
                 .collect();
             entries.push(wgpu::BindGroupEntry { binding: 5, resource: texture_buffer.as_entire_binding() });
             entries.push(wgpu::BindGroupEntry { binding: 6, resource: failures.as_entire_binding() });
+            if let Some(rq) = &rq {
+                entries.push(wgpu::BindGroupEntry { binding: 7, resource: rq.tlas.as_binding() });
+            }
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gpu-path"), layout: &context.layout, entries: &entries });
             let denoiser = if options.denoise {
                 Some(denoise::Resources::new(
@@ -637,6 +676,7 @@ impl Task {
             failures,
             readback,
             bind,
+            _rq: rq,
             denoiser,
             sample: 0,
             lane: 0,
