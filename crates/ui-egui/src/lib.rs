@@ -108,6 +108,7 @@ mod measurement_ui_tests;
 mod menu_tests;
 pub(crate) mod mesh_lod;
 pub mod messages;
+pub(crate) mod motion;
 pub mod occurrence_drag;
 #[cfg(test)]
 mod pattern_arrow_tests;
@@ -181,6 +182,7 @@ pub mod open_elsewhere;
 pub(crate) mod open_meshing;
 pub mod params_dialog;
 pub(crate) mod pick_index;
+pub(crate) mod place_gizmo;
 pub(crate) mod plugins;
 pub mod prefs;
 pub mod prefs_notice;
