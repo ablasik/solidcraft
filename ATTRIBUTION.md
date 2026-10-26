@@ -523,6 +523,8 @@ Editable drawing code, native projects and shipped exports are collected under `
 | docs/book/src/og.png | SolidCraft contributors | copy of assets/branding/web/source/og.png staged by cargo xtask book (gitignored) | MIT OR Apache-2.0 |
 | docs/sponsors/blacksmith-ci-powered.png | Blacksmith (blacksmith.sh) | "CI powered by Blacksmith" sponsor banner supplied by Blacksmith for the sponsorship credit; used only to credit the sponsor, not part of the application | © Blacksmith, used with permission |
 | assets/icons/ui/design/svg/model/path_flange.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
+| docs/book/src/generated/hem.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot docs/book/scripts/hem.json`; gitignored), original sheet metal demonstration | MIT OR Apache-2.0 |
+| docs/book/scripts/hem.json | SolidCraft contributors | original parametric recipe for an 80 × 50 mm sheet with an 8 mm returned edge, authored for the command guide | MIT OR Apache-2.0 |
 
 ## Code adapted from sibling projects
 
