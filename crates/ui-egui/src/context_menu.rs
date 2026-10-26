@@ -1315,15 +1315,8 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 app.set_status("This component is no longer linked to a design", true);
                 return;
             };
-            let Some(file) = link["file"].as_str() else {
-                app.set_status("The linked design has no file path", true);
-                return;
-            };
-            if link["found"] != true {
-                app.set_status(format!("Linked design not found: {file}"), true);
-                return;
-            }
-            app.open_path_async(file);
+            // A link on a network server not allowed yet asks first.
+            crate::network_prompt::open_linked(app, link);
         }
         "ui.moveOccurrence" => {
             if let Some(o) = id_of(&p, "occurrence") {

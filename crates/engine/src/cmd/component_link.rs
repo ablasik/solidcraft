@@ -54,10 +54,10 @@ pub static COMMANDS: &[CommandSpec] = &[
          (its link here, else a new linked component) → each component's history goes and its placements become placements of the linked \
          component; refused when its bodies are not the same as the link's; returns component, name, replaced and warnings",
     ),
-    CommandSpec::new("component.links", "List Links", list_links)
-        .icon("chain")
-        .noundo()
-        .params("→ linked components: component, name, path, file (resolved), found"),
+    CommandSpec::new("component.links", "List Links", list_links).icon("chain").noundo().params(
+        "→ linked components: component, name, path, file (resolved), found (null when the file is on a network location not allowed, \
+         or names a device: it is not looked for), and then host (the network location) and reason",
+    ),
 ];
 
 /// The folder relative link paths are kept against: the design's own, once it has a file.
@@ -119,6 +119,21 @@ fn resolve(design: Option<&str>, link: &str) -> PathBuf {
     }
 }
 
+/// Why the file a stored link names may not be reached, from its text alone (`None`: it may): a
+/// device, or a network location not allowed (`vfs::design_path_refusal`). Both the link as
+/// stored and the file it resolves to are judged, before anything asks the disk or the network.
+fn link_refusal(design: Option<&str>, link: &str) -> Option<solidcraft_io::vfs::Remote> {
+    let file = resolve(design, link);
+    solidcraft_io::vfs::design_path_refusal(link, design).or_else(|| solidcraft_io::vfs::design_path_refusal(&file.to_string_lossy(), design))
+}
+
+/// The error for a link [`link_refusal`] refuses.
+fn link_refused(design: Option<&str>, link: &str) -> Result<()> {
+    solidcraft_io::vfs::check_design_path(link, design).map_err(|e| EngineError::Other(e.to_string()))?;
+    let file = resolve(design, link);
+    solidcraft_io::vfs::check_design_path(&file.to_string_lossy(), design).map_err(|e| EngineError::Other(e.to_string()))
+}
+
 /// The links of `doc` stored for a design saved at `to` instead of at `from`.
 pub(super) fn rebased(doc: &Document, from: Option<&str>, to: &str) -> std::collections::BTreeMap<u64, DesignLink> {
     doc.links.iter().map(|(c, l)| (*c, DesignLink { path: stored(Some(to), &resolve(from, &l.path)), feature: l.feature })).collect()
@@ -142,7 +157,12 @@ fn linked_bodies(file: &Path, own: Option<&str>) -> Result<Linked> {
     if own.is_some_and(|o| absolute(Path::new(o)) == absolute(file)) {
         return Err(EngineError::Other(format!("{shown}: a design can't be linked into itself")));
     }
-    let bytes = solidcraft_io::vfs::read(&shown, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
+    // A network location only when its server is allowed, a device never: judged from the text
+    // before anything is read (on Windows, reading `\\host\share\x` connects to the host).
+    let bytes = solidcraft_io::vfs::read_design_path(&shown, own, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| {
+        let e = e.to_string();
+        EngineError::Other(if e.starts_with(&shown) { e } else { format!("{shown}: {e}") })
+    })?;
     let doc = solidcraft_io::read_design(&bytes).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
     session_bodies(&Session::opened_at(doc, None, Some(&shown)), &shown)
 }
@@ -186,6 +206,8 @@ fn insert_design(s: &mut Session, p: &Value) -> Result<Value> {
         None => solidcraft_geom::Vec3::ZERO,
         Some(v) => vec3(v).filter(|t| t.is_finite() && t.len() < 1e9).ok_or_else(|| bad(cmd, "`translate` must be [x, y, z] in mm"))?,
     };
+    // A network or device path is judged from its text, as given, before anything reads it.
+    link_refused(s.path.as_deref(), given).map_err(|e| bad(cmd, e.to_string()))?;
     let file = absolute(Path::new(given));
     if s.path.as_deref().is_some_and(|own| absolute(Path::new(own)) == file) {
         return Err(bad(cmd, "a design can't be linked into itself"));
@@ -263,6 +285,7 @@ fn update_links(s: &mut Session, p: &Value) -> Result<Value> {
             ));
         };
         let old = old.clone();
+        link_refused(s.path.as_deref(), &link.path).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
         let file = resolve(s.path.as_deref(), &link.path);
         let (_, sf, faces, _) = linked_bodies(&file, s.path.as_deref()).map_err(|e| bad(cmd, format!("{cname}: {e}")))?;
         warnings.extend(sf.warnings.iter().cloned());
@@ -334,6 +357,8 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     if !file.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("solidcraft")) {
         return Err(bad(cmd, "choose a saved .solidcraft design"));
     }
+    // A network or device path is judged from its text before the disk is asked anything.
+    link_refused(s.path.as_deref(), given).map_err(|e| bad(cmd, e.to_string()))?;
     // The ordinary lexical check in linked_bodies also works in the browser VFS. On native
     // hosts, reject an alias of this assembly too (a symlink or a path with different case).
     if let (Ok(candidate), Some(Ok(own))) = (file.canonicalize(), s.path.as_deref().map(std::fs::canonicalize))
@@ -401,7 +426,16 @@ fn list_links(s: &mut Session, _p: &Value) -> Result<Value> {
             let name = s.doc.components.iter().find(|x| x.id == *c).map(|x| x.name.clone());
             let path = stored(s.path.as_deref(), &file);
             let file = file.to_string_lossy();
-            json!({"component": c, "name": name, "path": path, "file": file, "found": solidcraft_io::vfs::is_file(&file)})
+            // A refused path is not looked for at all: on Windows asking whether a file on
+            // `\\host\share` exists already connects to the host.
+            match link_refusal(s.path.as_deref(), &l.path) {
+                None => json!({"component": c, "name": name, "path": path, "file": file,
+                    "found": solidcraft_io::vfs::design_path_is_file(&file, s.path.as_deref())}),
+                Some(solidcraft_io::vfs::Remote::Network(host)) => json!({"component": c, "name": name, "path": path, "file": file,
+                    "found": null, "host": host, "reason": format!("on the network location \\\\{host}, which is not allowed")}),
+                Some(solidcraft_io::vfs::Remote::Device) => json!({"component": c, "name": name, "path": path, "file": file,
+                    "found": null, "reason": "names a device, not a file"}),
+            }
         })
         .collect();
     Ok(json!({"links": links}))
@@ -751,5 +785,113 @@ mod tests {
         let update = run(&mut s, "component.update_links", json!({}));
         assert!(update["warnings"].to_string().contains("joint PinInHole refers to faces of Plate by their place"), "{update}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A design someone sends may name a linked file on another computer (`\\host\share\…`) or a
+    /// device. On Windows, reading it or only asking whether it exists connects to that computer
+    /// and may send it the user's sign-in. Update Links and List Links judge the stored path from
+    /// its text and touch nothing: List Links reports it unknown with a reason, Update Links
+    /// refuses with the server's name, and nothing in the design changes.
+    #[test]
+    fn links_to_network_locations_or_devices_touch_nothing_until_allowed() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-link-network-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("parts")).unwrap();
+        let part = dir.join("parts").join("plate.solidcraft");
+        save_box(&part, 30.0);
+        let case = dir.join("case.solidcraft");
+        let mut a = Session::default();
+        let comp = run(&mut a, "component.insert_design", json!({"path": part}))["component"].as_u64().unwrap();
+        run(&mut a, "file.save", json!({"path": case}));
+        let feature = a.doc.links[&comp].feature;
+        // On Unix these names are plain files beside the design, so a check that was skipped would
+        // find them: the refusal below comes from the text alone.
+        let crafted = [r"\\evil.example\share\plate.solidcraft", "//evil.example/share/plate.solidcraft", r"\\?\UNC\evil.example\share\p.solidcraft"];
+        if cfg!(unix) {
+            std::fs::copy(&part, dir.join(crafted[0])).unwrap();
+        }
+        let devices = [r"\\.\pipe\plate.solidcraft", r"\\.\COM1", "parts/NUL.solidcraft", "parts/com1.solidcraft", r"parts\CON.part.solidcraft"];
+        std::fs::copy(&part, dir.join("parts").join("NUL.solidcraft")).unwrap();
+        let before = volume(&mut a);
+        for link in crafted.iter().chain(&devices) {
+            a.doc_mut().links.insert(comp, DesignLink { path: link.to_string(), feature });
+            let calls = solidcraft_io::vfs::file_calls();
+            let listed = run(&mut a, "component.links", json!({}));
+            let entry = &listed["links"][0];
+            assert!(entry["found"].is_null() && entry["reason"].is_string(), "{link}: {listed}");
+            let err = a.execute("component.update_links", &json!({})).unwrap_err().to_string();
+            assert_eq!(solidcraft_io::vfs::file_calls(), calls, "{link}: a file call was made");
+            if devices.contains(link) {
+                assert!(entry["host"].is_null() && err.contains("names a device"), "{link}: {listed} {err}");
+            } else {
+                assert_eq!(entry["host"], "evil.example", "{link}: {listed}");
+                assert!(err.contains(r"network location \\evil.example"), "{link}: {err}");
+            }
+            assert_eq!(volume(&mut a), before, "{link}: the design changed");
+        }
+        // Allowed (Allow once, a preference, …), the same link is read as any other.
+        #[cfg(unix)]
+        {
+            a.doc_mut().links.insert(comp, DesignLink { path: crafted[0].to_string(), feature });
+            solidcraft_io::vfs::allowing_hosts(&["EVIL.example".to_string()], || {
+                let listed = run(&mut a, "component.links", json!({}));
+                assert_eq!(listed["links"][0]["found"], true, "{listed}");
+                assert_eq!(run(&mut a, "component.update_links", json!({}))["unchanged"], json!(["plate"]));
+            });
+            assert!(run(&mut a, "component.links", json!({}))["links"][0]["found"].is_null(), "allowed for that action only");
+        }
+        // A local link, relative or absolute, is found and read as before.
+        for local in ["parts/plate.solidcraft".to_string(), part.to_string_lossy().to_string()] {
+            a.doc_mut().links.insert(comp, DesignLink { path: local.clone(), feature });
+            assert_eq!(run(&mut a, "component.links", json!({}))["links"][0]["found"], true, "{local}");
+            assert_eq!(run(&mut a, "component.update_links", json!({}))["unchanged"], json!(["plate"]), "{local}");
+        }
+        // Relink to a network path (programmatic: no prompt) is refused before the disk is asked.
+        let calls = solidcraft_io::vfs::file_calls();
+        let err = a.execute("component.relink", &json!({"component": comp, "path": r"\\evil.example\share\x.solidcraft"})).unwrap_err().to_string();
+        assert!(err.contains("network location"), "{err}");
+        assert_eq!(solidcraft_io::vfs::file_calls(), calls);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every place that reaches a file through a link path goes through the design-path rule
+    /// (`vfs::check_design_path` / `read_design_path` / `design_path_is_file` / `link_refusal`):
+    /// no plain file call on a link's path in the link commands, and the font file a design's text
+    /// names is checked before it is read.
+    #[test]
+    fn every_link_path_goes_through_the_design_path_rule() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let code = |file: &str| {
+            let text = std::fs::read_to_string(root.join(file)).unwrap();
+            // The code before its test module.
+            text.split("\n#[cfg(test)]\n#[allow(clippy::unwrap_used").next().unwrap_or("").to_string()
+        };
+        for file in ["src/cmd/component_link.rs", "src/cmd/component_extract.rs"] {
+            let text = code(file);
+            for raw in [
+                "vfs::read(",
+                "vfs::read_to_string(",
+                "vfs::is_file(",
+                "vfs::exists(",
+                "vfs::len(",
+                "std::fs::read",
+                "std::fs::metadata",
+                ".is_file()",
+                ".exists()",
+                ".metadata()",
+            ] {
+                assert!(!text.contains(raw), "{file}: `{raw}` on a link's path must go through vfs::check_design_path");
+            }
+            // Relink canonicalises the path it is given, after the rule.
+            if let Some(at) = text.find("canonicalize") {
+                let rule = text[..at].rfind("link_refused(s.path.as_deref(), given)").unwrap_or(usize::MAX);
+                assert!(rule < at, "{file}: canonicalize before check_design_path");
+            }
+        }
+        let fonts = std::fs::read_to_string(root.join("../sketch/src/fonts.rs")).unwrap();
+        let (check, read) = (fonts.find("FILE_CHECK.get()").unwrap(), fonts.find("read_font(&path)").unwrap());
+        assert!(check < read, "a font file named by a design is checked before it is read");
+        let io = std::fs::read_to_string(root.join("../io/src/vfs.rs")).unwrap();
+        assert!(io.contains("set_font_file_check(|p| check_design_path("), "the font check is the design-path rule");
     }
 }

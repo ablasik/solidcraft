@@ -179,6 +179,7 @@ mod fillet_spline_handle_tests;
 pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub use navigation::WebWheelGestures;
+pub mod network_prompt;
 pub mod open_elsewhere;
 pub(crate) mod open_meshing;
 pub mod params_dialog;
@@ -512,6 +513,8 @@ pub struct SolveApp {
     pub lock_prompts: Vec<open_elsewhere::LockPrompt>,
     /// A Save waiting for "the file changed on disk" to be answered.
     pub disk_prompt: bool,
+    /// Update Links or Open Linked Design waiting for a network server to be allowed.
+    pub network_prompt: Option<network_prompt::NetworkPrompt>,
     /// Designs left by crashed apps, offered for recovery.
     pub recoverable: Vec<solidcraft_engine::recovery::Entry>,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
@@ -673,6 +676,7 @@ impl SolveApp {
             locks: None,
             lock_prompts: Vec::new(),
             disk_prompt: false,
+            network_prompt: None,
             recoverable: Vec::new(),
             stand_up: None,
             stand_up_occurrence: None,
@@ -903,6 +907,8 @@ impl SolveApp {
             self.ui.layout = p.layout;
             self.preferences = p;
         }
+        // Before a design given at start opens: its paths follow the network preferences.
+        prefs::apply_network(&self.preferences);
         // Saved before the theme was a preference: the Dark/Light flag says which.
         if v.get("preferences").and_then(|p| p.get("theme")).is_none() {
             self.preferences.theme = if self.ui.dark { "dark" } else { "light" }.into();
@@ -1221,8 +1227,9 @@ impl SolveApp {
         }
         if id == "component.update_links" && !self.session.doc.links.is_empty() {
             // Reading the linked designs again takes a while in a large assembly: off the window
-            // thread, the overlay naming the one being read (#5329).
-            let _ = file_load::begin_request(self, file_load::Request::new("", file_load::Kind::UpdateLinks));
+            // thread, the overlay naming the one being read (#5329). A link on a network server
+            // not allowed yet asks first.
+            network_prompt::update_links(self);
             return;
         }
         if id == "component.insert_design" {
@@ -1231,7 +1238,10 @@ impl SolveApp {
             self.pick_open(|app, path| {
                 let Some(path) = path else { return };
                 if solidcraft_engine::io::is_design_path(&path) {
-                    if app.run("component.insert_design", json!({ "path": path })).is_ok() {
+                    // Picked in the file dialog: its server is the user's choice.
+                    let hosts: Vec<String> = solidcraft_engine::io::vfs::network_host(&path).into_iter().collect();
+                    let inserted = solidcraft_engine::io::vfs::allowing_hosts(&hosts, || app.run("component.insert_design", json!({ "path": path })));
+                    if inserted.is_ok() {
                         app.fit_view();
                     }
                 } else {
@@ -2068,6 +2078,7 @@ impl SolveApp {
         open_meshing::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         open_elsewhere::show(self, ui.ctx());
+        network_prompt::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
         // Settings › AI's Add agent dialog: Settings opens over Home too (#3483).

@@ -1,0 +1,32 @@
+{
+  "en": {
+    "network.allow_once": "Allow once",
+    "network.always_allow": "Always allow this server",
+    "network.prompt_detail": "This design links to a file on network location {host}. Opening it connects to that computer and may send your Windows sign-in to it. Only allow servers you trust.",
+    "network.prompt_title": "Network location",
+    "prefs.network_host_remove": "Remove",
+    "prefs.network_locations": "Allow network locations in designs",
+    "prefs.network_locations_note": "Off: a design's linked files on another computer (\\\\server\\share) are opened only from the servers listed here, or after you allow one when asked.",
+    "prefs.network_locations_section": "Network locations"
+  },
+  "ja": {
+    "network.allow_once": "今回のみ許可",
+    "network.always_allow": "このサーバーを常に許可",
+    "network.prompt_detail": "このデザインはネットワーク上の場所 {host} にあるファイルにリンクしています。開くとそのコンピューターに接続し、Windows のサインイン情報が送信される場合があります。信頼できるサーバーだけを許可してください。",
+    "network.prompt_title": "ネットワーク上の場所",
+    "prefs.network_host_remove": "削除",
+    "prefs.network_locations": "デザイン内のネットワーク上の場所を許可",
+    "prefs.network_locations_note": "オフ: 別のコンピューター (\\\\server\\share) にあるデザインのリンク先ファイルは、ここに表示されたサーバー、または確認時に許可したサーバーからのみ開きます。",
+    "prefs.network_locations_section": "ネットワーク上の場所"
+  },
+  "zh": {
+    "network.allow_once": "仅允许一次",
+    "network.always_allow": "始终允许此服务器",
+    "network.prompt_detail": "此设计链接到网络位置 {host} 上的文件。打开它会连接到该计算机，并可能向其发送你的 Windows 登录信息。只允许你信任的服务器。",
+    "network.prompt_title": "网络位置",
+    "prefs.network_host_remove": "删除",
+    "prefs.network_locations": "允许设计中的网络位置",
+    "prefs.network_locations_note": "关闭：设计中位于其他计算机 (\\\\server\\share) 上的链接文件，只会从此处列出的服务器打开，或在询问时你允许的服务器打开。",
+    "prefs.network_locations_section": "网络位置"
+  }
+}
