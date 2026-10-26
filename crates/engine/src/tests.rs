@@ -3597,6 +3597,64 @@ fn a_pick_bounded_by_a_projected_rim_takes_only_that_region() {
     assert!(rel(v, want) < 5e-3, "{v} vs {want}");
 }
 
+/// A circle drawn partly past the edge of the top face its sketch is on: the face's projected
+/// outline cuts it into a lens on the face and a crescent past it. A pick that asks for exactly
+/// its region, as the dialogs do, builds that region alone (#6724); a plain pick still takes the
+/// whole drawn circle (#5302).
+#[test]
+fn an_exact_pick_of_a_region_cut_by_the_face_outline_takes_only_that_region() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10, "body_name": "Base"}));
+    let id = run(&mut s, "sketch.create", json!({"plane": {"face": [0, 0, 10]}}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.circle.center", json!({"center": [10, 0], "radius": 6}));
+    run(&mut s, "sketch.finish", json!({}));
+    // The two circles' lens, and the rest of the drawn circle past the face.
+    let (r1, r2, d) = (10.0_f64, 6.0_f64, 10.0_f64);
+    let lens = r1 * r1 * ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).acos() + r2 * r2 * ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).acos()
+        - 0.5 * ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).sqrt();
+    let disc = PI * r2 * r2;
+    let crescent = disc - lens;
+    let state = s.model.state();
+    let ss = state.sketch(id).unwrap();
+    assert_eq!(ss.profiles.len(), 3, "the lens, the crescent past the face and the rest of the face");
+    let at = |x: f64| ss.profiles.iter().position(|p| p.region.contains(solidcraft_geom::Vec2::new(x, 0.0))).unwrap();
+    let (on_face, past_face) = (at(7.0), at(14.0));
+    // The volume of the new body, and how many profiles its extrude is built from.
+    let extrude = |extra: Value| -> (f64, usize) {
+        let mut s2 = Session::new((*s.doc).clone());
+        let mut p = json!({"sketch": id, "distance": 5, "operation": "new", "body_name": "Pad"});
+        if let (Some(p), Value::Object(extra)) = (p.as_object_mut(), extra) {
+            p.extend(extra);
+        }
+        run(&mut s2, "solid.extrude", p);
+        let state = s2.model.state();
+        let Some(solidcraft_doc::FeatureKind::Extrude { profiles, .. }) = s2.doc.features.last().map(|f| &f.kind) else { panic!("an extrude") };
+        let count = solidcraft_doc::profile_selection_indices(state.sketch(id).unwrap(), profiles).unwrap().len();
+        let v = state.bodies.iter().filter(|b| b.name.starts_with("Pad")).map(|b| b.body.tessellate(1e-2).unwrap().measure().volume).sum();
+        (v, count)
+    };
+    for (profiles, want, n) in [
+        (json!([on_face]), lens, 1),
+        (json!([past_face]), crescent, 1),
+        (json!([{"point": [7, 0]}]), lens, 1),
+        (json!([{"point": [14, 0]}]), crescent, 1),
+        (json!([on_face, past_face]), disc, 2),
+    ] {
+        let (v, count) = extrude(json!({"profiles": profiles.clone(), "exact_regions": true}));
+        assert!(rel(v, want * 5.0) < 5e-3, "{profiles}: {v} vs {}", want * 5.0);
+        assert_eq!(count, n, "{profiles}");
+    }
+    // Without `exact_regions`, a pick on either piece takes the whole drawn circle (#5302).
+    for profiles in [json!([on_face]), json!([{"point": [14, 0]}])] {
+        let (v, count) = extrude(json!({"profiles": profiles.clone()}));
+        assert!(rel(v, disc * 5.0) < 5e-3, "{profiles}: {v} vs {}", disc * 5.0);
+        assert_eq!(count, 2, "{profiles}");
+    }
+}
+
 /// An explicit pick of a drawn hole still fills only that hole (#5176).
 #[test]
 fn an_explicit_pick_of_a_drawn_hole_fills_only_that_hole() {

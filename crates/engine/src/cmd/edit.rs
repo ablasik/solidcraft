@@ -1070,7 +1070,7 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Profiles picked by index or point are kept by their curves, as when the feature was made.
     if nf.kind.clone().profile_sels_mut() != f.kind.clone().profile_sels_mut() {
-        super::features::stable_profiles(s, &mut nf.kind)?;
+        super::features::stable_profiles(s, &mut nf.kind, false)?;
     }
     // New face points: their faces' names now.
     if nf.kind.face_points() != f.kind.face_points() {

@@ -776,3 +776,43 @@ fn viewport_click_preserves_active_secondary_dialog_value() {
     h.step(&json!({"text":"30"})).unwrap();
     assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Extrude { distance, distance2, .. } if distance == "10 mm" && distance2 == "30"));
 }
+
+/// A circle drawn partly past the top face its sketch is on is cut by the face's projected outline
+/// into a lens on the face and a crescent past it. Clicking one of them in Extrude builds that
+/// region alone, the one highlighted and counted, not the whole circle (#6724).
+#[test]
+fn extrude_builds_the_one_region_clicked_where_the_face_outline_cuts_a_profile() {
+    for x in [7.0, 14.0] {
+        let mut h = Harness::new();
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.app.run("sketch.circle.center", json!({"center": [0, 0], "radius": 10})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("solid.extrude", json!({"distance": 10, "body_name": "Base"})).unwrap();
+        let sketch = h.app.run("sketch.create", json!({"plane": {"face": [0, 0, 10]}})).unwrap()["sketch"].as_u64().unwrap();
+        h.app.run("sketch.circle.center", json!({"center": [10, 0], "radius": 6})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        let state = h.app.session.world_state();
+        let ss = state.sketch(sketch).unwrap();
+        assert_eq!(ss.profiles.len(), 3, "the lens, the crescent past the face and the rest of the face");
+        let index = ss.profiles.iter().position(|p| p.region.contains(solidcraft_engine::geom::Vec2::new(x, 0.0))).unwrap();
+        let area = ss.profiles[index].area;
+        let mut d = Dialog::for_command(&h.app, "solid.extrude").unwrap();
+        if let Kind::Extrude { distance, .. } = &mut d.kind {
+            *distance = "5".into();
+        }
+        d.pick(&h.app.session, Sel::Profile { sketch, index });
+        assert_eq!(d.items(), vec![Sel::Profile { sketch, index }], "one region picked at x = {x}");
+        let commands = apply_commands(&h.app, &d).unwrap();
+        assert_eq!(commands.len(), 1, "{commands:?}");
+        let (id, p) = &commands[0];
+        assert_eq!(p["exact_regions"], json!(true), "{p}");
+        let before = h.app.run("inspect.measure", json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+        let made = h.app.run(id, p.clone()).unwrap()["feature"].as_u64().unwrap();
+        let Some(FeatureKind::Extrude { profiles, .. }) = h.app.session.doc.feature(made).map(|f| f.kind.clone()) else { panic!("an extrude") };
+        let after = h.app.session.world_state();
+        let used = solidcraft_engine::doc::profile_selection_indices(after.sketch(sketch).unwrap(), &profiles).unwrap();
+        assert_eq!(used, vec![index], "the region clicked at x = {x}, and only it");
+        let volume = h.app.run("inspect.measure", json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+        assert!(((volume - before) - area * 5.0).abs() < 5e-3 * area * 5.0, "x = {x}: {volume} - {before} vs {}", area * 5.0);
+    }
+}

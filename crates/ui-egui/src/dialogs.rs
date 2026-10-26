@@ -3546,7 +3546,8 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
         *value = crate::length_input::expression(&app.session.doc, value, ValueKind::Length);
     }
     crate::length_input::extra(&mut normalized.extra, |e| crate::length_input::expression(&app.session.doc, e, ValueKind::Length));
-    let cmds = dialog_commands(app, &normalized)?;
+    let mut cmds = dialog_commands(app, &normalized)?;
+    exact_regions(d, &mut cmds);
     if let Some((id, _)) = d.editing {
         let (cmd, mut params) = cmds.into_iter().next().ok_or("nothing to apply")?;
         if let Some(feature) = app.session.doc.feature(id) {
@@ -3577,6 +3578,23 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
         return Ok(vec![("timeline.redefine".into(), json!({"feature": id, "command": cmd, "params": params}))]);
     }
     Ok(cmds)
+}
+
+/// A dialog highlights exactly the profile regions it picks, so its commands build exactly those:
+/// a region cut off by the projected outline of the face a sketch is on stays the one region
+/// clicked (#6724). Without `exact_regions` a command grows such a pick to the whole drawn profile
+/// (#5302), which the highlight and the count would not show.
+fn exact_regions(d: &Dialog, cmds: &mut [(String, Value)]) {
+    if !d.inputs.iter().any(|input| input.items.iter().any(|item| matches!(item, Sel::Profile { .. }))) {
+        return;
+    }
+    for (_, params) in cmds {
+        if let Some(map) = params.as_object_mut()
+            && (map.contains_key("profiles") || map.contains_key("sections"))
+        {
+            map.insert("exact_regions".into(), json!(true));
+        }
+    }
 }
 
 /// The commands the live preview runs: OK's, with a joint's motion while it animates.
