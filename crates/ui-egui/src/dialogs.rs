@@ -2921,9 +2921,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         && let Some(mut plane) = crate::sketch_attachment_ui::face_plane(app, sel)
     {
         plane["fixed"] = json!(true);
+        let before = app.settled_cam();
         match app.run("sketch.create", json!({"plane":plane})) {
             Ok(_) => {
-                look_at_sketch(app);
+                app.look_at_opened_sketch(before);
                 cancel = true;
                 then_start = d.then_start;
             }
@@ -3330,8 +3331,9 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     {
         params["flip"] = json!(flip);
     }
+    let before = app.settled_cam();
     app.run("sketch.create", params).map_err(|error| crate::friendly_error("sketch.create", &error))?;
-    look_at_sketch(app);
+    app.look_at_opened_sketch(before);
     // On a face: look at the picked point, not the plane's origin (a corner of the face),
     // which left the face filling the view off-centre like a big square.
     if let Sel::Face { point, .. } = sel

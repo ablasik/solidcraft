@@ -401,6 +401,14 @@ pub struct Services {
     pub secrets: Option<std::sync::Arc<dyn agent_chat::backend::Secrets>>,
 }
 
+/// The view before a sketch opened and the view that faced the sketch then (#7038).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreSketchView {
+    pub sketch: u64,
+    pub before: Camera,
+    pub facing: Camera,
+}
+
 pub struct SolveApp {
     /// Compact browser embed: retain model panels and joint controls without application chrome.
     pub embedded: bool,
@@ -415,6 +423,9 @@ pub struct SolveApp {
     /// The history marker before Edit Sketch rolled the timeline to the sketch; Finish Sketch
     /// restores it.
     pub pre_sketch_marker: Option<Option<usize>>,
+    /// The views around opening the open sketch. Leaving it goes back to the earlier one as the
+    /// "When a sketch ends" preference says (#7038).
+    pub pre_sketch_cam: Option<PreSketchView>,
     pub services: Services,
     file_picker: Option<file_picker::Pending>,
     /// A Save or Save As being written on a worker (see [`save_job`]).
@@ -612,6 +623,7 @@ impl SolveApp {
             cam_anim: None,
             now: 0.0,
             pre_sketch_marker: None,
+            pre_sketch_cam: None,
             services,
             file_picker: None,
             saving: None,
@@ -1470,6 +1482,7 @@ impl SolveApp {
         }
         let Some(idx) = self.session.doc.feature_index(id) else { return };
         let marker = self.finish_sketch_for_edit();
+        let before = self.settled_cam();
         self.tool = None;
         self.dialog = None;
         let rolled = self.session.doc.marker != Some(idx + 1) && self.run("timeline.roll_to", json!({ "position": idx + 1 })).is_ok();
@@ -1480,7 +1493,19 @@ impl SolveApp {
             return;
         }
         self.pre_sketch_marker = (rolled || marker != self.session.doc.marker).then_some(marker);
+        self.look_at_opened_sketch(before);
+    }
+
+    /// Turn the view to face the sketch just opened, and remember the view from `before` it and
+    /// the one facing it for when the sketch ends (#7038).
+    pub(crate) fn look_at_opened_sketch(&mut self, before: Camera) {
         dialogs::look_at_sketch(self);
+        self.pre_sketch_cam = self.session.active_sketch.map(|sketch| PreSketchView { sketch, before, facing: self.settled_cam() });
+    }
+
+    /// Where the camera is going: the end of the running camera animation, else where it is.
+    pub(crate) fn settled_cam(&self) -> Camera {
+        self.cam_anim.map_or(self.cam, |a| a.to)
     }
 
     /// Pass the original marker to the next editor. Restoring it between editors could finish
@@ -1498,7 +1523,8 @@ impl SolveApp {
     }
 
     /// Finish the active sketch: stop editing and restore the history marker Edit Sketch moved.
-    /// The camera stays where it is, however the sketch is left.
+    /// The camera goes where the "When a sketch ends" preference says (#7038); by default it
+    /// stays where it is, however the sketch is left.
     pub fn finish_sketch(&mut self) {
         self.leave_sketch("sketch.finish");
     }
@@ -1516,11 +1542,18 @@ impl SolveApp {
         }
         dim_view::cancel();
         self.tool = None;
+        let open = self.session.active_sketch;
         if self.run(command, json!({})).is_err() && command != "sketch.finish" {
             return;
         }
         if let Some(marker) = self.pre_sketch_marker.take() {
             self.restore_marker(marker);
+        }
+        // Only the views saved when this sketch opened: one opened another way saved none.
+        if let Some(view) = self.pre_sketch_cam.take().filter(|v| Some(v.sketch) == open)
+            && let Some(to) = self.preferences.sketch_exit_view.view_after(view.before, view.facing, self.settled_cam())
+        {
+            self.animate_to(to);
         }
     }
 

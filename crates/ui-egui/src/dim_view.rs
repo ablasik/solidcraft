@@ -6,7 +6,9 @@
 //!
 //! A click selects a dimension (Delete removes it), a drag moves its text (and so the offset of
 //! its dimension line), a double-click (or one click with the Dimension tool) edits its value
-//! in place with parameter completion.
+//! in place with parameter completion. A finished sketch's shown dimensions (Show Dimensions,
+//! drawn by `crate::browser::dims_overlay`) take the same double-click from the model view: the
+//! value is edited without editing the sketch.
 //! Everything acts through commands: `sketch.dimension_text`, `sketch.delete`,
 //! `parameters.change`.
 
@@ -55,6 +57,9 @@ struct Edit {
     /// The last dimension a click referenced, and when: the second click of a double-click on
     /// it must not insert its name again.
     picked: Option<(String, f64)>,
+    /// A shown dimension of a finished sketch, edited from the model view without editing the
+    /// sketch (its id). None: a dimension of the sketch being edited.
+    sketch: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,7 +153,7 @@ pub fn begin_dimension(app: &mut SolveApp, entities: Vec<String>, at: Vec2) -> R
     }
     EDIT.with(|edit| {
         *edit.borrow_mut() =
-            Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft), live: None, selection: None, picked: None })
+            Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft), live: None, selection: None, picked: None, sketch: None })
     });
     PLACEMENT.with(|preview| *preview.borrow_mut() = None);
     Ok(())
@@ -168,7 +173,8 @@ pub fn begin_live(app: &mut SolveApp, entities: Vec<String>, pointer: Option<Pos
     }
     let live = Some(Live { origin: pointer, moved: false, typed: false });
     EDIT.with(|edit| {
-        *edit.borrow_mut() = Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft), live, selection: None, picked: None })
+        *edit.borrow_mut() =
+            Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft), live, selection: None, picked: None, sketch: None })
     });
     PLACEMENT.with(|preview| *preview.borrow_mut() = None);
     Ok(true)
@@ -329,6 +335,64 @@ thread_local! {
     static DRAG: RefCell<Option<(String, usize, Vec2)>> = const { RefCell::new(None) };
     static EDIT: RefCell<Option<Edit>> = const { RefCell::new(None) };
     static PLACEMENT: RefCell<Option<Placement>> = const { RefCell::new(None) };
+    /// Value texts of finished sketches' shown dimensions (Show Dimensions), as the model view
+    /// drew them last frame: sketch, constraint id, parameter (None: driven), text box.
+    static MODEL: RefCell<Vec<ModelDim>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A shown dimension of a finished sketch, as drawn in the model view (screen space).
+#[derive(Clone, Debug)]
+pub(crate) struct ModelDim {
+    pub sketch: u64,
+    pub id: String,
+    pub param: Option<String>,
+    pub text: Rect,
+}
+
+/// Remember the finished sketches' dimensions the model view drew this frame.
+pub(crate) fn set_model_drawn(dims: Vec<ModelDim>) {
+    MODEL.with(|m| *m.borrow_mut() = dims);
+}
+
+/// The finished sketch's shown dimension whose value text is under a screen position.
+fn model_hit(pos: Pos2) -> Option<ModelDim> {
+    MODEL.with(|m| m.borrow().iter().rev().find(|x| x.text.expand(2.0).contains(pos)).cloned())
+}
+
+/// Shown dimensions of finished sketches drawn last frame: (sketch, id, text centre), for tests
+/// and the control channel.
+pub fn model_drawn() -> Vec<(u64, String, Pos2)> {
+    MODEL.with(|m| m.borrow().iter().map(|x| (x.sketch, x.id.clone(), x.text.center())).collect())
+}
+
+/// A double-click on a finished sketch's shown dimension (outside sketch editing) opens its value
+/// in the same inline editor, without editing the sketch or moving the view (true: it was on one).
+/// Enter changes the dimension's own expression through `parameters.change`, one undo step.
+pub fn model_double_click(app: &mut SolveApp, pos: Pos2) -> bool {
+    if app.session.active_sketch.is_some() {
+        return false;
+    }
+    let Some(d) = model_hit(pos) else { return false };
+    let Some(param) = d.param else {
+        app.set_status("A driven dimension measures the sketch; it has no value to edit", false);
+        return true;
+    };
+    let expr = app.session.doc.param(&param).map(|p| p.expr.clone()).unwrap_or_default();
+    EDIT.with(|e| {
+        *e.borrow_mut() = Some(Edit {
+            param,
+            expr,
+            at: Some(d.text.center()),
+            fresh: FRESH,
+            wait: 0,
+            draft: None,
+            live: None,
+            selection: None,
+            picked: None,
+            sketch: Some(d.sketch),
+        })
+    });
+    true
 }
 
 /// Frames the inline editor holds on to the keyboard after opening.
@@ -405,8 +469,18 @@ fn open_editor(app: &mut SolveApp, id: Option<String>) -> bool {
     };
     let expr = app.session.doc.param(&param).map(|p| p.expr.clone()).unwrap_or_default();
     EDIT.with(|e| {
-        *e.borrow_mut() =
-            Some(Edit { param, expr, at: Some(d.text.center()), fresh: FRESH, wait: 0, draft: None, live: None, selection: None, picked: None })
+        *e.borrow_mut() = Some(Edit {
+            param,
+            expr,
+            at: Some(d.text.center()),
+            fresh: FRESH,
+            wait: 0,
+            draft: None,
+            live: None,
+            selection: None,
+            picked: None,
+            sketch: None,
+        })
     });
     true
 }
@@ -508,9 +582,31 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     let st = app.session.world_state();
     let Some(ss) = app.session.active_sketch.and_then(|s| st.sketch(s)) else {
         DRAWN.with(|d| d.borrow_mut().clear());
-        EDIT.with(|e| *e.borrow_mut() = None);
+        // Only a finished sketch's dimension edited from the model view stays open, at its text.
+        let model = EDIT.with(|e| {
+            let mut e = e.borrow_mut();
+            let keep = e.as_ref().and_then(|x| x.sketch).is_some_and(|s| app.session.active_sketch.is_none() && st.sketch(s).is_some());
+            if !keep {
+                *e = None;
+            } else if let Some(x) = e.as_mut()
+                && let Some(d) = MODEL.with(|m| m.borrow().iter().find(|d| d.param.as_deref() == Some(x.param.as_str())).cloned())
+            {
+                x.at = Some(d.text.center());
+            }
+            keep
+        });
+        if model {
+            edit_box(app, ui.ctx());
+        }
         return;
     };
+    // Editing a sketch closes a value opened from the model view.
+    EDIT.with(|e| {
+        let mut e = e.borrow_mut();
+        if e.as_ref().is_some_and(|x| x.sketch.is_some()) {
+            *e = None;
+        }
+    });
     let sk = &ss.sketch;
     if sk.view.hide_dimensions {
         DRAWN.with(|d| d.borrow_mut().clear());
@@ -635,8 +731,18 @@ fn pos2_mid_top(r: Rect) -> Pos2 {
 pub fn edit_param(app: &SolveApp, param: &str) {
     let expr = app.session.doc.param(param).map(|p| p.expr.clone()).unwrap_or_default();
     EDIT.with(|e| {
-        *e.borrow_mut() =
-            Some(Edit { param: param.to_string(), expr, at: None, fresh: FRESH, wait: 10, draft: None, live: None, selection: None, picked: None })
+        *e.borrow_mut() = Some(Edit {
+            param: param.to_string(),
+            expr,
+            at: None,
+            fresh: FRESH,
+            wait: 10,
+            draft: None,
+            live: None,
+            selection: None,
+            picked: None,
+            sketch: None,
+        })
     });
 }
 
@@ -694,8 +800,13 @@ pub fn pick_reference(ctx: &egui::Context, pos: Pos2, double: bool) -> bool {
     EDIT.with(|editor| {
         let mut editor = editor.borrow_mut();
         let Some(edit) = editor.as_mut() else { return false };
-        let Some(id) = hit(pos) else { return false };
-        let param = DRAWN.with(|d| d.borrow().iter().find(|d| d.id == id).and_then(|d| d.param.clone()));
+        let param = if edit.sketch.is_some() {
+            let Some(d) = model_hit(pos) else { return false };
+            d.param
+        } else {
+            let Some(id) = hit(pos) else { return false };
+            DRAWN.with(|d| d.borrow().iter().find(|d| d.id == id).and_then(|d| d.param.clone()))
+        };
         // Self references and driven dimensions cannot supply a reference.
         if let Some(param) = param.filter(|p| p != &edit.param) {
             let now = ctx.input(|i| i.time);

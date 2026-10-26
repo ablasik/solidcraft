@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 pub use solidcraft_engine::doc::display_units::{format_length, length_number, length_precision, unit_scale};
 use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::render::Camera;
 
 /// The key the apps keep the preferences under in eframe's storage.
 pub const STORAGE_KEY: &str = "solidcraft.prefs";
@@ -329,6 +330,53 @@ pub enum OrbitAround {
     ViewCentre,
     /// The model point under the cursor when the drag began.
     Cursor,
+}
+
+/// Where the view goes when a sketch ends (Preferences: "When a sketch ends", #7038).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SketchExitView {
+    /// Back to the view from before the sketch opened.
+    Previous,
+    /// The view stays where it is (the default since #4909).
+    #[default]
+    Keep,
+    /// Back to the view from before the sketch, unless the sketch view was turned: a view only
+    /// panned or zoomed goes back, a turned one stays.
+    UnlessRotated,
+}
+
+impl SketchExitView {
+    pub const ALL: [Self; 3] = [Self::Previous, Self::Keep, Self::UnlessRotated];
+
+    /// The message id of the choice's label.
+    pub fn label_id(self) -> &'static str {
+        match self {
+            Self::Previous => "prefs.sketch_exit_view.previous",
+            Self::Keep => "prefs.sketch_exit_view.keep",
+            Self::UnlessRotated => "prefs.sketch_exit_view.unless_rotated",
+        }
+    }
+
+    /// The view to turn to when a sketch ends with the camera at `now`, or `None` to leave it.
+    /// `before` is the view from before the sketch opened and `facing` the one it turned to then.
+    /// Going back keeps `now`'s projection, so a perspective switch made in the sketch stays.
+    pub fn view_after(self, before: Camera, facing: Camera, now: Camera) -> Option<Camera> {
+        let back = Camera { fov: now.fov, ..before };
+        match self {
+            Self::Previous => Some(back),
+            Self::Keep => None,
+            Self::UnlessRotated => same_orientation(facing, now).then_some(back),
+        }
+    }
+}
+
+/// Whether two cameras look the same way: pans and zooms move a camera without turning it.
+/// Half a degree absorbs rounding in the animation that turned the view to face the sketch.
+fn same_orientation(a: Camera, b: Camera) -> bool {
+    let near = 0.5_f64.to_radians().cos();
+    let ((ar, au, ab), (br, bu, bb)) = (a.basis(), b.basis());
+    ar.dot(br) > near && au.dot(bu) > near && ab.dot(bb) > near
 }
 
 /// Which program reads the 3D mouse on Linux when both spacenavd and the device itself (hidraw)
@@ -687,6 +735,8 @@ preference_settings! {
     /// A sketch tool's shortcut pressed again before the first point steps to the tool's next
     /// creation mode (#2459). Off (the default): the key starts the tool again, as it always has.
     shortcut_cycles_modes: bool = false, PAGE_SKETCH;
+    /// Where the view goes when a sketch ends (#7038). Keep (the default) leaves it as it is.
+    sketch_exit_view: SketchExitView = SketchExitView::default(), PAGE_SKETCH;
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;

@@ -738,6 +738,10 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             "dialog": app.dialog.as_ref().map(|d| d.inputs.iter().map(|i| json!({"label": i.label, "items": i.items})).collect::<Vec<_>>()),
             "hover": app.viewport.hover.as_ref().map(|h| format!("{h:?}")),
             "dimensions": crate::dim_view::drawn().into_iter().map(|(id, p)| json!({"id": id, "x": p.x, "y": p.y})).collect::<Vec<_>>(),
+            "shown_dimensions": crate::dim_view::model_drawn()
+                .into_iter()
+                .map(|(sketch, id, p)| json!({"sketch": sketch, "id": id, "x": p.x, "y": p.y}))
+                .collect::<Vec<_>>(),
             "dimension_selected": crate::dim_view::selected(app),
             "dimension_editing": crate::dim_view::editing(),
         })),

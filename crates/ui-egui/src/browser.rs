@@ -2467,14 +2467,17 @@ pub(crate) fn occurrence_triad(app: &mut SolveApp, ui: &mut egui::Ui, painter: &
 }
 
 /// Dimensions of finished sketches whose dimensions are shown (Show Dimensions), drawn over the
-/// viewport like the sketch being edited draws its own (`crate::dim_view`), but not editable.
+/// viewport like the sketch being edited draws its own (`crate::dim_view`). A double-click on a
+/// value edits it in place without editing the sketch (`crate::dim_view::model_double_click`).
 pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
     use solidcraft_engine::geom::Vec2;
     use solidcraft_engine::sketch::{DimFrame, chain_centres, default_text, dim_frame, dim_layout_reaching, dim_reach};
+    crate::dim_view::set_model_drawn(Vec::new());
     let Some(rect) = app.viewport.rect else { return };
     if app.session.visibility.shown_dimensions.is_empty() {
         return;
     }
+    let mut drawn = Vec::new();
     let tk = Tokens::get();
     let proj = crate::viewport::projection(app, rect);
     let painter = ctx.layer_painter(egui::LayerId::background()).with_clip_rect(rect);
@@ -2527,8 +2530,12 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             let r = Rect::from_center_size(tc, size);
             painter.rect_filled(r, tk.radius_sm / 2, tk.viewport_top.gamma_multiply(0.85));
             painter.galley(r.min + vec2(3.0, 1.0), galley, col);
+            if rect.contains(tc) {
+                drawn.push(crate::dim_view::ModelDim { sketch: *id, id: c.id.clone(), param: c.param.clone(), text: r });
+            }
         }
     }
+    crate::dim_view::set_model_drawn(drawn);
 }
 
 /// Keep browser panels beside the browser and below the ribbon, including the floating shell.
