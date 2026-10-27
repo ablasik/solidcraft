@@ -750,11 +750,14 @@ fn main() -> eframe::Result {
     let mut control_port: Option<u16> = solidcraft_engine::geom::env::var("CONTROL_PORT").and_then(|p| p.parse().ok());
     let mut files = Vec::new();
     let mut sample = false;
+    // `--theme-file PATH`: follow that theme file for this run without saving it (#7573).
+    let mut theme_file: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
+            "--theme-file" => theme_file = args.next(),
             "--safe-mode" => safe_mode = true,
             "--version" | "-V" => {
                 println!("solidcraft {}", env!("CARGO_PKG_VERSION"));
@@ -774,7 +777,9 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             "--help" | "-h" => {
-                println!("usage: solidcraft [--control PORT] [--sample] [--crash-log] [--safe-mode] [design.solidcraft | part.step]");
+                println!(
+                    "usage: solidcraft [--control PORT] [--sample] [--theme-file THEME.json] [--crash-log] [--safe-mode] [design.solidcraft | part.step]"
+                );
                 return Ok(());
             }
             _ => files.push(a),
@@ -925,6 +930,11 @@ fn main() -> eframe::Result {
             app.graphics_fallback = fallback_note.clone();
             if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))).filter(|_| !safe_mode) {
                 app.load_prefs(&p);
+            }
+            if let Some(path) = &theme_file
+                && let Err(e) = solidcraft_ui_egui::prefs::follow_theme_file_for_run(&mut app, path)
+            {
+                app.set_status(format!("--theme-file: {e}"), true);
             }
             mark("app state and prefs");
             let gpu = cc.wgpu_render_state.as_ref().map(|rs| LostWatch {

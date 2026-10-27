@@ -329,6 +329,8 @@ crate::dialog_descriptor::dialog_descriptors! {
                 /// face is planar. `None` keeps the command's own placement (the origin, or the edited
                 /// feature's).
                 at: Option<(Vec3, Option<Vec3>)>,
+                /// A Cylinder's reference edge distances on that face (`hole_refs`, #6380).
+                refs: Box<crate::hole_refs::Refs>,
             },
             Combine {
                 operation: usize,
@@ -932,6 +934,7 @@ impl Dialog {
                     fields: vec![("length", length_default(s, "20")), ("width", length_default(s, "20")), ("height", length_default(s, "20"))],
                     operation: 0,
                     at: None,
+                    refs: Default::default(),
                 },
                 crate::primitive_placement::inputs("solid.box"),
             ),
@@ -941,11 +944,18 @@ impl Dialog {
                     fields: vec![("diameter", length_default(s, "20")), ("height", length_default(s, "20"))],
                     operation: 0,
                     at: None,
+                    refs: Default::default(),
                 },
-                vec![],
+                crate::hole_refs::cylinder_inputs(),
             ),
             "solid.sphere" => Dialog::new(
-                Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", length_default(s, "20"))], operation: 0, at: None },
+                Kind::Primitive {
+                    cmd: "solid.sphere",
+                    fields: vec![("diameter", length_default(s, "20"))],
+                    operation: 0,
+                    at: None,
+                    refs: Default::default(),
+                },
                 vec![],
             ),
             "solid.torus" => Dialog::new(
@@ -954,6 +964,7 @@ impl Dialog {
                     fields: vec![("major", length_default(s, "20")), ("minor", length_default(s, "5"))],
                     operation: 0,
                     at: None,
+                    refs: Default::default(),
                 },
                 vec![],
             ),
@@ -967,6 +978,7 @@ impl Dialog {
                     ],
                     operation: 0,
                     at: None,
+                    refs: Default::default(),
                 },
                 vec![],
             ),
@@ -981,6 +993,7 @@ impl Dialog {
                     ],
                     operation: 0,
                     at: None,
+                    refs: Default::default(),
                 },
                 vec![SelInput::new("Profile", PROFILES, false)],
             ),
@@ -4474,7 +4487,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             }
             return Ok(out);
         }
-        Kind::Primitive { cmd, fields, operation, at } => {
+        Kind::Primitive { cmd, fields, operation, at, .. } => {
             let mut p = serde_json::Map::new();
             for (k, v) in fields {
                 p.insert((*k).into(), json!(v));
@@ -4496,6 +4509,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         p.insert("base".into(), pt(point));
                         if let Some(n) = normal {
                             p.insert("axis".into(), pt(n));
+                        }
+                        // Reference edges (#6380) place the base by its distances from them.
+                        let references = crate::hole_refs::params(d);
+                        if !references.is_empty() {
+                            p.insert("references".into(), json!(references));
                         }
                     }
                     _ => {
@@ -5467,26 +5485,50 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 fields: vec![("length", stored_length(s, length)), ("width", stored_length(s, width)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
+                refs: Default::default(),
             };
             d.extra.insert("corner".into(), pt_expr(corner));
             d
         }
-        FeatureKind::Cylinder { base, axis, radius, height, operation } => {
+        FeatureKind::Cylinder { base, axis, radius, height, operation, references } => {
             let mut d = start("solid.cylinder")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.cylinder",
                 fields: vec![("radius", stored_length(s, radius)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
+                refs: Default::default(),
             };
             d.extra.insert("base".into(), pt_expr(base));
             d.extra.insert("axis".into(), pt3(axis.0));
+            // Standing on a flat face (a base of numbers there, square to it): placed there, so it
+            // can take reference edges of that face (#6380), with its own picked again. Not the
+            // picks a selection made when the window opened.
+            d.inputs = crate::hole_refs::cylinder_inputs();
+            let [x, y, z] = base.clone().map(|c| c.parse::<f64>().ok());
+            if let (Some(x), Some(y), Some(z)) = (x, y, z)
+                && let Some(face @ Sel::Face { .. }) = face_sel(s, Vec3::new(x, y, z))
+                && let Sel::Face { body, index, .. } = &face
+                && planar_face(s, body, *index).is_some_and(|(_, n)| n.dot(axis.0) > 1.0 - 1e-9)
+                && let Kind::Primitive { at, .. } = &mut d.kind
+            {
+                *at = Some((Vec3::new(x, y, z), Some(axis.0)));
+                if let Some(inp) = d.inputs.first_mut() {
+                    inp.items = vec![face];
+                }
+                crate::hole_refs::restore(s, &mut d, references, &f.edge_names);
+            }
             d
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let mut d = start("solid.sphere")?;
-            d.kind =
-                Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", stored_length(s, radius))], operation: op_index(operation), at: None };
+            d.kind = Kind::Primitive {
+                cmd: "solid.sphere",
+                fields: vec![("radius", stored_length(s, radius))],
+                operation: op_index(operation),
+                at: None,
+                refs: Default::default(),
+            };
             d.extra.insert("center".into(), pt_expr(center));
             d
         }
@@ -5497,6 +5539,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 fields: vec![("major", stored_length(s, major)), ("minor", stored_length(s, minor))],
                 operation: op_index(operation),
                 at: None,
+                refs: Default::default(),
             };
             d.extra.insert("center".into(), pt_expr(center));
             d
@@ -5528,6 +5571,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 ],
                 operation: op_index(operation),
                 at: None,
+                refs: Default::default(),
             };
             if let Some(sketch) = sketch {
                 let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
@@ -5567,6 +5611,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 ],
                 operation: op_index(operation),
                 at: None,
+                refs: Default::default(),
             };
             d.extra.insert("base".into(), pt_expr(base));
             d.extra.insert("axis".into(), pt3(axis.0));

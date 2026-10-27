@@ -1383,3 +1383,67 @@ fn a_body_seen_in_another_placement_copies_from_there() {
     let state = s.model.state();
     assert_eq!(s.doc.model_body_component(state.body("Cube (2)").unwrap()), 0);
 }
+
+/// A nested assembly's body listing, and the indexed placement agreeing with the plain walk
+/// (#7502: listing a subtree must cost the subtree, not the subtree times the design).
+#[test]
+fn occurrence_bodies_lists_a_nested_assembly() {
+    let mut s = Session::default();
+    let (_outer, outer) = created(&mut s, "Outer");
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Shell"}));
+    let (_middle, middle) = created(&mut s, "Middle");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "body_name": "Plate"}));
+    let (_inner, inner) = created(&mut s, "Inner");
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "body_name": "Pin"}));
+    let deep = [outer, middle, inner];
+    let sorted = |v: Vec<String>| {
+        let mut v = v;
+        v.sort();
+        v
+    };
+    assert_eq!(sorted(s.occurrence_bodies(&deep, true).unwrap()), ["Pin"]);
+    assert_eq!(sorted(s.occurrence_bodies(&[outer, middle], true).unwrap()), ["Pin", "Plate"]);
+    assert_eq!(sorted(s.occurrence_bodies(&[outer], true).unwrap()), ["Pin", "Plate", "Shell"]);
+    assert_eq!(sorted(s.occurrence_bodies(&[outer, middle], false).unwrap()), ["Plate"]);
+    // The indexed placement answers exactly what the plain walk does.
+    for path in [&deep[..], &[outer, middle][..], &[outer][..]] {
+        let (indexed, walked) = (s.occurrence_placement(path).unwrap(), s.occurrence_placement_walk(path).unwrap());
+        assert_eq!(indexed.component, walked.component);
+        assert_eq!(indexed.name, walked.name);
+        assert_eq!(indexed.world, walked.world);
+        assert_eq!(indexed.bodies.len(), walked.bodies.len());
+        for (a, b) in indexed.bodies.iter().zip(&walked.bodies) {
+            assert_eq!((a.source.as_str(), a.world.as_str()), (b.source.as_str(), b.world.as_str()));
+        }
+    }
+}
+
+/// A burst of other paths retires single remembered answers instead of clearing the whole
+/// cache, so the active occurrence's listing survives and needn't re-expand (#7502).
+#[test]
+fn occurrence_bodies_cache_retires_one_answer_when_full() {
+    let mut s = Session::default();
+    let (_assembly, assembly) = created(&mut s, "Assembly");
+    let (part, _) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "body_name": "Part"}));
+    let mut copies = Vec::new();
+    for i in 0..130 {
+        let o = run(&mut s, "occurrence.copy", json!({"component": part, "translate": [i as f64 * 10.0, 0.0, 0.0]}))["occurrence"].as_u64().unwrap();
+        copies.push(o);
+    }
+    // The active listing (the whole assembly) is asked first and remembered.
+    let root = vec![assembly];
+    assert_eq!(s.occurrence_bodies(&root, true).unwrap().len(), 131);
+    // Then a burst of per-copy queries: 260 more keys, over the cache's 256-entry limit.
+    for o in &copies {
+        let path = vec![assembly, *o];
+        assert_eq!(s.occurrence_bodies(&path, false).unwrap().len(), 1);
+        assert_eq!(s.occurrence_bodies(&path, true).unwrap().len(), 1);
+    }
+    let guard = s.occurrence_bodies_cache.lock().unwrap();
+    let cache = guard.as_ref().unwrap();
+    assert!(cache.bodies.contains_key(&(root.clone(), true)), "the active listing survives a burst of other paths");
+    assert!(cache.bodies.len() <= 256, "the cache stays bounded at its limit");
+    drop(guard);
+    assert_eq!(s.occurrence_bodies(&root, true).unwrap().len(), 131);
+}

@@ -18,6 +18,10 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     app.preferences.viewport_theme = *view;
                 }
             });
+            // A theme file another tool writes, reloaded when it changes (#7573).
+            if FOLLOW_AVAILABLE {
+                follow_row(app, ui);
+            }
         });
     });
     ui_kit::settings_section(ui, "layout", app.tr("prefs.layout"), |ui| {

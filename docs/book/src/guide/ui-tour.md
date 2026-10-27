@@ -44,7 +44,9 @@
   Enable **Preferences → Navigation → Free orbit** to rotate the mouse and 3D mouse continuously
   through both poles, preserving roll. During an orbit drag, Shift snaps the view direction and
   the picture rotation to the nearest quarter turn; releasing Shift resumes the unsnapped rotation.
-  Free orbit defaults to off for every mouse
+  Under it, **Turn around the vertical axis** makes sideways mouse drags spin the model around the
+  world's vertical axis instead of the screen's, while up and down drags still tilt over the top
+  without a limit. Both default to off for every mouse
   preset. With SolidWorks navigation, right-click a planar face and choose **Normal to Selection**
   to use Look At (also Ctrl+8); repeat to flip the side, preserving scale and projection.
 
@@ -217,6 +219,20 @@ Command icons use the shared SVG palette.
 
 Imported themes are kept with your preferences, so they work in the browser app too. Colour
 vision modes still apply on top of any theme.
+
+#### Follow a theme file
+
+In the desktop app, **Follow a theme file** (under the themes) takes a theme file that another
+tool writes and keeps it as the theme: whenever the file changes, SolidCraft reloads it within
+about a second, and again when its window comes back to the front, without a restart. This suits
+tools that generate a colour scheme from your wallpaper or keep one scheme across your desktop
+and applications (pywal and matugen are two examples); have them write a `solidcraft-theme/1`
+file from a template. **Choose…** picks the file, **Stop following** (or choosing any theme)
+turns it off; it is off until you choose a file. Only a file that reads completely is applied:
+while it is being written, or if it is broken, missing or larger than 256 KiB, the last good
+theme stays on and the setting says why. `solidcraft --theme-file my-theme.json` follows a file
+for one run without changing your preferences. The browser app has no file to follow; import the
+theme there instead.
 
 Graphics › **Frame rate** shows frames per second in the view's bottom-right corner. Click it,
 or turn on **Frame rate details**, for the performance overlay:
