@@ -278,11 +278,24 @@ pub(crate) fn dropdown(ui: &mut Ui, id: &str, selected: &mut usize, options: &[&
 /// Dropdown with caller-supplied kit choices/actions, including disabled entries and stable
 /// application handles. Tokens: dropdown tokens. Use `dropdown` for a simple indexed list.
 pub(crate) fn dropdown_menu(ui: &mut Ui, id: impl egui::AsIdSalt, current: &str, add: impl FnOnce(&mut Ui)) -> Response {
+    dropdown_menu_with_close_behavior(ui, id, current, egui::PopupCloseBehavior::CloseOnClick, add)
+}
+
+/// Dropdown with explicit dismissal behavior. For editable content use `CloseOnClickOutside`
+/// and close the popup when a choice is accepted.
+pub(crate) fn dropdown_menu_with_close_behavior(
+    ui: &mut Ui,
+    id: impl egui::AsIdSalt,
+    current: &str,
+    close_behavior: egui::PopupCloseBehavior,
+    add: impl FnOnce(&mut Ui),
+) -> Response {
     let response = egui::ComboBox::from_id_salt(id)
         .width(dimension(ui.available_width()))
         .height(Tokens::get().space_24 * 14.0)
         .selected_text(current)
         .icon(dropdown_arrow)
+        .close_behavior(close_behavior)
         .show_ui(ui, add)
         .response;
     publish(ui, &response, egui::WidgetType::ComboBox);

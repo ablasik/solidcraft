@@ -144,6 +144,24 @@ fn redefining_a_blend_replaces_persistent_edge_selection_and_survives_resize() {
     assert!(s.model.result(old.id).unwrap().warning.is_none());
 }
 
+/// A redefine computes the features after the edited one once: its trial's results are kept
+/// for the session's own evaluation, though the cache holds only the last state (a large
+/// design's).
+#[test]
+fn redefining_computes_the_later_features_once() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 5, "name": "Base"}));
+    for x in [30, 40, 50] {
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [x, 0, 0]}));
+    }
+    *s.model.cache.lock().unwrap() = solidcraft_doc::EvalCache::with_budget(1);
+    let reply =
+        run(&mut s, "timeline.redefine", json!({"feature": "Base", "command": "solid.box", "params": {"length": 25, "width": 10, "height": 5}}));
+    assert_eq!(reply["recomputed"], 0, "{reply}");
+    let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((volume - (25.0 * 10.0 * 5.0 + 3.0 * 125.0)).abs() < 1e-6, "{volume}");
+}
+
 #[test]
 fn redefining_preserves_body_names_participants_and_marker_without_temporary_features() {
     let mut s = Session::default();

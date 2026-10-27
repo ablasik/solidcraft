@@ -682,6 +682,14 @@ const ELEMENTS: &[Element] = &[
             list_picker(ui, "preset", "Preset", true);
         });
     }),
+    element!("dropdown_menu_with_close_behavior", |ui, s| {
+        dropdown_menu_with_close_behavior(ui, "gallery_editable_menu", "Preset", egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+            text_field(ui, &mut s.value, "Filter…");
+            if list_picker(ui, "preset", "Preset", true).clicked() {
+                ui.close();
+            }
+        });
+    }),
     element!("message_field", |ui, s| {
         message_field(ui, ui.id().with("message"), &mut s.value, "Message");
     }),

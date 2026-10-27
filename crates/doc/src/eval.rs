@@ -1047,6 +1047,12 @@ const CACHE_ENTRIES: usize = 4096;
 const CACHE_BYTES: usize = 64 << 20;
 
 impl EvalCache {
+    /// A cache that keeps `bytes` of results (always at least the last one): a small budget
+    /// stands in for a design whose states are large.
+    pub fn with_budget(bytes: usize) -> Self {
+        EvalCache { budget: bytes, ..EvalCache::default() }
+    }
+
     fn get(&mut self, key: u64) -> Option<CachedEval> {
         let r = self.map.get(&key).cloned();
         if r.is_some() {

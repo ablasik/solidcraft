@@ -2683,6 +2683,18 @@ fn tool_hover(app: &SolveApp, hits: &[Hit]) -> Option<Hit> {
     hits.iter().find(|h| crate::sketch_tools::takes(cmd, h)).cloned()
 }
 
+/// A sketch annotation under either a left-click or a context-menu click. Dimension text
+/// wins over geometry; dimension lines yield to points and curves, and glyphs to midpoints.
+pub(crate) fn sketch_constraint_at(app: &SolveApp, pos: Pos2, hit: Option<&Hit>) -> Option<Sel> {
+    app.session.active_sketch?;
+    let off = |kind: &str| app.ui.pick_off.iter().any(|x| x == kind);
+    let on_geometry = matches!(hit, Some(Hit::SketchPoint { .. } | Hit::SketchMidpoint { .. } | Hit::SketchCurve { .. }));
+    let dimension =
+        crate::dim_view::hit_text(pos).or_else(|| if on_geometry { None } else { crate::dim_view::hit(pos) }).filter(|_| !off("dimensions"));
+    let glyph = crate::sketch_tools::glyph_at(pos).filter(|_| !off("constraints") && !matches!(hit, Some(Hit::SketchMidpoint { .. })));
+    dimension.or(glyph).map(|id| Sel::SketchConstraint { id })
+}
+
 /// What a click would pick: the first hit the open dialog's active input accepts, or with no
 /// dialog the first hit (sketch entities only belong to the active sketch).
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
@@ -4018,23 +4030,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     app.dialog = Some(dialog);
                 }
             } else {
-                // Dimensions and constraint glyphs sit on top of the geometry.
-                let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
-                let sketching = app.session.active_sketch.is_some();
-                // A dimension's text wins; its lines only where no sketch point or curve is (a
-                // diameter's line runs through the centre point).
-                let on_geometry =
-                    matches!(cand.as_ref().map(|c| &c.0), Some(Hit::SketchPoint { .. } | Hit::SketchMidpoint { .. } | Hit::SketchCurve { .. }));
-                let on_dim = crate::dim_view::hit_text(p)
-                    .or_else(|| if on_geometry { None } else { crate::dim_view::hit(p) })
-                    .filter(|_| sketching && !off("dimensions"));
-                let on_midpoint = matches!(cand.as_ref().map(|c| &c.0), Some(Hit::SketchMidpoint { .. }));
-                let on_glyph = crate::sketch_tools::glyph_at(p).filter(|_| sketching && !off("constraints") && !on_midpoint);
+                let annotation = sketch_constraint_at(app, p, cand.as_ref().map(|c| &c.0));
                 if crate::sketch_text_handles::over(app, &proj, p) {
                     // A text's resize or rotation handle: the text stays selected.
                 } else if !crate::sketch3d::click(app, &proj, p) {
-                    match on_dim.or(on_glyph) {
-                        Some(id) => select(app, Some(Sel::SketchConstraint { id }), add, allow_toggle),
+                    match annotation {
+                        Some(sel) => select(app, Some(sel), add, allow_toggle),
                         // Clicking again on the same spot selects the next thing under it (not
                         // the second click of a double-click, which has its own actions).
                         None if !add && !resp.double_clicked() && crate::select_other::cycle_click(app, &proj, p) => {}

@@ -995,6 +995,9 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
     if curves.is_empty() && points.is_empty() {
         if dims.len() == 1 {
             v.push(cmd(app, "sketch.toggle_driven", "Toggle Driven Dimension").with(json!({ "constraint": dims[0] })));
+        }
+        if app.session.selection.iter().any(|s| matches!(s, Sel::SketchConstraint { .. })) {
+            v.push(act("ui.delete", "Delete", "delete").key("Del"));
             v.push(Item::sep());
         }
         if crate::sketch_text::selected_entity(app).is_some() {
@@ -1716,7 +1719,12 @@ pub fn open(app: &mut SolveApp, at: Pos2, held: crate::tool_modifiers::Held) {
         _ => None,
     });
     crate::select_other::close(app);
-    if app.session.active_sketch.is_none()
+    if let Some(sel) = crate::viewport::sketch_constraint_at(app, at, app.viewport.hover.as_ref()) {
+        if !in_selection(app, &sel) {
+            let _ = app.run("select.set", json!({ "items": [sel] }));
+            app.menu.picked = Some((at, before, app.session.selection.clone()));
+        }
+    } else if app.session.active_sketch.is_none()
         && let Some(h) = app.viewport.hover.clone()
         && let Some((_, sel)) = crate::viewport::candidate(app, &[h])
         && !in_selection(app, &sel)

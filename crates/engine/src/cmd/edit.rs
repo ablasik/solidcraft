@@ -1440,6 +1440,11 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     // Run the constructor on a scratch session: failed edits must not disturb sketch mode,
     // selections, component authoring state or the original feature's definition.
     let mut trial = s.scratch();
+    // What the trial computes is kept for the session's own evaluation at the end: the cache may
+    // hold only the last few states of a large design, which would be computed twice.
+    let kept = s.model.kept();
+    let shared = kept.clone().unwrap_or_default();
+    trial.model.keep(Some(shared.clone()));
     trial.active_component = old.component;
     if let FeatureKind::Emboss { face: Some(face), .. } = &old.kind {
         trial.active_occurrence_path = (!face.author_path.is_empty()).then(|| face.author_path.clone());
@@ -1549,7 +1554,9 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.pending_moves = trial.pending_moves;
     s.doc = trial.doc;
+    s.model.keep(Some(shared));
     s.refresh();
+    s.model.keep(kept);
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
     }
