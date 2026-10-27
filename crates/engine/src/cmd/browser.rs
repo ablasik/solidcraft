@@ -1621,6 +1621,33 @@ mod tests {
     }
 
     #[test]
+    fn a_sheet_metal_flange_hides_its_sketch_as_an_extrude_does() {
+        // #6804: the base flange's sketch stayed shown; its line on the plate's bottom edge then
+        // took the Flange dialog's click and made a flat contour wall with no bend.
+        let mut s = Session::default();
+        let base = run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-33.5, -37], "p1": [27.5, -7]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let wall = run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Wall"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0], [40, 30]], "ids": ["l1", "l2"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        assert!(crate::view::sketch_shown(&s, base) && crate::view::sketch_shown(&s, wall));
+        run(&mut s, "sheet.flange", json!({"sketch": "Base"}));
+        assert!(!crate::view::sketch_shown(&s, base), "the base flange used its sketch");
+        run(&mut s, "sheet.flange", json!({"sketch": "Wall", "curves": ["l1", "l2"], "distance": 20}));
+        assert!(!crate::view::sketch_shown(&s, wall), "the contour flange used its sketch");
+        let d = run(&mut s, "document.inspect", json!({}));
+        assert!(d["sketches"].as_array().unwrap().iter().all(|x| x["visible"] == false), "{d}");
+        assert_eq!(s.doc.features.iter().filter(|f| matches!(f.kind, solidcraft_doc::FeatureKind::SheetContour { .. })).count(), 1);
+        // Shown on their own, or while their flange is edited, they are drawn again.
+        s.feature_edit_sketch = Some(base);
+        assert!(crate::view::sketch_shown(&s, base));
+        s.feature_edit_sketch = None;
+        run(&mut s, "browser.visibility", json!({"items": [wall], "visible": true}));
+        assert!(crate::view::sketch_shown(&s, wall) && !crate::view::sketch_shown(&s, base));
+    }
+
+    #[test]
     fn helper_sketches_hide_and_show() {
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
