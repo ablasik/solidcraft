@@ -1549,6 +1549,8 @@
   "prefs.opaque": "Opaque",
   "prefs.orbit_snap": "Hold Shift during orbit to snap to an axis.",
   "prefs.orientation": "Orientation",
+  "prefs.origin_plane_names": "Origin plane names",
+  "prefs.origin_plane_names_note": "Names shown in the browser, dialogs and lists. {top} is XY, {front} is XZ and {right} is YZ, with Z up. Commands, scripts and saved designs keep XY, XZ and YZ.",
   "prefs.overall_speed": "Overall speed",
   "prefs.placement": "Placement",
   "prefs.prefer_free_sketch_points": "Prefer movable sketch points when points overlap",

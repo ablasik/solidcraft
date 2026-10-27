@@ -1549,6 +1549,8 @@
   "prefs.opaque": "معتم",
   "prefs.orbit_snap": "اضغط Shift أثناء التدوير للالتقاط على محور.",
   "prefs.orientation": "الاتجاه",
+  "prefs.origin_plane_names": "أسماء مستويات الأصل",
+  "prefs.origin_plane_names_note": "الأسماء المعروضة في المستعرض والحوارات والقوائم. {top} هو XY و{front} هو XZ و{right} هو YZ، والمحور Z للأعلى. تحتفظ الأوامر والسكربتات والتصاميم المحفوظة بـ XY وXZ وYZ.",
   "prefs.overall_speed": "السرعة العامة",
   "prefs.placement": "الموضع",
   "prefs.prefer_free_sketch_points": "تفضيل نقاط الرسم القابلة للتحريك عند تداخل النقاط",

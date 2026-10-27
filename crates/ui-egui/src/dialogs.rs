@@ -2307,13 +2307,15 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, session: &Session) {
 }
 
 /// A picked item as its chip shows it. A round edge or face says what it stands for in `inp`:
-/// its axis in an axis input, a circle's centre in a point input.
-pub(crate) fn selection_label(s: &Session, d: &Dialog, inp: &SelInput, item: &Sel) -> String {
+/// its axis in an axis input, a circle's centre in a point input. An origin plane goes by
+/// the name the preferences give it.
+pub(crate) fn selection_label(s: &Session, names: crate::prefs::OriginPlaneNames, d: &Dialog, inp: &SelInput, item: &Sel) -> String {
     let axis = inp.accept == selection::AXIS_PICKS && round_axis(s, item).is_some();
     match item {
         Sel::SketchCurve { id, .. } => id.clone(),
         Sel::SketchPoint { id } => crate::sketch_modify_ui::point_id(s, item).unwrap_or(id).to_string(),
-        Sel::Plane { name } | Sel::Axis { name } | Sel::ConstructionPoint { name } | Sel::Body { name } => name.clone(),
+        Sel::Plane { name } => names.label(name).to_string(),
+        Sel::Axis { name } | Sel::ConstructionPoint { name } | Sel::Body { name } => name.clone(),
         Sel::Face { body, index, .. } if axis => format!("{body} · face {index} axis"),
         Sel::Face { body, index, .. } => format!("{body} · face {index}"),
         Sel::Edge { body, .. } if axis => format!("{body} · circle axis"),
@@ -2336,8 +2338,8 @@ pub(crate) fn selection_label(s: &Session, d: &Dialog, inp: &SelInput, item: &Se
 
 /// Selection input rows: label, "N selected" (or a hint) and a clear button; clicking a row
 /// makes it the active input.
-fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
-    input_rows_range(d, ui, s, 0..d.inputs.len());
+fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, names: crate::prefs::OriginPlaneNames) {
+    input_rows_range(d, ui, s, names, 0..d.inputs.len());
 }
 
 /// Saved vectors/axes are real inputs even when they have no origin-axis selection chip.
@@ -2360,7 +2362,7 @@ fn stored_revolve_axis(kind: &Kind) -> Option<&Value> {
     }
 }
 
-pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
+pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, names: crate::prefs::OriginPlaneNames, range: std::ops::Range<usize>) {
     // Edit Text shows its Path input among its own rows.
     if matches!(d.kind, Kind::Text(_)) {
         return;
@@ -2382,7 +2384,7 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, r
                     RichText::new(if custom_axis || stored_reference.is_some() {
                         crate::i18n::tr("dialog.custom_axis").into()
                     } else if !inp.multi {
-                        inp.items.first().map(|item| selection_label(s, d, inp, item)).unwrap_or_default()
+                        inp.items.first().map(|item| selection_label(s, names, d, inp, item)).unwrap_or_default()
                     } else {
                         let count = if i == 0 { shell_count.unwrap_or(inp.items.len()) } else { inp.items.len() };
                         crate::i18n::format("dialog.selected_count", &[("count", &count.to_string())])
@@ -2439,7 +2441,7 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, r
         });
         if matches!(d.kind, Kind::SketchModify(_)) && inp.multi {
             for (index, item) in inp.items.iter().enumerate() {
-                if crate::ui_kit::list_row(ui, &format!("{}:{index}", inp.label), &selection_label(s, d, inp, item)).clicked() {
+                if crate::ui_kit::list_row(ui, &format!("{}:{index}", inp.label), &selection_label(s, names, d, inp, item)).clicked() {
                     remove = Some((i, index));
                 }
             }

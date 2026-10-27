@@ -1,5 +1,32 @@
 //! Interface settings composition, using shared controls and previews.
 use super::*;
+
+/// Origin plane names: each choice shows the three names it gives (`XY / XZ / YZ`), with a note
+/// that only the names shown change.
+fn origin_plane_names(app: &mut SolveApp, ui: &mut egui::Ui) {
+    ui_kit::settings_section(ui, "origin_plane_names", app.tr("prefs.origin_plane_names"), |ui| {
+        let choices: Vec<String> =
+            OriginPlaneNames::ALL.iter().map(|names| OriginPlaneNames::PLANES.map(|plane| names.label(plane)).join(" / ")).collect();
+        let options: Vec<&str> = choices.iter().map(String::as_str).collect();
+        let mut selected = OriginPlaneNames::ALL.iter().position(|names| *names == app.preferences.origin_plane_names).unwrap_or(0);
+        if ui_kit::settings_segments(ui, app.tr("prefs.origin_plane_names"), &mut selected, &options)
+            && let Some(names) = OriginPlaneNames::ALL.get(selected)
+        {
+            app.preferences.origin_plane_names = *names;
+        }
+        // Handles that don't depend on the language, by the choice's saved value.
+        for (choice, key) in choices.iter().zip(["xyz", "top_front_right"]) {
+            if let Some(at) = crate::scenario::handle_at(&format!("dialog:{}:{choice}", app.tr("prefs.origin_plane_names"))) {
+                crate::scenario::publish_handle(&format!("prefs:origin_plane_names:{key}"), at);
+            }
+        }
+        let top = OriginPlaneNames::TopFrontRight;
+        let note =
+            crate::i18n::format("prefs.origin_plane_names_note", &[("top", top.label("XY")), ("front", top.label("XZ")), ("right", top.label("YZ"))]);
+        ui_kit::text(ui, &note, ui_kit::Text::Hint("origin_plane_names"));
+    });
+}
+
 pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     ui_kit::settings_heading(ui, app.tr("prefs.interface"), app.tr("prefs.interface_note"));
     ui_kit::settings_section(ui, "theme", app.tr("ui.theme"), |ui| {
@@ -145,6 +172,7 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui_kit::layout_preview,
         );
     });
+    origin_plane_names(app, ui);
     ui_kit::settings_section(ui, "scale", app.tr("prefs.scale_text"), |ui| {
         ui_kit::settings_pair(
             ui,

@@ -332,6 +332,35 @@ pub enum HistorySketches {
     UnderFeature,
 }
 
+/// What the interface calls the origin planes (Preferences › Interface). Only the names shown
+/// change: the planes' ids (`XY`, `XZ`, `YZ`), commands, scripts and saved designs keep theirs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginPlaneNames {
+    /// XY, XZ and YZ. Also what a naming this version doesn't know reads as (`lenient`).
+    #[default]
+    Xyz,
+    /// Top for XY, Front for XZ and Right for YZ (Z up), the engine's aliases for them.
+    TopFrontRight,
+}
+
+impl OriginPlaneNames {
+    pub const ALL: [Self; 2] = [Self::Xyz, Self::TopFrontRight];
+    /// The origin planes' ids, in the order the Preferences list them.
+    pub const PLANES: [&'static str; 3] = ["XY", "XZ", "YZ"];
+
+    /// The name shown for the plane `name`: an origin plane in this naming, in the interface's
+    /// language; any other plane (a construction plane) by its own name.
+    pub fn label(self, name: &str) -> &str {
+        match (self, name) {
+            (Self::TopFrontRight, "XY") => crate::i18n::tr("ui.top"),
+            (Self::TopFrontRight, "XZ") => crate::i18n::tr("ui.front"),
+            (Self::TopFrontRight, "YZ") => crate::i18n::tr("ui.right"),
+            _ => name,
+        }
+    }
+}
+
 /// What an orbit turns around (Preferences: "Orbit around").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -444,6 +473,10 @@ impl SpaceMouseDriver {
 /// The browser sidebar's first width, and the width [`Prefs::default`] restores; the panel
 /// itself clamps what the user drags to its own range.
 pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
+
+/// The browser's first share of the column it shares with History under it (#7371): the equal
+/// split; the column clamps what the user drags so both cards keep their header and two rows.
+pub const DEFAULT_BROWSER_SHARE: f32 = 0.5;
 
 // The stored fields, their defaults, page resets and simple form controls share this table.
 // Omitted pages keep fields such as grid_follows_view and added agents when restoring defaults.
@@ -656,6 +689,9 @@ preference_settings! {
     timeline_under_browser: bool = false, PAGE_INTERFACE;
     /// Fold the shared-column history to its header.
     timeline_collapsed: bool = false, PAGE_INTERFACE;
+    /// The browser's share of the column's height when History sits under it, which the user
+    /// drags at the seam between the two cards (#7371).
+    browser_share: f32 = DEFAULT_BROWSER_SHARE, PAGE_INTERFACE;
     /// Whether the browser beside the vertical history is collapsed to its rail.
     timeline_left_browser_collapsed: bool = false, PAGE_INTERFACE;
     /// Whether the History at the left lists a sketch under the feature built from it.
@@ -678,6 +714,8 @@ preference_settings! {
     /// Where command dialogs open: at the view's edge, or in the left column in place of the
     /// browser and the History there (#6707).
     dialog_place: crate::dialog_column::DialogPlace = Default::default(), PAGE_INTERFACE;
+    /// The names the browser, dialogs and lists show for the origin planes (#6491).
+    origin_plane_names: OriginPlaneNames = OriginPlaneNames::default(), PAGE_INTERFACE;
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, PAGE_NAVIGATION => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's centre)");
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -4313,6 +4351,91 @@ mod tests {
         h.call("ui.click", json!({"x":axis.x,"y":axis.y}));
         assert!(h.app.cam.back().dist(Vec3::Y) < 1e-6, "original axes retain click-again reversal");
         assert_eq!(h.app.session.doc.to_json(), design);
+    }
+
+    /// The texts one frame paints.
+    fn painted_texts(h: &mut crate::scenario::Harness) -> Vec<String> {
+        let output = h.ctx.run_ui(egui::RawInput { screen_rect: Some(h.ctx.content_rect()), focused: true, ..Default::default() }, |ui| {
+            h.app.logic(ui.ctx());
+            h.app.ui(ui);
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Origin plane names (#6491): Top, Front and Right are names shown in the browser, the
+    /// dialogs' chips and the plane choices; the planes' ids, the commands and the design keep XY,
+    /// XZ and YZ. Saved, refused when unknown, and taken back by Cancel and Restore Defaults.
+    #[test]
+    fn origin_plane_names_change_only_the_names_shown() {
+        use OriginPlaneNames::{TopFrontRight, Xyz};
+        let old: Prefs = serde_json::from_value(json!({"nav":"solidworks"})).unwrap();
+        assert_eq!(old.origin_plane_names, Xyz, "older preferences keep XY, XZ and YZ");
+        assert_eq!(lenient(&json!({"origin_plane_names":"hologram","zoom_reverse":true})).origin_plane_names, Xyz);
+        assert_eq!(OriginPlaneNames::PLANES.map(|p| Xyz.label(p)), ["XY", "XZ", "YZ"]);
+        assert_eq!(OriginPlaneNames::PLANES.map(|p| TopFrontRight.label(p)), ["Top", "Front", "Right"]);
+        assert_eq!(TopFrontRight.label("Plane1"), "Plane1", "construction planes keep their own names");
+
+        let mut h = crate::scenario::Harness::new();
+        let sketch = h.app.run("sketch.create", json!({"plane":"XY"})).unwrap()["sketch"].as_u64().unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.frames(2);
+        h.step(&json!({"click":{"chevron":"Origin"}})).unwrap();
+        let rows = || crate::browser::drawn_rows().into_iter().map(|(label, ..)| label).collect::<Vec<_>>();
+        assert!(OriginPlaneNames::PLANES.iter().all(|p| rows().iter().any(|r| r == p)), "{:?}", rows());
+        let design = h.app.session.doc.to_json();
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        super::reveal_preference(&mut h, "prefs:origin_plane_names:top_front_right");
+        h.step(&json!({"click":{"handle":"prefs:origin_plane_names:top_front_right"}})).unwrap();
+        assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight);
+        h.call("ui.prefs", json!({"button":"ok"}));
+        h.frames(2);
+        for (id, name) in [("XY", "Top"), ("XZ", "Front"), ("YZ", "Right")] {
+            assert!(rows().iter().any(|r| r == name) && !rows().iter().any(|r| r == id), "{:?}", rows());
+        }
+        assert_eq!(h.app.session.doc.to_json(), design, "a name shown changes nothing in the design");
+
+        // Picked from its row, the plane is named in the dialog's chip and runs by its id.
+        h.call("ui.start", json!({"command":"construct.plane.offset"}));
+        h.step(&json!({"click":{"browser":"Front"}})).unwrap();
+        let picked = h.app.dialog.as_ref().and_then(|d| d.inputs.first()).map(|i| i.items.clone());
+        assert_eq!(picked, Some(vec![solidcraft_engine::Sel::Plane { name: "XZ".into() }]));
+        assert!(painted_texts(&mut h).iter().any(|t| t == "Front"), "the chip shows the plane's name");
+        h.step(&json!({"widget":"OK"})).unwrap();
+        h.frames(2);
+        let made = h.app.session.doc.features.last().map(|f| serde_json::to_value(&f.kind).unwrap_or_default()).unwrap_or_default();
+        assert!(made.to_string().contains("\"XZ\""), "the command took the id: {made}");
+        // The sketch plane choices of Redefine Sketch Plane: by name, and they run by id.
+        crate::browser::redefine_sketch(&mut h.app, sketch);
+        h.frames(2);
+        let texts = painted_texts(&mut h);
+        assert!(["Use Top plane", "Use Front plane", "Use Right plane"].iter().all(|t| texts.iter().any(|x| x == t)), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == "Use XY plane"));
+        crate::sketch_attachment_ui::clear(&mut h.app);
+
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.origin_plane_names, TopFrontRight, "the choice is saved");
+        let before = h.app.preferences.clone();
+        assert!(control(&mut h.app, &json!({"origin_plane_names":"top", "nav":"solidworks"})).is_err());
+        assert_eq!(h.app.preferences, before, "an unknown naming fails atomically");
+        h.call("ui.prefs", json!({"open":"Interface","origin_plane_names":"xyz"}));
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight, "Cancel takes it back");
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert_eq!(h.app.preferences.origin_plane_names, Xyz, "Restore Defaults: XY, XZ and YZ");
+        h.frames(2);
+        assert!(OriginPlaneNames::PLANES.iter().all(|p| rows().iter().any(|r| r == p)), "{:?}", rows());
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight);
     }
 
     #[test]

@@ -1290,6 +1290,8 @@
   "prefs.opaque": "불투명",
   "prefs.orbit_snap": "회전하는 동안 Shift를 누르면 축에 맞춰집니다.",
   "prefs.orientation": "방향",
+  "prefs.origin_plane_names": "원점 평면 이름",
+  "prefs.origin_plane_names_note": "브라우저, 대화 상자, 목록에 표시되는 이름입니다. {top}은 XY, {front}는 XZ, {right}는 YZ이며 Z가 위쪽입니다. 명령, 스크립트, 저장된 디자인은 XY, XZ, YZ를 유지합니다.",
   "prefs.overall_speed": "전체 속도",
   "prefs.preview_choices": "선택 항목 미리보기",
   "prefs.quality_default": "기본값",

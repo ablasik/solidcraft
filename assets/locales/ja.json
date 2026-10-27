@@ -1549,6 +1549,8 @@
   "prefs.opaque": "不透明",
   "prefs.orbit_snap": "回転中にShiftを押すと軸にスナップします。",
   "prefs.orientation": "方向",
+  "prefs.origin_plane_names": "原点平面の名前",
+  "prefs.origin_plane_names_note": "ブラウザー、ダイアログ、一覧に表示される名前です。{top} は XY、{front} は XZ、{right} は YZ です (Z が上)。コマンド、スクリプト、保存されたデザインでは XY、XZ、YZ のままです。",
   "prefs.overall_speed": "全体の速度",
   "prefs.placement": "配置",
   "prefs.prefer_free_sketch_points": "スケッチ点が重なったときは移動可能な点を優先する",

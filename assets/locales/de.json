@@ -1401,6 +1401,8 @@
   "prefs.history_origin_bodies": "Ursprung und Körper oben zeigen",
   "prefs.history_origin_bodies_note": "Der Verlauf links oder unter dem Browser beginnt mit dem Körper-Ordner der aktiven Komponente und dem Ursprung, mit Augen und Menüs wie im Browser. Der Verlauf unten bleibt unverändert.",
   "prefs.minutes_suffix": " min",
+  "prefs.origin_plane_names": "Namen der Ursprungsebenen",
+  "prefs.origin_plane_names_note": "Namen in Browser, Dialogen und Listen. {top} ist XY, {front} ist XZ und {right} ist YZ, mit Z nach oben. Befehle, Skripte und gespeicherte Konstruktionen behalten XY, XZ und YZ.",
   "prefs.theme_follow": "Einer Designdatei folgen",
   "prefs.theme_follow_error": "Nicht angewendet: {error}. Das letzte gültige Design bleibt aktiv.",
   "prefs.theme_follow_launch": "Nur für diesen Start (--theme-file); wird neu geladen, sobald ein anderes Werkzeug die Datei überschreibt.",

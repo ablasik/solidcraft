@@ -94,6 +94,8 @@
   back, and drag features to reorder them. Preferences can put the timeline vertically at the
   far left of the viewport, beside the browser. Its seam handle switches between icon
   chips and compact feature names; the browser can collapse to a rail beside either width.
+  Docked under the browser, the two share the column: drag the seam between them to give either
+  more height, and the split is remembered.
   Previous, Play and Next sit at the top. Double-click Previous to roll to the start.
   Interface › **Sketches** › **Under their feature** lists a sketch in the vertical timeline one
   level in, under the first feature built from it, behind that feature's fold arrow. Dragging the

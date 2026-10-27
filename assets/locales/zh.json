@@ -1549,6 +1549,8 @@
   "prefs.opaque": "不透明",
   "prefs.orbit_snap": "旋转时按住Shift可捕捉到坐标轴。",
   "prefs.orientation": "方向",
+  "prefs.origin_plane_names": "原点平面名称",
+  "prefs.origin_plane_names_note": "浏览器、对话框和列表中显示的名称。{top} 即 XY，{front} 即 XZ，{right} 即 YZ（Z 轴朝上）。命令、脚本和已保存的设计仍使用 XY、XZ 和 YZ。",
   "prefs.overall_speed": "整体速度",
   "prefs.placement": "放置",
   "prefs.prefer_free_sketch_points": "草图点重合时优先选择可移动的点",

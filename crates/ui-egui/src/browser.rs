@@ -1700,7 +1700,8 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &Actio
         return;
     }
     for (k, icon, thing) in items {
-        let label = k;
+        // An origin plane by the name the preferences give it; its key stays the id.
+        let label = app.preferences.origin_plane_names.label(k);
         let visible = !app.session.visibility.hidden_origin.iter().any(|h| h == k);
         let sel = match icon {
             "plane" => Some(Sel::Plane { name: k.into() }),
@@ -1711,8 +1712,19 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &Actio
         let r = draw_row(
             ui,
             ui.id().with(("o", k)),
-            // Faded when hidden itself or with the whole Origin.
-            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !visible || !app.origin_shown(), mark, ..Default::default() },
+            // Faded when hidden itself or with the whole Origin. A renamed plane's label is already
+            // in the interface's language (`name`).
+            &Row {
+                depth: depth + 1,
+                eye: Some(visible),
+                icon,
+                label,
+                name: label != k,
+                selected,
+                dim: !visible || !app.origin_shown(),
+                mark,
+                ..Default::default()
+            },
         );
         if r.eye {
             // Through the command, so the Origin row's eye is an undo step (#2219).
