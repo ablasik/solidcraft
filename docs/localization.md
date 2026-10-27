@@ -46,7 +46,7 @@ that looks untranslated. Two guards catch that in the build:
   without giving it to a complete catalog fails the tests. English is the source catalog,
   Arabic, Hebrew, Japanese and Chinese are delivered complete; Danish, German, Spanish, Galician, Italian, Korean, Malay, Norwegian Bokmål, Polish, Brazilian Portuguese, Russian, French, Ukrainian and
   Turkish are partial — their gaps fall back to English and are reported by `cargo xtask i18n` without
-  failing the build. A new label needs en, ja, zh, de and ko; Russian, French, Ukrainian and Malay may
+  failing the build. A new label needs en, ar, he, ja, zh, de and ko; Russian, French, Ukrainian and Malay may
   follow later.
 - `every_toolbar_tab_and_panel_is_in_the_english_catalog` — tabs and panels reach the UI as bare
   source strings, resolved only by the English-label adapter, so a heading missing from `en.json`
