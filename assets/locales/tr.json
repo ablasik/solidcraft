@@ -1252,7 +1252,7 @@
   "home.new_mm": "Yeni tasarım",
   "home.new_mm_hint": "Milimetre · Tasarım alanında açılır",
   "home.open": "Aç…",
-  "home.open_hint": "Bir .solidcraft tasarımı ({shortcut})",
+  "home.open_hint": "Bir .sc tasarımı ({shortcut})",
   "home.open_now": "Şimdi aç",
   "home.opened_days_ago": "{count} gün önce",
   "home.opened_hours_ago": "{count} sa. önce",

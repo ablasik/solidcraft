@@ -899,7 +899,7 @@
   "home.new_mm": "Ny konstruktion",
   "home.new_mm_hint": "Millimeter · öppnas i Konstruktion",
   "home.open": "Öppna…",
-  "home.open_hint": "En .solidcraft-konstruktion ({shortcut})",
+  "home.open_hint": "En .sc-konstruktion ({shortcut})",
   "home.open_now": "Öppen nu",
   "home.opened_days_ago": "För {count} dagar sedan",
   "home.opened_hours_ago": "För {count} h sedan",

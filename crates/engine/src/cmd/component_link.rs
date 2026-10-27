@@ -30,7 +30,7 @@ mod relink_tests;
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.insert_design", "Insert Design", insert_design).at("SOLID", "ASSEMBLE").icon("component").params(
-        "path: a .solidcraft design → a new component linked to it, holding its solid bodies as placed in that design and a copy of its design properties; \
+        "path: a .sc design → a new component linked to it, holding its solid bodies as placed in that design and a copy of its design properties; \
          name? (default: the design's name); parent?: component id or name (default: the active one); translate?: [x,y,z]; \
          reuse?: bool (default false): insert a free occurrence, reusing an existing link to the same file when available",
     ),
@@ -39,13 +39,13 @@ pub static COMMANDS: &[CommandSpec] = &[
          → updated, unchanged, warnings (also joints whose faces are gone or that no longer solve)",
     ),
     CommandSpec::new("component.relink", "Relink Source", relink).icon("update").params(
-        "component: id or name of a linked component; path: a saved .solidcraft design — replaces the source and linked bodies for all its occurrences, preserving identities and placements; returns path, previous_path, warnings, joint_errors and joint_conflicts",
+        "component: id or name of a linked component; path: a saved .sc design — replaces the source and linked bodies for all its occurrences, preserving identities and placements; returns path, previous_path, warnings, joint_errors and joint_conflicts",
     ),
     CommandSpec::new("component.break_link", "Break Link", break_link)
         .icon("break")
         .params("component: id or name of a linked component — keeps its bodies as they are and forgets the design file"),
     CommandSpec::new("component.extract", "Extract to File", extract::extract).icon("export").params(
-        "component: id or name of a component that is not linked; path: the .solidcraft design to write → its history, subcomponents and their joints \
+        "component: id or name of a component that is not linked; path: the .sc design to write → its history, subcomponents and their joints \
          move to that design, and the component becomes linked to it (as component.insert_design makes it); returns path, file, feature, bodies, \
          notices (what stays behind), warnings and copies (components that build the same bodies: see component.replace_with_link)",
     ),
@@ -53,7 +53,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         "component: id or name of a linked component → copies: [{component, name}], the components not linked whose own history builds the same bodies",
     ),
     CommandSpec::new("component.replace_with_link", "Replace with Link", extract::replace_with_link).icon("chain").params(
-        "component or components: [ids or names] of components that are not linked; with: a linked component, or path: a .solidcraft design \
+        "component or components: [ids or names] of components that are not linked; with: a linked component, or path: a .sc design \
          (its link here, else a new linked component) → each component's history goes and its placements become placements of the linked \
          component; refused when its bodies are not the same as the link's; returns component, name, replaced and warnings",
     ),
@@ -367,8 +367,8 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let given = str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096).ok_or_else(|| bad(cmd, "`path` is required"))?;
     let file = absolute(Path::new(given));
-    if !file.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("solidcraft")) {
-        return Err(bad(cmd, "choose a saved .solidcraft design"));
+    if !solidcraft_io::is_design_container_path(&file) {
+        return Err(bad(cmd, "choose a saved .sc design"));
     }
     // A network or device path is judged from its text before the disk is asked anything.
     link_refused(s.path.as_deref(), given).map_err(|e| bad(cmd, e.to_string()))?;

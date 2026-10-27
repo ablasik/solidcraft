@@ -1252,7 +1252,7 @@
   "home.new_mm": "Новий проєкт",
   "home.new_mm_hint": "Міліметри · відкриється в робочому просторі «Проєктування»",
   "home.open": "Відкрити…",
-  "home.open_hint": "Проєкт .solidcraft ({shortcut})",
+  "home.open_hint": "Проєкт .sc ({shortcut})",
   "home.open_now": "Відкрити зараз",
   "home.opened_days_ago": "{count} дн. тому",
   "home.opened_hours_ago": "{count} год тому",

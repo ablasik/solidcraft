@@ -1229,7 +1229,7 @@
   "home.new_mm": "Neuer Entwurf",
   "home.new_mm_hint": "Millimeter · öffnet sich im Arbeitsbereich Entwurf",
   "home.open": "Öffnen…",
-  "home.open_hint": "Ein .solidcraft-Entwurf ({shortcut})",
+  "home.open_hint": "Ein .sc-Entwurf ({shortcut})",
   "home.open_now": "Jetzt öffnen",
   "home.opened_days_ago": "Vor {count} Tagen",
   "home.opened_hours_ago": "Vor {count} Std.",

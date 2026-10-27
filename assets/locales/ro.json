@@ -899,7 +899,7 @@
   "home.new_mm": "Proiect nou",
   "home.new_mm_hint": "Milimetri · se deschide în Proiectare",
   "home.open": "Deschide…",
-  "home.open_hint": "Un proiect .solidcraft ({shortcut})",
+  "home.open_hint": "Un proiect .sc ({shortcut})",
   "home.open_now": "Deschis acum",
   "home.opened_days_ago": "Acum {count} zile",
   "home.opened_hours_ago": "Acum {count} h",

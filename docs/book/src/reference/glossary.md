@@ -149,7 +149,7 @@ A design is saved as a *design file*.
 
 ### design file
 
-A file in which SolidCraft saves one design, with the `.solidcraft` extension.
+A file in which SolidCraft saves one design, with the `.sc` extension (`.solidcraft` in earlier releases; those files still open).
 
 - **In SolidCraft:** `file.save`, `file.save_as`, `doc.open`; the `solidcraft/N` format tag.
 - **Don't use:** document, project file.

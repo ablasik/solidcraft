@@ -900,7 +900,7 @@
   "home.new_mm": "Novo deseño",
   "home.new_mm_hint": "Milímetros · ábrese en Deseño",
   "home.open": "Abrir…",
-  "home.open_hint": "Un deseño .solidcraft ({shortcut})",
+  "home.open_hint": "Un deseño .sc ({shortcut})",
   "home.open_now": "Abrir agora",
   "home.opened_days_ago": "Hai {count} días",
   "home.opened_hours_ago": "Hai {count} h",

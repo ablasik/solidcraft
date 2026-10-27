@@ -1053,7 +1053,7 @@
   "home.new_mm": "Nytt design",
   "home.new_mm_hint": "Millimeter · åpnes i Design",
   "home.open": "Åpne…",
-  "home.open_hint": "Et .solidcraft-design ({shortcut})",
+  "home.open_hint": "Et .sc-design ({shortcut})",
   "home.open_now": "Åpne nå",
   "home.opened_days_ago": "for {count} dager siden",
   "home.opened_hours_ago": "for {count} t siden",

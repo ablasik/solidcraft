@@ -1291,7 +1291,7 @@
   "home.new_mm": "新しいデザイン",
   "home.new_mm_hint": "ミリメートル · デザインで開きます",
   "home.open": "開く…",
-  "home.open_hint": ".solidcraft 形式のデザイン ({shortcut})",
+  "home.open_hint": ".sc 形式のデザイン ({shortcut})",
   "home.open_now": "今すぐ開く",
   "home.opened_days_ago": "{count} 日前",
   "home.opened_hours_ago": "{count} 時間前",

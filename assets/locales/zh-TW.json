@@ -900,7 +900,7 @@
   "home.new_mm": "新增設計",
   "home.new_mm_hint": "公釐 · 在設計工作區中開啟",
   "home.open": "開啟…",
-  "home.open_hint": ".solidcraft 設計檔案 ({shortcut})",
+  "home.open_hint": ".sc 設計檔案 ({shortcut})",
   "home.open_now": "目前開啟中",
   "home.opened_days_ago": "{count} 天前",
   "home.opened_hours_ago": "{count} 小時前",

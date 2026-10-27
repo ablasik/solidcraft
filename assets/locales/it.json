@@ -925,7 +925,7 @@
   "home.new_mm": "Nuovo progetto",
   "home.new_mm_hint": "Millimetri · si apre in Progettazione",
   "home.open": "Apri…",
-  "home.open_hint": "Un progetto .solidcraft ({shortcut})",
+  "home.open_hint": "Un progetto .sc ({shortcut})",
   "home.open_now": "Apri ora",
   "home.opened_days_ago": "{count} giorni fa",
   "home.opened_hours_ago": "{count} h fa",

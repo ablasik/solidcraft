@@ -1227,7 +1227,7 @@
   "home.new_mm": "Nouvelle conception",
   "home.new_mm_hint": "Millimètres · ouvre l’espace Conception",
   "home.open": "Ouvrir…",
-  "home.open_hint": "Une conception .solidcraft ({shortcut})",
+  "home.open_hint": "Une conception .sc ({shortcut})",
   "home.open_now": "Ouvrir maintenant",
   "home.opened_days_ago": "Il y a {count} j",
   "home.opened_hours_ago": "Il y a {count} h",

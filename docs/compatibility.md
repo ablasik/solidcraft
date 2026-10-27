@@ -3,33 +3,49 @@
 SolidCraft was first called SolveCraft, and builds up to 0.4 kept that name in their
 identifiers after the displayed name changed. 0.5.0 renamed the binaries, release assets and
 packages; the release after it renames everything else: crates `solidcraft-*`, binaries `solidcraft` and `solidcraft-cli`, `.solidcraft`
-designs, the `"format": "solidcraft/N"` tag, `SOLIDCRAFT_*` environment variables, settings
+designs (saved as `.sc` since; see section 1), the `"format": "solidcraft/N"` tag, `SOLIDCRAFT_*` environment variables, settings
 and recovery folders, the MCP server name, docs, CI and packaging.
 
 The old name survives **only** in the shims below (plus their tests, this file, and changelog /
 release notes). `git grep -i solvecraft` must list nothing else. When you add or remove a
 shim, update this file in the same PR.
 
-## 1. `.solvecraft` design files
+## 1. `.solvecraft` and `.solidcraft` design files
 
-New designs are saved as `.solidcraft`. Files with the old extension still open everywhere:
+New designs are saved as `.sc`. Files with either older extension still open everywhere: `.solvecraft`
+(saved before the rename) and `.solidcraft` (saved before designs moved to `.sc`). One constant
+names the extension new designs get, `DESIGN_EXT` (`sc`), and one list names every extension a
+design may have, `DESIGN_EXTS` (`sc`, then `LEGACY_DESIGN_EXTS`: `solidcraft`, `solvecraft`);
+code uses those, never its own string.
 
 | Path in | Where |
 |---|---|
-| Extension → design format | `crates/io/src/lib.rs` (`LEGACY_DESIGN_EXT`, format detection) |
-| Open dialog filters (desktop) | `apps/solidcraft/src/main.rs` (`services`) |
-| Drag-drop, recent files, `doc.open`, MCP `open`, CLI `eval`/`run` | go through the same format detection in `solidcraft_io` |
-| Browser file picker | `apps/solidcraft-web/src/files.rs` (`accept`) |
-| Windows | `assets/platforms/windows/solidcraft.wxs`: the `.solvecraft` extension on the design ProgId and in `SupportedTypes` |
-| macOS | `assets/platforms/macos/Info.plist.in`: `solvecraft` in the design document type's extensions |
-| Linux / FreeBSD / Flatpak | `assets/platforms/linux/io.tangencylabs.solidcraft.mime.xml`: `*.solvecraft` glob and the `application/x-solvecraft` alias |
+| Extension → design format | `crates/io/src/lib.rs` (`DESIGN_EXTS`, `is_design_ext`, `is_design_path`, format detection) |
+| Open dialog filters (desktop and browser) | `crates/io/src/formats.rs` (the design row lists every entry of `DESIGN_EXTS`), shown by `apps/solidcraft/src/main.rs` (`services`) |
+| Drag-drop, recent files, `doc.open`, MCP `open`, CLI `eval`/`run`, Insert/Link/Relink design | go through the same format detection in `solidcraft_io` (`is_design_container_path` for links) |
+| Browser file picker | `apps/solidcraft-web/src/disk.rs` (`open_options`, `opens_design`) |
+| Windows | `assets/platforms/windows/solidcraft.wxs`: `.sc` is the design ProgId's extension; `.solidcraft` and `.solvecraft` point at the same ProgId and are in `SupportedTypes` |
+| macOS | `assets/platforms/macos/Info.plist.in`: `sc`, `solidcraft` and `solvecraft` in the design document type and its `io.tangencylabs.solidcraft.design` UTI |
+| Linux / FreeBSD / Flatpak / Snap | `assets/platforms/linux/io.tangencylabs.solidcraft.mime.xml`: `*.sc`, `*.solidcraft` and `*.solvecraft` globs under `application/x-solidcraft` (plus the `application/x-solvecraft` alias); the `.desktop` file names that type |
 
-Recent-files entries that point at a `.solvecraft` file keep working: they are plain paths and
-open through the same detection. The browser app also lists designs it stored under the old
-extension, and keyboard-shortcut files exported as `solvecraft-shortcuts/1` still import
-(`crates/ui-egui/src/toolbar_custom.rs`). Tests: `crates/io` (`Format::from_name`,
-`is_design_path`), `legacy_extension_and_format_tag_still_open` (CLI, `run_results.rs`) and
-`legacy_design_files_and_resource_uris` (MCP `open`).
+Opening a `.solidcraft` file and pressing **Save** writes that same file: nothing is renamed behind
+the user's back. **Save As** (and every new design, autosave, crash report and component
+extracted to its own design) offers `.sc`, and leaves the old file as it was.
+
+Recent-files entries that point at an older file keep working: they are plain paths and
+open through the same detection. Autosaves and crash reports that earlier releases wrote
+(`<id>.solidcraft`, `<id>.solvecraft`, `design.solidcraft`) are still listed and recovered
+(`solidcraft_engine::recovery`, `solidcraft_engine::crash::read`), and the browser app still
+recovers `recovery.solidcraft` / `recovery.solvecraft` from its storage. The browser app also
+lists designs it stored under the old extensions, and keyboard-shortcut files exported as
+`solvecraft-shortcuts/1` still import (`crates/ui-egui/src/toolbar_custom.rs`). The designs in
+`apps/solidcraft-cli/tests/corpus` keep their `.solidcraft` names on purpose: they are files saved
+by earlier releases. Tests: `crates/io` (`Format::from_name`, `is_design_path`, the import filter
+groups), `legacy_extension_and_format_tag_still_open` (CLI, `run_results.rs`),
+`legacy_design_files_and_resource_uris` (MCP `open` and `save`),
+`saving_an_opened_legacy_design_keeps_its_name` (engine),
+`autosave_from_a_legacy_folder_is_listed_and_loads`, `autosaves_are_written_as_sc` and
+`a_report_from_an_earlier_release_still_finds_its_design`.
 
 ## 2. The `solvecraft/N` format tag
 

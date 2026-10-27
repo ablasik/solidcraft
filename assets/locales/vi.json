@@ -1291,7 +1291,7 @@
   "home.new_mm": "Thiết kế mới",
   "home.new_mm_hint": "Milimét · mở trong Thiết kế",
   "home.open": "Mở…",
-  "home.open_hint": "Một thiết kế .solidcraft ({shortcut})",
+  "home.open_hint": "Một thiết kế .sc ({shortcut})",
   "home.open_now": "Mở ngay",
   "home.opened_days_ago": "{count} ngày trước",
   "home.opened_hours_ago": "{count} giờ trước",

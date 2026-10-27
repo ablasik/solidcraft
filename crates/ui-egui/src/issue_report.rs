@@ -547,7 +547,7 @@ pub fn crash_draft(report: &serde_json::Value) -> Draft {
         if recent.is_empty() { "(none recorded)".to_string() } else { recent.join(", ") },
         s("id"),
         match (report.get("design_path").is_some(), report.get("replay_path").is_some()) {
-            (true, true) => "the design as it was before the crash (design.solidcraft) and the commands that crash it (replay.json)",
+            (true, true) => "the design as it was before the crash (design.sc) and the commands that crash it (replay.json)",
             (false, true) => "the commands that crash it on a new design (replay.json)",
             _ => "no replay (see its notes)",
         },

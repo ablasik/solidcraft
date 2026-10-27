@@ -74,7 +74,7 @@ other is a tracked bug.
 - **Parameters and configurations** with unit-aware expressions.
 - **Assemblies** with joints, motion studies, contact sets, interference and mass properties.
 - **Sheet metal** with flanges, hems, fold/unfold and flat patterns, and plastic enclosure features.
-- **Files:** STEP, IGES, 3MF, STL, OBJ and glTF in and out where supported, URDF export, `.solidcraft` designs.
+- **Files:** STEP, IGES, 3MF, STL, OBJ and glTF in and out where supported, URDF export, `.sc` designs (`.solidcraft` files from earlier releases still open).
 - **Desktop app, browser app, headless CLI and MCP server**, all running the same commands.
 
 The full list is in [docs/capabilities.md](docs/capabilities.md) and [docs/features.md](docs/features.md);

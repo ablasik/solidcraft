@@ -1074,7 +1074,7 @@
   "home.new_mm": "Novo projeto",
   "home.new_mm_hint": "Milímetros · abre em Projeto",
   "home.open": "Abrir…",
-  "home.open_hint": "Um projeto .solidcraft ({shortcut})",
+  "home.open_hint": "Um projeto .sc ({shortcut})",
   "home.open_now": "Abrir agora",
   "home.opened_days_ago": "Há {count} dias",
   "home.opened_hours_ago": "Há {count} h",

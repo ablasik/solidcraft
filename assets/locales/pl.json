@@ -961,7 +961,7 @@
   "home.new_mm": "Nowy projekt",
   "home.new_mm_hint": "Milimetry · otwiera w obszarze Projektowanie",
   "home.open": "Otwórz…",
-  "home.open_hint": "Projekt .solidcraft ({shortcut})",
+  "home.open_hint": "Projekt .sc ({shortcut})",
   "home.open_now": "Otwórz teraz",
   "home.opened_days_ago": "{count} dni temu",
   "home.opened_hours_ago": "{count} godz. temu",

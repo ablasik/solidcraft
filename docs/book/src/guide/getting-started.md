@@ -1,7 +1,7 @@
 # Getting started
 
 The desktop executable is `solidcraft`, the CLI is `solidcraft-cli`, and designs are saved as
-`.solidcraft`. Designs, settings and setups from builds released under the previous product name keep
+`.sc` (`.solidcraft` designs from earlier releases still open, and Save keeps their name). Designs, settings and setups from builds released under the previous product name keep
 working (see the [compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md)).
 
 ## Desktop
@@ -17,7 +17,7 @@ cargo run --release -p solidcraft -- --sample   # opens with a sample part
 ```
 
 `solidcraft part.step` opens a STEP, IGES, 3MF, STL or OBJ file as a new design, and
-`solidcraft design.solidcraft` opens a saved design. Windows builds cross-compile from Linux with
+`solidcraft design.sc` opens a saved design. Windows builds cross-compile from Linux with
 `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ### macOS
@@ -134,19 +134,19 @@ no longer matches the build the browser would keep. Debug builds (`trunk serve`)
 
 ### Design links and embeds
 
-Use `?open=<encoded HTTPS URL>` to open a hosted `.solidcraft` design as an unsaved
+Use `?open=<encoded HTTPS URL>` to open a hosted `.sc` design as an unsaved
 copy, including its history, constraints, and joints. Encode the URL with
 `encodeURIComponent` when it contains query parameters. The host must allow CORS
 requests from the app's origin. Downloads, including redirected URLs, must use HTTPS
 or stay on the app's own origin, and fit within the File > Open design size limit.
 Failed downloads and invalid designs show an error and leave the empty design.
 
-For self-hosting, `?open=/dutchman/jobs/abc/part.solidcraft` resolves against the
+For self-hosting, `?open=/dutchman/jobs/abc/part.sc` resolves against the
 page's origin, using its scheme and port, including plain HTTP on a LAN. A full URL
 on that same origin is also accepted; other absolute URLs still require HTTPS.
 For example, expose a reverse-proxy service in Compose, routing `/` to
 `solidcraft:8080` and `/dutchman/` to a converter service. The converter can link to
-`/?open=/dutchman/jobs/abc/part.solidcraft` without a separate origin or CORS setup.
+`/?open=/dutchman/jobs/abc/part.sc` without a separate origin or CORS setup.
 Paths must start with one `/`; protocol-relative paths (`//`), backslashes, control
 characters, and decoded `..` segments are refused. Redirects must end at HTTPS or
 the page's own origin. Embed mode and **Open in SolidCraft** preserve the path.
@@ -155,7 +155,7 @@ Add `embed` to show the viewport, timeline, browser tree, and joint controls wit
 the ribbon, file menus, or start page:
 
 ```html
-<iframe src="https://docs.solidcraft.io/app/?embed&open=https://example.org/arm.solidcraft"
+<iframe src="https://docs.solidcraft.io/app/?embed&open=https://example.org/arm.sc"
         width="960" height="540" title="Arm design"></iframe>
 ```
 
@@ -249,7 +249,7 @@ cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket
 cargo run --release -p solidcraft-cli -- eval examples/bracket.json     # volume, area, faces…
 cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
 cargo run --release -p solidcraft-cli -- exec solid.box '{"length": 20, "width": 10, "height": 5}'
-cargo run --release -p solidcraft-cli -- run mechanism.json --in arm.solidcraft  # with a motion.export_animation step: a GIF
+cargo run --release -p solidcraft-cli -- run mechanism.json --in arm.sc  # with a motion.export_animation step: a GIF
 ```
 
 A script is a list of commands:
@@ -269,8 +269,8 @@ A script is a list of commands:
 `snapshot` looks at the model from the iso view. `--view NAME` takes another standard view (`front`, `back`, `top`, `bottom`, `left`, `right`) or the name of a view saved in the design with `view.save`. `--camera JSON` takes any camera, as the MCP `screenshot` tool does (its conventions are in [the MCP page](mcp.md#camera-and-close-up-recipe)). A script that applies a view itself with `view.apply` sets the camera too. The ground grid lies on Z 0, so it cuts through a part that straddles it: `--no-grid` leaves it out of the picture, and `--no-axes` the origin's axes. The picture is drawn on the GPU with the viewport's own pipelines, so it shows what the window would (a surface analysis such as `inspect.zebra` included); a machine without a GPU uses a software one (Mesa's lavapipe on Linux, WARP on Windows), and with neither (a Mac without usable Metal, a Linux box without Mesa's Vulkan) the CPU rasterizer draws it, without surface analysis colours, and the reply's `renderer` says `cpu` with a warning. `SOLIDCRAFT_GPU=auto|hardware|software|cpu` chooses (`hardware` and `software` fail rather than fall to the CPU), and `solidcraft-cli gpu` lists the adapters and the tier a snapshot would use.
 
 ```sh
-solidcraft-cli snapshot part.solidcraft --out photo.png --view Photo
-solidcraft-cli snapshot part.solidcraft --out close-up.png --no-grid --no-axes --camera '{"target": [30, -20, 0], "yaw": 0.6, "pitch": 0.25, "distance": 60}'
+solidcraft-cli snapshot part.sc --out photo.png --view Photo
+solidcraft-cli snapshot part.sc --out close-up.png --no-grid --no-axes --camera '{"target": [30, -20, 0], "yaw": 0.6, "pitch": 0.25, "distance": 60}'
 ```
 
 ### Seeing what a cut or a join is about to do
@@ -291,9 +291,9 @@ the other side, `XY`, `XZ` or `YZ` for a plane through the origin, or the comman
 
 ```sh
 # The pin the cut would remove, inside the plate it stops 6 mm short of.
-solidcraft-cli snapshot plate.solidcraft --out preview.png --tool Pin
-solidcraft-cli snapshot plate.solidcraft --out cut.png --tool Pin --section z=12
-solidcraft-cli snapshot plate.solidcraft --out glass.png --body "Plate:opacity=0.25" --body "Pin:color=#1a7f4b"
+solidcraft-cli snapshot plate.sc --out preview.png --tool Pin
+solidcraft-cli snapshot plate.sc --out cut.png --tool Pin --section z=12
+solidcraft-cli snapshot plate.sc --out glass.png --body "Plate:opacity=0.25" --body "Pin:color=#1a7f4b"
 ```
 
 A body drawn see-through is drawn see-through everywhere a picture is drawn, not only here:
@@ -335,7 +335,7 @@ A design's history turns into a script that rebuilds it, which makes a bug that 
 on one design a one-file reproduction:
 
 ```sh
-cargo run --release -p solidcraft-cli -- script part.solidcraft --out repro.json
+cargo run --release -p solidcraft-cli -- script part.sc --out repro.json
 cargo run --release -p solidcraft-cli -- eval repro.json               # the same part
 ```
 
@@ -354,7 +354,7 @@ and Z is up.
 ## Name and compatibility
 
 SolidCraft was renamed from an earlier working name. Since 0.5.0 everything uses the new
-name: the `solidcraft` and `solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*`
+name: the `solidcraft` and `solidcraft-cli` programs, `.solidcraft` designs (`.sc` since then), `SOLIDCRAFT_*`
 environment variables, settings folders and the `solidcraft` MCP server. Upgrading keeps
 working: designs, settings, recovery files, environment variables and CLI/MCP setups from
 earlier builds carry over. Every compatibility shim is listed in the

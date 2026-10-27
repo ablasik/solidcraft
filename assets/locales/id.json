@@ -899,7 +899,7 @@
   "home.new_mm": "Desain baru",
   "home.new_mm_hint": "Milimeter · terbuka di Desain",
   "home.open": "Buka…",
-  "home.open_hint": "Desain .solidcraft ({shortcut})",
+  "home.open_hint": "Desain .sc ({shortcut})",
   "home.open_now": "Sedang terbuka",
   "home.opened_days_ago": "{count} hari lalu",
   "home.opened_hours_ago": "{count} jam lalu",

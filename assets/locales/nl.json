@@ -899,7 +899,7 @@
   "home.new_mm": "Nieuw ontwerp",
   "home.new_mm_hint": "Millimeters · opent in Ontwerp",
   "home.open": "Openen…",
-  "home.open_hint": "Een .solidcraft-ontwerp ({shortcut})",
+  "home.open_hint": "Een .sc-ontwerp ({shortcut})",
   "home.open_now": "Momenteel geopend",
   "home.opened_days_ago": "{count} dagen geleden",
   "home.opened_hours_ago": "{count} u geleden",
