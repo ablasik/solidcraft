@@ -11,12 +11,21 @@ use solidcraft_geom::Vec3;
 
 use super::{CommandSpec, not_in_sketch};
 use crate::params::{bad, bool_, expr, expr_problem, req_expr, str_, string_list, vec2, vec3};
-use crate::schema::features::{BoxParams, ExtrudeParams, FeatureResult};
+use crate::schema::features::{
+    BoundingSolidParams, BoxParams, ConeParams, CylinderParams, ExtrudeParams, FeatureResult, PipeParams, ScaleParams, SphereParams, TorusParams,
+};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
 
 const BOX_CONTRACT: TypedContract<BoxParams> = TypedContract::new();
 const EXTRUDE_CONTRACT: TypedContract<ExtrudeParams> = TypedContract::new();
+const CYLINDER_CONTRACT: TypedContract<CylinderParams> = TypedContract::new();
+const SPHERE_CONTRACT: TypedContract<SphereParams> = TypedContract::new();
+const TORUS_CONTRACT: TypedContract<TorusParams> = TypedContract::new();
+const CONE_CONTRACT: TypedContract<ConeParams> = TypedContract::new();
+const PIPE_CONTRACT: TypedContract<PipeParams> = TypedContract::new();
+const BOUNDING_SOLID_CONTRACT: TypedContract<BoundingSolidParams> = TypedContract::new();
+const SCALE_CONTRACT: TypedContract<ScaleParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.extrude", "Extrude", crate::checked!("solid.extrude", extrude))
@@ -41,10 +50,30 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&BOX_CONTRACT)
         .output(output_schema_for::<FeatureResult>)
         .params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
-    CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
-    CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
-    CommandSpec::new("solid.torus", "Torus", prim_torus).at("SOLID", "CREATE").icon("torus").params("major, minor: expr (radii); center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
-    CommandSpec::new("solid.cone", "Cone", prim_cone).at("SOLID", "CREATE").icon("cone").params("radius | diameter, height: expr (the base circle, and the top's distance along the axis; a negative height goes the other way); top_radius? | top_diameter?: expr (the top circle; default 0: a full cone ending in an apex); base?: [x,y,z] (centre of the base circle: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.cylinder", "Cylinder", crate::checked!("solid.cylinder", prim_cylinder))
+        .at("SOLID", "CREATE")
+        .icon("cylinder")
+        .contract(&CYLINDER_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.sphere", "Sphere", crate::checked!("solid.sphere", prim_sphere))
+        .at("SOLID", "CREATE")
+        .icon("sphere")
+        .contract(&SPHERE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.torus", "Torus", crate::checked!("solid.torus", prim_torus))
+        .at("SOLID", "CREATE")
+        .icon("torus")
+        .contract(&TORUS_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .params("major, minor: expr (radii); center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.cone", "Cone", crate::checked!("solid.cone", prim_cone))
+        .at("SOLID", "CREATE")
+        .icon("cone")
+        .contract(&CONE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .params("radius | diameter, height: expr (the base circle, and the top's distance along the axis; a negative height goes the other way); top_radius? | top_diameter?: expr (the top circle; default 0: a full cone ending in an apex); base?: [x,y,z] (centre of the base circle: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.fillet", "Fillet", fillet)
         .at("SOLID", "MODIFY")
         .icon("fillet")
@@ -70,17 +99,23 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("hole")
         .key("H")
         .params("position: [x,y,z] on a face (numbers, or length expressions the hole follows) | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch, into the material on whichever side of the sketch plane it is) | sketch alone (every sketch point: standalone points and circle centres); flip?: bool (sketch points: drill to the other side); single?: bool (with one sketch point: a Single hole that follows the point, drilled into the face there); direction?: [x,y,z] (default: into the face, against its outward normal; one that leaves the face is mirrored into it; ignored with sketch points unless single); diameter | thread (a tapped hole: metric major minus pitch or tabulated UNC/UNF, G or Rp cut-tap drill) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); references?: [{edge: [x,y,z] on a straight edge of the face, distance: expr}] (at most two; the centre goes that far from each edge's line, in the face's plane, and follows the edges; with a numeric position only); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" or \"1/4-20 UNC\" (cosmetic); handedness?: right|left (default right, needs thread for left); thread_depth?: positive length independent of drill depth (default: full useful cylindrical wall; must fit that wall); targets?: [body] (the bodies to drill; holes at the points of a sketch on a body's face default to that body, found along the holes' direction on it alone; explicit targets or participants override, [\"*\"] every body)"),
-    CommandSpec::new("solid.pipe", "Pipe", pipe)
+    CommandSpec::new("solid.pipe", "Pipe", crate::checked!("solid.pipe", pipe))
         .at("SOLID", "CREATE")
         .icon("pipe")
+        .contract(&PIPE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
         .params("path_sketch: sketch; path: [curve ids in order]; diameter: expr; wall?: expr (hollow); operation?, targets?, name?, body_name?"),
-    CommandSpec::new("solid.bounding_solid", "Bounding Solid", bounding_solid)
+    CommandSpec::new("solid.bounding_solid", "Bounding Solid", crate::checked!("solid.bounding_solid", bounding_solid))
         .at("SOLID", "CREATE")
         .icon("bounding_solid")
+        .contract(&BOUNDING_SOLID_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
         .params("bodies?: [names] (default: all); margin?: expr; name?, body_name?"),
-    CommandSpec::new("solid.scale", "Scale", scale)
+    CommandSpec::new("solid.scale", "Scale", crate::checked!("solid.scale", scale))
         .at("SOLID", "MODIFY")
         .icon("scale")
+        .contract(&SCALE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
         .params("bodies: [names]; factor: expr | factors: [x, y, z] exprs; origin?: [x,y,z]"),
     CommandSpec::new("face.delete", "Delete Face", delete_face)
         .at("SOLID", "MODIFY")
@@ -1296,13 +1331,21 @@ pub(super) fn point_param(s: &Session, p: &Value, key: &str, cmd: &str) -> Resul
 pub(super) fn axis_dir_param(p: &Value, cmd: &str) -> Result<Vec3> {
     match p.get("axis") {
         None => Ok(Vec3::Z),
-        Some(Value::String(a)) => match a.trim().to_ascii_uppercase().as_str() {
+        Some(v) => axis_dir_form(v).map_err(|why| bad(cmd, why)),
+    }
+}
+
+/// What [`axis_dir_param`] reads a given `axis` as, without the design: X, Y or Z (trimmed, any
+/// case), else a non-zero `[x, y, z]`, normalized.
+pub(crate) fn axis_dir_form(v: &Value) -> std::result::Result<Vec3, &'static str> {
+    match v {
+        Value::String(a) => match a.trim().to_ascii_uppercase().as_str() {
             "X" => Ok(Vec3::X),
             "Y" => Ok(Vec3::Y),
             "Z" => Ok(Vec3::Z),
-            _ => Err(bad(cmd, "`axis` must be X, Y, Z or [x, y, z]")),
+            _ => Err("`axis` must be X, Y, Z or [x, y, z]"),
         },
-        Some(v) => vec3(v).and_then(|a| a.normalized()).ok_or_else(|| bad(cmd, "`axis` must be X, Y, Z or a non-zero [x, y, z]")),
+        v => vec3(v).and_then(|a| a.normalized()).ok_or("`axis` must be X, Y, Z or a non-zero [x, y, z]"),
     }
 }
 

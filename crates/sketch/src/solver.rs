@@ -2155,7 +2155,9 @@ fn orients(s: &State, sub: &[(Block, Vec<usize>)]) -> Vec<(Orient, Vec<usize>)> 
     let mut joins = Vec::new();
     let mut edges = Vec::new();
     for (b, _) in sub {
-        let Block::User(ci, kind) = b else { continue };
+        // A tangency at a point the two curves share (or a line's end held on the round) is a
+        // block of its own; its round keeps its side of the line all the same.
+        let (Block::User(ci, kind) | Block::TangentAt(ci, kind, _)) = b else { continue };
         match **kind {
             ConstraintKind::Coincident { p, q } => joins.push((p, q)),
             ConstraintKind::Distance { p, q, .. } => edges.push((p, q, *ci)),
@@ -2175,8 +2177,9 @@ fn orients(s: &State, sub: &[(Block, Vec<usize>)]) -> Vec<(Orient, Vec<usize>)> 
                     out.push((Orient::OfLine(*centre, l, value + s.round(c).1), vec![*ci]));
                 }
             }
-            // A line tangent to a circle away from both their ends: the circle stays on its side
-            // (the other tangent of that direction is a diameter away).
+            // A line tangent to a circle: the circle stays on its side (away from their ends, the
+            // other tangent of that direction is a diameter away; at an end they share, the other
+            // tangent from the line's far end is its mirror image).
             ConstraintKind::Tangent { a, b } => {
                 let (l, c) = if s.is_line(a) { (a, b) } else { (b, a) };
                 if s.is_line(l)

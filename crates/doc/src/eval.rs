@@ -2356,35 +2356,44 @@ impl Model {
     /// design after the rename, which changed nothing but names, so every result keeps its
     /// geometry and meshes and only the body's name (and the names worked out from it) changes.
     /// Later features that change the body (a pattern, a chamfer, a join) keep their results
-    /// too (#2467): a feature's geometry doesn't depend on its bodies' names.
+    /// too (#2467): a feature's geometry doesn't depend on its bodies' names. A body no later
+    /// feature changes is followed even when other bodies are numbered after it (`X (2)`, the
+    /// solids of a STEP file that share a label): `body.rename` keeps their names.
     /// False, leaving the model as it was, when the rename can't be followed that way and the
     /// design must be evaluated: the model isn't the design's, a body of that name comes and goes
-    /// or isn't the same body throughout, a later body's name is worked out from it (`X (2)`), a
-    /// message quotes it, or it is sheet metal, threaded, or named in a later feature's face
-    /// references.
+    /// or isn't the same body throughout, a later body's name is worked out from a body later
+    /// features change, a message quotes it, or it is sheet metal, threaded, or named in a later
+    /// feature's face references.
     pub fn rename_body(&mut self, doc: &Document, old: &str, new: &str) -> bool {
         if self.results.len() != doc.features.len() || self.results.iter().zip(&doc.features).any(|(r, f)| r.id != f.id || r.stale) {
             return false;
         }
         let Some(at) = self.results.iter().position(|r| r.state.body(old).is_some()) else { return false };
-        let Some(feature) = self.results.get(at).and_then(|r| r.state.body(old)).map(|b| b.feature) else { return false };
-        // One body from the feature that made it until it is gone (joined into another), and no
-        // other body's name comes from its name.
+        let Some((feature, made)) = self.results.get(at).and_then(|r| r.state.body(old)).map(|b| (b.feature, Arc::as_ptr(&b.mesh))) else {
+            return false;
+        };
+        // Untouched from the feature that made it to the end: `body.rename` keeps the names of
+        // its siblings and of later bodies named after it (`X (2)`, the solids of a STEP file
+        // with one label), so evaluating the renamed design gives the same names.
+        let untouched = self.results.iter().skip(at).all(|r| r.state.body(old).is_some_and(|b| Arc::as_ptr(&b.mesh) == made));
+        // Or one body from the feature that made it until it is gone (joined into another), and
+        // no other body's name comes from its name.
         let held: Vec<bool> = self.results.iter().skip(at).map(|r| r.state.body(old).is_some()).collect();
         let one_run = held.iter().skip_while(|h| **h).all(|h| !*h);
         let derived = format!("{old} (");
-        let same_body = self
-            .results
-            .iter()
-            .skip(at)
-            .all(|r| r.state.bodies.iter().all(|b| if b.name == old { b.feature == feature } else { !b.name.starts_with(&derived) }));
+        let same_body = || {
+            self.results
+                .iter()
+                .skip(at)
+                .all(|r| r.state.bodies.iter().all(|b| if b.name == old { b.feature == feature } else { !b.name.starts_with(&derived) }))
+        };
         let quoted = self.results.iter().skip(at).any(|r| [&r.error, &r.warning].into_iter().flatten().any(|m| m.contains(old)));
         let named_elsewhere = self
             .results
             .iter()
             .any(|r| r.state.body(new).is_some() || r.state.sheets.iter().any(|x| x.body == old) || r.state.threads.iter().any(|t| t.body == old));
         let faces_named = doc.features.iter().skip(at + 1).any(|f| f.face_names.iter().any(|n| n.contains(old)));
-        if !one_run || !same_body || quoted || named_elsewhere || faces_named {
+        if !(untouched || (one_run && same_body())) || quoted || named_elsewhere || faces_named {
             return false;
         }
         // States shared between results stay shared.

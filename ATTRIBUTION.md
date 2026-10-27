@@ -578,6 +578,7 @@ Original SolidCraft drawings, Open for owner review; no runtime assignments.
 | assets/icons/ui/design/svg/model/cone.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
 | assets/locales/ar.json | Abdullah (A-AL-ANAZI) | Original Arabic translation of SolidCraft's English catalog; no commercial CAD text used | MIT OR Apache-2.0 |
 | assets/locales/he.json | SolidCraft contributors | Original Hebrew translation of SolidCraft's English catalog; no commercial CAD text used | MIT OR Apache-2.0 |
+| assets/styles/ui/themes/cga.json | SolidCraft contributors | original SolidCraft theme file using the 16 colours of the IBM Color Graphics Adapter (black, cyan, magenta, and white of its high-intensity palette 1 for the interface) | MIT OR Apache-2.0 |
 
 ## Code adapted from sibling projects
 
