@@ -267,6 +267,41 @@ fn appearance_edits_upload_palette_rows_only() {
     assert!(glass.palette > 0, "it writes the palette: {glass:?}");
 }
 
+/// A body out of the view is left out of its block's draws: two boxes far apart, drawn with
+/// both in view and then with the camera on one of them, draw half the triangles. Skipped
+/// without a GPU adapter.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bodies_out_of_the_view_are_not_drawn() {
+    const SIZE: u32 = 64;
+    let Some(mut frames) = crate::gpu::OffscreenFrames::new(SIZE, false) else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.ui.ground_shadow = false;
+    app.set_origin_shown(false);
+    app.viewport.gpu = frames.target();
+    app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [0, 0, 0], "operation": "new"})).unwrap();
+    app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [1000, 0, 0], "operation": "new"})).unwrap();
+    app.fit_view();
+    let scene = build_scene(&app);
+    let spans: usize = scene.blocks.iter().map(|b| b.bytes.bodies.len()).sum();
+    assert_eq!(spans, 2, "each body's box is kept with its block");
+    let slot: crate::gpu::SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(scene)));
+    let none: crate::gpu::SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    frames.frame(crate::scale_tests::view_frame(&app, SIZE, (1, &slot), (0, &none)));
+    let both = frames.stats().triangles;
+    assert_eq!(both, 24, "both boxes in view");
+    app.cam.target = solidcraft_engine::geom::Vec3::new(5.0, 5.0, 5.0);
+    app.cam.distance = 40.0;
+    frames.frame(crate::scale_tests::view_frame(&app, SIZE, (1, &slot), (0, &none)));
+    assert_eq!(frames.stats().triangles, 12, "the far box is not drawn");
+    app.fit_view();
+    frames.frame(crate::scale_tests::view_frame(&app, SIZE, (1, &slot), (0, &none)));
+    assert_eq!(frames.stats().triangles, both, "and drawn again once in view");
+}
+
 /// Exercise the live GPU scene slots: a fresh headless render always rebuilds and would hide
 /// stale cached geometry. Theme changes must update bytes while retaining the model's mesh.
 #[test]

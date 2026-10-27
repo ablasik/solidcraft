@@ -1025,7 +1025,10 @@ fn build_block(draws: &[BodyDraw], shaded: bool, build: &impl Fn(&BodyDraw, &mut
     let mut spans = Vec::with_capacity(draws.len());
     for d in draws {
         let v0 = builder.vertices_len();
+        // Its box goes with its triangles, so a view without it leaves them out.
+        builder.begin_body();
         build(d, &mut builder);
+        builder.end_body();
         spans.push(at(v0)..at(builder.vertices_len()));
     }
     let ranges = draws
@@ -1079,6 +1082,7 @@ fn reindex_block(block: CachedBlock, draws: &[BodyDraw]) -> CachedBlock {
     let old = block.bytes;
     let bytes = std::sync::Arc::new(crate::gpu::BlockBytes {
         vertices: old.vertices.clone(),
+        bodies: old.bodies.clone(),
         opaque: std::sync::Arc::new(opaque),
         glass: std::sync::Arc::new(glass),
         faded: std::sync::Arc::new(faded),

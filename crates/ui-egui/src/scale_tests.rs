@@ -527,3 +527,47 @@ fn step_file_cost() {
     }
     println!("{line}");
 }
+
+/// Zoomed onto one part of an assembly, as when editing it: the GPU frame and the triangles
+/// drawn, against the whole assembly in view. Bodies out of the view are left out of their
+/// blocks' draws. Skipped without a GPU adapter. Run with `--ignored --nocapture`.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+#[ignore = "manual culling measurement"]
+fn zoomed_view_frame_cost() {
+    const SIZE: u32 = 1024;
+    let Some(mut frames) = crate::gpu::OffscreenFrames::new(SIZE, false) else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut h = assembly(300, 500);
+    h.app.viewport.gpu = frames.target();
+    h.app.fit_view();
+    let model: crate::gpu::SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(crate::viewport::build_scene(&h.app))));
+    let none: crate::gpu::SceneSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let still = |h: &Harness, frames: &mut crate::gpu::OffscreenFrames| {
+        frames.frame(view_frame(&h.app, SIZE, (7, &model), (0, &none)));
+        let mut t: Vec<f64> = (0..7).map(|_| frames.frame(view_frame(&h.app, SIZE, (7, &model), (0, &none)))).collect();
+        t.sort_by(f64::total_cmp);
+        (t[3], frames.stats().triangles)
+    };
+    let (whole, whole_tris) = still(&h, &mut frames);
+    let st = h.app.session.world_state();
+    let b = st.bodies.iter().find(|b| b.component == 0).unwrap().mesh().bounds();
+    drop(st);
+    h.app.cam.target = b.center();
+    h.app.cam.distance = b.diagonal() * 1.5;
+    let (zoomed, zoomed_tris) = still(&h, &mut frames);
+    // Orbiting: a new view every frame, so the bodies are culled again each time.
+    let mut t: Vec<f64> = (0..21)
+        .map(|i| {
+            h.app.cam.yaw += 0.01 * f64::from(i);
+            frames.frame(view_frame(&h.app, SIZE, (7, &model), (0, &none)))
+        })
+        .collect();
+    t.sort_by(f64::total_cmp);
+    let orbit = t[10];
+    println!(
+        "ZOOMED whole_ms={whole:.2} whole_triangles={whole_tris} zoomed_ms={zoomed:.2} zoomed_triangles={zoomed_tris} zoomed_orbit_ms={orbit:.2}"
+    );
+}
