@@ -3104,6 +3104,18 @@ impl Document {
         Some(out)
     }
 
+    /// Only appearances (body, face and component looks) changed: evaluation never reads them, so
+    /// the model and its placed world stay valid. The same whole-Document proof as
+    /// [`Document::differs_only_in_render`].
+    pub fn differs_only_in_appearance(&self, previous: &Document) -> bool {
+        if self.appearances == previous.appearances {
+            return false;
+        }
+        let mut normalized = previous.clone();
+        normalized.appearances = self.appearances.clone();
+        *self == normalized
+    }
+
     /// The colour a body is shown and exported in (sRGB as 0–1 fractions): its appearance,
     /// else its component's, else its material's look, else the colour it was imported with.
     /// (Faces may have their own: `face_looks`.)

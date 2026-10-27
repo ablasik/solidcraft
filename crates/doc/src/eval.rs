@@ -8342,12 +8342,13 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
     // places hundreds of parts, each a B-rep transform.
     let mut jobs = Vec::new();
     let owners = doc.model_body_components(st);
+    let names = crate::WorldNames::new(doc, st);
     let bodies_of = |comp: u64| st.bodies.iter().zip(&owners).filter(move |(_, owner)| **owner == comp).map(|(b, _)| b);
     for (comp, path, m) in &placements {
         for b in bodies_of(*comp) {
             let bm = body_matrix(b, m);
             if !crate::is_identity(&bm) {
-                jobs.push((b, bm, doc.world_body_name(st, &b.name, *comp, path)));
+                jobs.push((b, bm, names.name(&b.name, *comp, path)));
             }
         }
     }
@@ -8366,14 +8367,14 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             // A changed placement keeps a distinct mesh, at that placement's coordinates.
             let mut placed = if crate::is_identity(&bm) {
                 let mut placed = b.clone();
-                placed.name = doc.world_body_name(st, &b.name, comp, &path);
+                placed.name = names.name(&b.name, comp, &path);
                 placed
             } else {
                 // The same order as the jobs: this body's, made above (again here if it failed).
                 let placed = match moved.next() {
                     Some((Some(placed), _)) => placed,
                     Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
-                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
+                    None => placed_before.placed(b, &bm, names.name(&b.name, comp, &path)),
                 };
                 placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
                 placed
@@ -8428,7 +8429,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             .filter(|t| st.body(&t.body).map(|body| doc.model_body_component(body)).unwrap_or_else(|| comp_of_feature(t.feature)) == comp)
         {
             let mut t2 = t.clone();
-            t2.body = doc.world_body_name(st, &t.body, comp, &path);
+            t2.body = names.name(&t.body, comp, &path);
             let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
             t2.axis_point = crate::apply_point(&frame, t.axis_point);
             t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);

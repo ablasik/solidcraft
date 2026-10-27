@@ -264,7 +264,13 @@ struct WorldCache {
     world: Arc<solidcraft_doc::ModelState>,
     /// The moved components' bodies as placed for `world`, reused by the next world state.
     placed: Arc<std::sync::Mutex<solidcraft_doc::PlacedBodies>>,
+    /// Every placed body's world name, own name and frame for `world` ([`Session::body_frames`]),
+    /// worked out when a command first maps a body name.
+    frames: Arc<std::sync::OnceLock<BodyFrames>>,
 }
+
+/// Every placed body's world name, its component's own name for it, and its frame.
+pub(crate) type BodyFrames = Arc<Vec<(String, String, solidcraft_doc::Mat)>>;
 
 impl WorldCache {
     fn matches(&self, session: &Session, model: &Arc<solidcraft_doc::ModelState>) -> bool {
@@ -795,9 +801,24 @@ impl Session {
                 active_occurrence_path: self.active_occurrence_path.clone(),
                 world: w.clone(),
                 placed,
+                frames: Arc::default(),
             });
         }
         w
+    }
+
+    /// Every placed body's world name, own name and frame. Kept with the world state while it is
+    /// current, so commands naming a body in a large assembly do not each name every body again.
+    pub(crate) fn body_frames(&self) -> BodyFrames {
+        let st = self.model.state();
+        let compute = || -> BodyFrames {
+            Arc::new(self.placed_document().body_frames_with_source(&st).into_iter().map(|(world, own, _, _, m)| (world, own, m)).collect())
+        };
+        let cell = self.world_cache.lock().ok().and_then(|c| c.as_ref().filter(|c| c.matches(self, &st)).map(|c| c.frames.clone()));
+        match cell {
+            Some(cell) => cell.get_or_init(compute).clone(),
+            None => compute(),
+        }
     }
 
     pub fn refresh(&mut self) {
@@ -973,12 +994,14 @@ impl Session {
         }
     }
 
-    /// Only persistent render intent, or only part properties, changed. Never evaluate or clear
-    /// a stale model here.
+    /// Only persistent render intent, part properties or appearances changed. Never evaluate or
+    /// clear a stale model here.
     fn render_only_change(&self, before: &Snapshot) -> bool {
         self.active_sketch == before.active_sketch
             && self.pending_moves == before.pending_moves
-            && (self.doc.differs_only_in_render(&before.doc) || self.doc.differs_only_in_part_properties(&before.doc))
+            && (self.doc.differs_only_in_render(&before.doc)
+                || self.doc.differs_only_in_part_properties(&before.doc)
+                || self.doc.differs_only_in_appearance(&before.doc))
     }
 
     /// Only what is hidden or shown changed (`browser.visibility`): the document and the model

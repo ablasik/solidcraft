@@ -89,12 +89,13 @@ impl Session {
         }
         let hidden: std::collections::BTreeSet<_> = self.visibility.hidden_bodies.iter().map(String::as_str).collect();
         let mut names = std::collections::BTreeMap::new();
+        let (before, after) = (solidcraft_doc::WorldNames::new(previous, state), solidcraft_doc::WorldNames::new(&self.doc, &renamed));
         for (component, path, _) in previous.placements() {
             for body in state.bodies.iter().filter(|body| previous.model_body_component(body) == component) {
-                let old = previous.world_body_name(state, &body.name, component, &path);
+                let old = before.name(&body.name, component, &path);
                 if hidden.contains(old.as_str()) {
                     let source = rename.filter(|(old, _)| *old == body.name).map_or(body.name.as_str(), |(_, new)| new);
-                    names.insert(old, self.doc.world_body_name(&renamed, source, component, &path));
+                    names.insert(old, after.name(source, component, &path));
                 }
             }
         }
@@ -169,11 +170,12 @@ impl Session {
         }
         let leaf = self.doc.occurrences.iter().find(|o| Some(&o.id) == path.last()).ok_or_else(|| invalid("occurrence path has no leaf"))?;
         let state = self.model.state();
+        let names = solidcraft_doc::WorldNames::new(&self.doc, &state);
         let bodies = state
             .bodies
             .iter()
             .filter(|b| self.doc.model_body_component(b) == component)
-            .map(|b| OccurrenceBody { source: b.name.clone(), world: self.doc.world_body_name(&state, &b.name, component, path) })
+            .map(|b| OccurrenceBody { source: b.name.clone(), world: names.name(&b.name, component, path) })
             .collect();
         Ok(OccurrencePlacement {
             occurrence: leaf.id,
@@ -417,12 +419,13 @@ impl Session {
     fn bodies_hidden_by_parents(&self) -> std::collections::BTreeSet<String> {
         let st = self.model.state();
         let mut out = std::collections::BTreeSet::new();
+        let names = solidcraft_doc::WorldNames::new(&self.doc, &st);
         for (component, path, _) in self.doc.placements() {
             let placement_hidden = !path.is_empty() && !self.occurrence_visible(&path);
             let scope = Self::folder_scope(&path);
             for b in st.bodies.iter().filter(|b| self.doc.model_body_component(b) == component) {
                 if placement_hidden || self.item_folder_hidden(&scope, component, "bodies", &b.name) {
-                    out.insert(self.doc.world_body_name(&st, &b.name, component, &path));
+                    out.insert(names.name(&b.name, component, &path));
                 }
             }
         }

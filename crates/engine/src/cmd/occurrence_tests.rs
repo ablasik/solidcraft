@@ -101,6 +101,73 @@ fn renaming_a_parent_preserves_hidden_nested_copies_with_ambiguous_labels() {
     }
 }
 
+/// The world name of a placed body as `Document::world_body_name` worked it out before
+/// `WorldNames` (each name scanning the whole design), kept to prove the two agree.
+fn world_name_by_scanning(doc: &crate::doc::Document, st: &crate::doc::ModelState, source: &str, component: u64, path: &[u64]) -> String {
+    if path == doc.first_path(component) {
+        return source.to_string();
+    }
+    let names: Vec<&str> = path.iter().filter_map(|id| doc.occurrences.iter().find(|o| o.id == *id)).map(|o| o.name.as_str()).collect();
+    let candidate = format!("{source} ({})", names.join("/"));
+    let mut counts = std::collections::BTreeMap::from([(0, 1usize)]);
+    for name in &names {
+        let mut next = std::collections::BTreeMap::<u64, usize>::new();
+        for o in doc.occurrences.iter().filter(|o| o.name == *name) {
+            if let Some(count) = counts.get(&o.parent) {
+                let n = next.entry(o.component).or_default();
+                *n = (*n + count).min(2);
+            }
+        }
+        counts = next;
+    }
+    let ambiguous = counts.get(&component).copied().unwrap_or(0) > 1;
+    let reserved =
+        doc.occurrences.iter().any(|o| o.name.contains('/') || o.name.contains("@occ[")) || st.bodies.iter().any(|b| b.name.contains("@occ["));
+    if !ambiguous && !reserved && st.body(&candidate).is_none() {
+        return candidate;
+    }
+    let ids = path.iter().map(u64::to_string).collect::<Vec<_>>().join("/");
+    let mut key = format!("{}@occ[{ids}]", serde_json::to_string(source).unwrap());
+    while st.body(&key).is_some() {
+        key.push('#');
+    }
+    key
+}
+
+/// Naming every placed body at once (`WorldNames`) gives each the name naming it alone did:
+/// nested copies, copies whose labels collide, a body named like a label, and names with a
+/// slash or the fallback key's marker.
+#[test]
+fn placed_body_names_match_naming_each_body_alone() {
+    let mut s = Session::default();
+    let (parent, _) = created(&mut s, "Assembly");
+    let (knob, _) = created(&mut s, "Knob");
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Knob"}));
+    run(&mut s, "occurrence.copy", json!({"component": parent, "translate": [20, 0, 0]}));
+    run(&mut s, "occurrence.copy", json!({"component": knob, "translate": [0, 20, 0]}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "body_name": "Knob (Assembly/Knob)"}));
+    let check = |s: &Session, step: &str| {
+        let st = s.model.state();
+        let names = crate::doc::WorldNames::new(&s.doc, &st);
+        let mut seen = 0;
+        for (component, path, _) in s.doc.placements() {
+            for b in st.bodies.iter().filter(|b| s.doc.model_body_component(b) == component) {
+                assert_eq!(names.name(&b.name, component, &path), world_name_by_scanning(&s.doc, &st, &b.name, component, &path), "{step}: {path:?}");
+                seen += 1;
+            }
+        }
+        assert!(seen >= 5, "{step}: every placement is named ({seen})");
+    };
+    check(&s, "copies");
+    run(&mut s, "component.rename", json!({"component": parent, "name": "Knob"}));
+    check(&s, "a parent named like its child");
+    run(&mut s, "component.rename", json!({"component": parent, "name": "Assembly/Other"}));
+    check(&s, "a slash");
+    run(&mut s, "body.rename", json!({"body": "Knob", "name": "Grip (@occ[custom])"}));
+    check(&s, "the fallback marker");
+}
+
 #[test]
 fn instance_copy_uses_selected_source_transform() {
     let mut s = Session::default();
