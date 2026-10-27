@@ -1452,17 +1452,21 @@ mod tests {
     }
 
     /// `ui.render` with extra request parameters.
-    fn render_with(app: &mut SolveApp, path: &std::path::Path, extra: serde_json::Value) -> Vec<u8> {
+    /// A `ui.render` of `app` to `path` with `extra` parameters: the PNG, and what drew it.
+    fn render_with(app: &mut SolveApp, path: &std::path::Path, extra: serde_json::Value) -> (Vec<u8>, String) {
         let mut params = json!({"path": path.to_string_lossy(), "width": 200, "height": 140});
         for (k, v) in extra.as_object().into_iter().flatten() {
             params[k.as_str()] = v.clone();
         }
         let (req, _rx) = ControlRequest::new("ui.render", params);
-        match handle(app, &crate::fonts::test_context(), &req) {
-            Outcome::Done(v) => assert_eq!(v["ok"], true, "{v}"),
+        let renderer = match handle(app, &crate::fonts::test_context(), &req) {
+            Outcome::Done(v) => {
+                assert_eq!(v["ok"], true, "{v}");
+                v["result"]["renderer"].as_str().or(v["renderer"].as_str()).unwrap_or("unknown").to_string()
+            }
             Outcome::Screenshot { .. } => panic!("ui.render took a screenshot"),
-        }
-        std::fs::read(path).unwrap()
+        };
+        (std::fs::read(path).unwrap(), renderer)
     }
 
     /// A model render draws the ground grid (it cuts through a part that straddles Z 0) and the
@@ -1480,7 +1484,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("solidcraft-render-guides-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("shot.png");
-        let shot = |app: &mut SolveApp, extra: serde_json::Value| render_with(app, &path, extra);
+        // Every picture is compared byte for byte, so each must come from the same renderer.
+        let drawn_by = std::cell::RefCell::new(Vec::new());
+        let shot = |app: &mut SolveApp, extra: serde_json::Value| {
+            let (png, renderer) = render_with(app, &path, extra);
+            drawn_by.borrow_mut().push(renderer);
+            png
+        };
         let all = shot(&mut app, json!({}));
         let no_grid = shot(&mut app, json!({"grid": false}));
         let no_axes = shot(&mut app, json!({"axes": false}));
@@ -1491,18 +1501,38 @@ mod tests {
                 assert!(a != b, "two of the pictures are the same");
             }
         }
+        // A picture that is not the one expected: both are kept, with how much they differ, so a
+        // failure that does not come back on a rerun still leaves its evidence.
+        let same = |step: &str, got: Vec<u8>, want: &Vec<u8>| {
+            if got == *want {
+                return;
+            }
+            let kept = std::env::temp_dir().join(format!("solidcraft-render-guides-failed-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&kept);
+            let _ = std::fs::write(kept.join(format!("{step}-got.png")), &got);
+            let _ = std::fs::write(kept.join(format!("{step}-want.png")), want);
+            let differ = match (image::load_from_memory(&got), image::load_from_memory(want)) {
+                (Ok(a), Ok(b)) if a.width() == b.width() && a.height() == b.height() => {
+                    let (a, b) = (a.to_rgba8(), b.to_rgba8());
+                    format!("{} of {} pixels differ", a.pixels().zip(b.pixels()).filter(|(x, y)| x != y).count(), a.width() * a.height())
+                }
+                (Ok(a), Ok(b)) => format!("{}×{} against {}×{}", a.width(), a.height(), b.width(), b.height()),
+                _ => "a picture does not decode".to_string(),
+            };
+            panic!("{step}: not the picture expected ({differ}; drawn by {:?}); both kept in {}", drawn_by.borrow(), kept.display());
+        };
         // With the Grid switch off the render has no grid, and `grid: true` brings it back.
         app.ui.show_grid = false;
-        assert!(shot(&mut app, json!({})) == no_grid);
-        assert!(shot(&mut app, json!({"grid": true})) == all);
+        same("grid-off", shot(&mut app, json!({})), &no_grid);
+        same("grid-off-asked-on", shot(&mut app, json!({"grid": true})), &all);
         // With the Origin off too it has neither; `axes: true` puts the axes back.
         app.set_origin_shown(false);
-        assert!(shot(&mut app, json!({})) == bare);
-        assert!(shot(&mut app, json!({"axes": true})) == no_grid);
+        same("both-off", shot(&mut app, json!({})), &bare);
+        same("both-off-axes-asked-on", shot(&mut app, json!({"axes": true})), &no_grid);
         // The Origin and the Grid back on: the first picture again.
         app.ui.show_grid = true;
         app.set_origin_shown(true);
-        assert!(shot(&mut app, json!({})) == all);
+        same("both-on-again", shot(&mut app, json!({})), &all);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
