@@ -953,7 +953,7 @@ fn alignment_items(selection: &[Sel]) -> Vec<Item> {
 /// Sketch entity items: construction, fix, delete, dimension and the constraints the selection
 /// can take.
 fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
-    use solidcraft_engine::sketch::CurveKind;
+    use solidcraft_engine::sketch::{ConstraintKind, CurveKind};
     let Some(sid) = app.session.active_sketch else { return Vec::new() };
     let st = app.session.world_state();
     let Some(ss) = st.sketch(sid) else { return Vec::new() };
@@ -1002,6 +1002,16 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
     if curves.is_empty() && points.is_empty() {
         if dims.len() == 1 {
             v.push(cmd(app, "sketch.toggle_driven", "Toggle Driven Dimension").with(json!({ "constraint": dims[0] })));
+            // A circle's or an arc's radius or diameter switches to the other one (#7499).
+            let round = |c: usize| matches!(ss.sketch.curves.get(c).map(|c| &c.kind), Some(CurveKind::Circle { .. } | CurveKind::Arc { .. }));
+            if ss
+                .sketch
+                .constraints
+                .iter()
+                .any(|k| k.id == dims[0] && matches!(k.kind, ConstraintKind::Radius { c, .. } | ConstraintKind::Diameter { c, .. } if round(c)))
+            {
+                v.push(cmd(app, "sketch.toggle_diameter", "Toggle Radius / Diameter").with(json!({ "constraint": dims[0] })));
+            }
         }
         if app.session.selection.iter().any(|s| matches!(s, Sel::SketchConstraint { .. })) {
             v.push(act("ui.delete", "Delete", "delete").key("Del"));
@@ -2289,6 +2299,45 @@ mod tests {
         assert!(!items(&h.app, &Target::Viewport).iter().any(|i| i.id == "sketch.toggle_driven"), "a horizontal constraint is not a dimension");
         h.app.session.selection = vec![Sel::SketchCurve { id: l, sketch: None }];
         assert!(!items(&h.app, &Target::Viewport).iter().any(|i| i.id == "sketch.toggle_driven"));
+    }
+
+    /// #7499: a selected circle's dimension offers Toggle Radius / Diameter, which switches it
+    /// both ways; a line's length does not.
+    #[test]
+    fn a_circle_dimension_menu_toggles_radius_and_diameter() {
+        use solidcraft_engine::sketch::ConstraintKind;
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        let sid = h.app.session.active_sketch.unwrap();
+        let c = h.app.run("sketch.circle.center", json!({"center":[0,0],"radius":10})).unwrap()["curves"][0].as_str().unwrap().to_owned();
+        let l = h.app.run("sketch.line", json!({"points":[[30,0],[50,0]],"connect":false,"infer":false})).unwrap()["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let pc = h.app.run("sketch.dimension", json!({"entities":[c]})).unwrap()["param"].as_str().unwrap().to_owned();
+        let pl = h.app.run("sketch.dimension", json!({"entities":[l],"value":20})).unwrap()["param"].as_str().unwrap().to_owned();
+        let dim = |h: &crate::scenario::Harness, p: &str| {
+            h.app.session.world_state().sketch(sid).unwrap().sketch.constraints.iter().find(|c| c.param.as_deref() == Some(p)).unwrap().clone()
+        };
+        let did = dim(&h, &pc).id;
+
+        h.app.session.selection = vec![Sel::SketchConstraint { id: did.clone() }];
+        let menu = items(&h.app, &Target::Viewport);
+        let item = menu.iter().find(|i| i.id == "sketch.toggle_diameter").expect("a circle's dimension must offer Toggle Radius / Diameter");
+        assert!(item.enabled);
+        assert_eq!(item.params, Some(json!({"constraint": did})));
+        run_item(&mut h.app, item, egui::pos2(0.0, 0.0));
+        assert!(matches!(dim(&h, &pc).kind, ConstraintKind::Radius { .. }), "the diameter is a radius now");
+        let menu = items(&h.app, &Target::Viewport);
+        let item = menu.iter().find(|i| i.id == "sketch.toggle_diameter").expect("a radius still offers the toggle");
+        run_item(&mut h.app, item, egui::pos2(0.0, 0.0));
+        assert!(matches!(dim(&h, &pc).kind, ConstraintKind::Diameter { .. }), "and a diameter again");
+
+        h.app.session.selection = vec![Sel::SketchConstraint { id: dim(&h, &pl).id }];
+        let menu = items(&h.app, &Target::Viewport);
+        assert!(menu.iter().any(|i| i.id == "sketch.toggle_driven"));
+        assert!(!menu.iter().any(|i| i.id == "sketch.toggle_diameter"), "a length is no radius");
     }
 
     #[test]

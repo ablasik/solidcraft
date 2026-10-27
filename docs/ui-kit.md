@@ -4,6 +4,28 @@
 preferences, manager cards, prompts, context menus and the sketch palette. Import through
 `crate::ui_kit::{...}`. Most controls are crate-visible; the container API is public so platform apps use the same hosts.
 
+## Stage bars
+
+`StageBar` composes two clipped, horizontally scrollable rows inside the shell's
+shared floating `Container` (`Surface::Chrome`). Its 36 pt first row contains numbered
+stage chips with the current workspace accent, shared primary/normal buttons and
+the existing command-search editor. The second row fills the remaining card height.
+The feature supplies labels, enabled reasons and command dispatch; the kit owns
+chip geometry, row spacing, typography and colour. Stage selection is navigation;
+the kit never invents completion badges. The shared compact workspace card is 104 × 88 pt; its icon, label and caption are
+centred vertically. The stage bar is 88 pt high with an 8 pt gap from that card.
+Its 36 pt header and 52 pt tools band share a 1 pt divider. Tools use 8 pt side
+padding, icon-text segments, icon-label actions and an information chip, all with
+`theme::Tokens` colours in both themes. Render retains its Inspector controls
+outside the bar.
+
+`Panel::workspace` gives paired floating docks the same bounded vertical span and
+limits each dock to half the available width with an 8 pt gap. Content clips inside
+the allocated host, so a small window cannot grow a dock into the stage bar or Shots
+strip. Docks without usable space are omitted. Render's default outer widths are 266 pt
+for Browser and 305 pt for Inspector, retaining the shared minimum/maximum resize
+rules. Its compass is 110 pt; the 48 pt Shots strip clears the docks by 8 pt.
+
 ## Composition and rules
 
 - Every outer host uses `ui_kit::Container` with a semantic `Surface`. The shell
@@ -25,6 +47,14 @@ preferences, manager cards, prompts, context menus and the sketch palette. Impor
   expression, hinted expression, plain text and dropdown controls. They preserve row order,
   labels, focus IDs and completion; callers keep Enter/change ownership and explicit dropdown IDs.
   `count_row` composes `row` with `count_field` for pattern quantities.
+- `Panel::workspace` owns grip-based left/right placement and bounded width resizing for
+  floating workspace cards, including in Compact ribbon layouts. It reuses the 40 pt
+  Panel/Window header and padded body, with no second top inset below the ribbon.
+  Persistent workspace cards omit the close action. `Panel::bottom_strip`
+  uses `Container::bottom_strip_rect`, the same placement as Design History.
+  `Container::navigation_card` supplies the shared Navigation surface for anchored HUDs.
+  Register measured card rectangles and reserved edges with `shell::register_panel` so
+  fitting and pointer shielding agree. Feature modules provide content, never outer chrome.
 - `Panel` owns bounded windows, feature/palette composition, scrolling bodies,
   pinned actions, compute status and keyboard routing. `wide()` uses three card
   widths. `feature_frame` and `palette_frame` retain docked/floating surfaces.

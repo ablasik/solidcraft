@@ -470,9 +470,11 @@ impl Session {
     }
 
     /// Take up a save that ran on `done`, a [`Session::scratch`] copy of this session that
-    /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing)
-    /// while this one did not change: the name the save gave the design, its
-    /// file, and its saved state, as running the command here would have left them.
+    /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing):
+    /// the name the save gave the design, its file, and its saved state, as running the command
+    /// here would have left them. What is saved is the design the file holds, `done`'s, not this
+    /// one's: a change made here while the save was written is not in the file, so it stays
+    /// unsaved (#6003).
     pub fn adopt_save(&mut self, done: &Session) {
         if done.doc.name != self.doc.name {
             let (from, to) = (self.doc.name.clone(), done.doc.name.clone());
@@ -481,7 +483,8 @@ impl Session {
         self.path.clone_from(&done.path);
         self.disk = done.disk;
         self.read_only = done.read_only;
-        self.mark_saved();
+        self.saved = done.saved.clone();
+        self.saved_visibility = done.saved_visibility.clone();
     }
 
     /// Another program or computer wrote the design's file since it was opened or last saved:
@@ -920,6 +923,33 @@ mod tests {
         assert_eq!(direct.doc.name, "Bracket");
         assert_eq!(adopted.undo.iter().map(|u| u.doc.name.clone()).collect::<Vec<_>>(), vec!["Bracket copy".to_string(); adopted.undo.len()]);
         assert_eq!(solidcraft_io::read_design(&std::fs::read(&b).unwrap()).unwrap(), *adopted.doc);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #6003: a session changed while its save ran on a copy takes up the save's file and name,
+    /// but only what the file holds counts as saved: the change stays unsaved, and undoing it
+    /// leaves nothing unsaved again. A hidden body is a change too.
+    #[test]
+    fn a_change_made_while_a_copy_saves_stays_unsaved() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-adopt-changed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Bracket.solidcraft");
+        for hide in [false, true] {
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "body_name": "Block"})).unwrap();
+            let mut copy = s.scratch();
+            copy.execute("file.save_as", &json!({"path": path.to_string_lossy()})).unwrap();
+            if hide {
+                s.execute("browser.visibility", &json!({"items": ["Block"], "visible": false})).unwrap();
+            } else {
+                s.execute("solid.sphere", &json!({"diameter": 4})).unwrap();
+            }
+            s.adopt_save(&copy);
+            assert_eq!((s.path.as_deref(), s.doc.name.as_str()), (path.to_str(), "Bracket"));
+            assert!(s.is_dirty(), "hide {hide}: the change is not in the file");
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert!(!s.is_dirty(), "hide {hide}: back to what the file holds");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -994,6 +994,7 @@
   "cmd.sketch_spline_control_point_5": "Spline par points de contrôle (degré 5)",
   "cmd.sketch_spline_fit_point": "Spline par points",
   "cmd.sketch_spun_profile": "Profil de révolution",
+  "cmd.sketch_toggle_diameter": "Basculer rayon / diamètre",
   "cmd.sketch_toggle_driven": "Basculer en cote pilotée",
   "cmd.sketch_trim_path": "Ajuster le long du chemin",
   "cmd.solid_align": "Aligner",

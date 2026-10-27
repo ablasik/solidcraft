@@ -555,6 +555,12 @@ const ELEMENTS: &[Element] = &[
     element!("icon_label_button", |ui, _| {
         icon_label_button(ui, "Copy path", "copy", true, false);
     }),
+    element!("compact_icon_label_button", |ui, _| {
+        ui.horizontal(|ui| {
+            compact_icon_label_button(ui, "Paint", "appearance", true);
+            compact_icon_label_button(ui, "Pick Up", "select", true);
+        });
+    }),
     element!("section_count", |ui, _| {
         section_count(ui, "count", "Parameters", false, Some(5), |_| {});
     }),
@@ -716,6 +722,9 @@ const ELEMENTS: &[Element] = &[
     }),
     element!("list_picker", "dialog:list:gallery", Some("dialog:list:gallery"), |ui, _| {
         list_picker(ui, "gallery", "Preset", true);
+    }),
+    element!("choice_chip", "dialog:list:gallery", Some("dialog:list:gallery"), |ui, _| {
+        choice_chip(ui, "gallery", "Shot 1", true);
     }),
     element!("inline_text", "dialog:inline:Active", Some("dialog:inline:Active"), |ui, _| {
         text(ui, "Active", Text::Inline);

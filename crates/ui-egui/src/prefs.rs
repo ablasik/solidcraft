@@ -660,6 +660,12 @@ preference_settings! {
     /// Width of the browser sidebar, which
     /// the user drags wider or narrower at its right edge.
     browser_width: f32 = DEFAULT_BROWSER_WIDTH, PAGE_INTERFACE;
+    /// Render shell preference, independent of the document and Design history.
+    render_shots_strip: bool = true;
+    render_inspector_side: String = "right".into();
+    render_inspector_width: f32 = 305.0;
+    render_browser_side: String = "left".into();
+    render_browser_width: f32 = 266.0;
     /// Draw the parts browser on a translucent card over the 3D view instead of a column of its
     /// own, so the workspace keeps the whole window width.
     browser_float: bool = false, PAGE_INTERFACE;

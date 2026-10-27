@@ -865,7 +865,52 @@ fn ribbon_button_width(painter: &egui::Painter, label: &str) -> f32 {
     (widest + BUTTON_LABEL_PADDING).clamp(BUTTON_MIN_WIDTH, BUTTON_MAX_WIDTH)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CjkScript {
+    Han,
+    Hiragana,
+    Katakana,
+    Other,
+}
+
+fn cjk_script(c: char) -> CjkScript {
+    match c {
+        '\u{3040}'..='\u{309F}' => CjkScript::Hiragana,
+        '\u{30A0}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF65}'..='\u{FF9F}' => CjkScript::Katakana,
+        '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' => CjkScript::Han,
+        _ => CjkScript::Other,
+    }
+}
+
+/// Whether byte offset `end` sits at a word boundary in a spaceless Japanese ribbon label.
+fn cjk_word_break(label: &str, end: usize) -> bool {
+    let (Some(prev), Some(next)) = (label.get(..end).and_then(|s| s.chars().next_back()), label.get(end..).and_then(|s| s.chars().next())) else {
+        return false;
+    };
+    let (a, b) = (cjk_script(prev), cjk_script(next));
+    if a == CjkScript::Katakana && b == CjkScript::Katakana {
+        let before = label.get(..end).unwrap_or_default();
+        return before.ends_with("サーフェス") || before.ends_with("フラット");
+    }
+    match (a, b) {
+        (CjkScript::Han, CjkScript::Katakana)
+        | (CjkScript::Katakana, CjkScript::Han | CjkScript::Hiragana)
+        | (CjkScript::Hiragana, CjkScript::Han | CjkScript::Katakana) => true,
+        (CjkScript::Han, CjkScript::Hiragana) => next == 'を',
+        (CjkScript::Other, CjkScript::Katakana | CjkScript::Hiragana) => prev.is_ascii_alphabetic(),
+        (CjkScript::Katakana | CjkScript::Hiragana, CjkScript::Other) => next.is_ascii_alphabetic(),
+        _ => false,
+    }
+}
+
 fn ribbon_label_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<String> {
+    if let Some((first, second)) = label.split_once('\n') {
+        let first = first.trim();
+        let second = second.trim();
+        if !first.is_empty() && !second.is_empty() {
+            return vec![first.to_owned(), second.to_owned()];
+        }
+    }
     let measure = |text: &str| ribbon_label_width(painter, text);
     let normalized = label.split_whitespace().collect::<Vec<_>>().join(" ");
     let label = normalized.as_str();
@@ -890,9 +935,14 @@ fn ribbon_label_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<S
         }
         return lines;
     }
+    let has_delimiters = label.chars().any(|c| c.is_whitespace() || c == '/');
     let mut end = 0;
-    for token in label.split_inclusive(|c: char| c.is_whitespace() || c == '/') {
-        let next = end + token.len();
+    for (at, ch) in label.char_indices() {
+        let next = at + ch.len_utf8();
+        let is_break = next == label.len() || ch.is_whitespace() || ch == '/' || (!has_delimiters && cjk_word_break(label, next));
+        if !is_break {
+            continue;
+        }
         if end > 0 && measure(label.get(..next).unwrap_or_default().trim()) > width {
             break;
         }
@@ -917,7 +967,7 @@ fn ribbon_button_galley(painter: &egui::Painter, label: &str, width: f32, color:
 /// Ribbon headings use the translated labels, with normal word casing instead of registry caps.
 fn ribbon_label(app: &SolveApp, label: &str) -> String {
     let label = app
-        .tr_label(label)
+        .tr_label(crate::workspace::tab_label(label))
         .split_whitespace()
         .map(|word| {
             let lower = word.to_lowercase();
@@ -992,7 +1042,32 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
     let floating = Container::for_layout(app.ui.layout, Surface::Panel).floating();
     let inset = RIBBON_TAB_INSET;
     let corner = if floating { t.radius_lg.saturating_sub(inset as u8).max(t.radius_sm / 2) } else { t.control_radius.saturating_sub(1) };
-    let search = Rect::from_min_size(pos2(row.right() - search_width - inset, row.top() + inset), vec2(search_width, TAB_ROW_HEIGHT - 2.0 * inset));
+    let render = crate::render_workspace::active(app);
+    let action_labels = [app.tr_label("Render").to_string(), app.tr_label("Cancel").to_string()];
+    let action_widths = action_labels
+        .each_ref()
+        .map(|label| ui.painter().layout_no_wrap(label.clone(), crate::fonts::semibold(t.font_button), t.text).size().x + 24.0);
+    let action_width = if render { action_widths.iter().sum::<f32>() + 2.0 * t.space_2 } else { 0.0 };
+    let search = Rect::from_min_size(
+        pos2(row.right() - search_width - inset - action_width, row.top() + inset),
+        vec2(search_width, TAB_ROW_HEIGHT - 2.0 * inset),
+    );
+    if render {
+        let mut x = search.right() + t.space_2;
+        for ((id, label), width) in ["render.start", "render.cancel"].into_iter().zip(action_labels).zip(action_widths) {
+            let rect = Rect::from_min_size(pos2(x, row.top() + inset), vec2(width, search.height()));
+            let ready = crate::render_workspace::job_ready(app, id);
+            let response = crate::ui_kit::button_at(ui, id, rect, label, crate::ui_kit::Button::Enabled(ready.is_ok()));
+            crate::scenario::publish_target(&format!("ribbon:{id}"), response.rect);
+            if response.clicked() {
+                app.start(id);
+            }
+            if let Err(reason) = ready {
+                response.on_disabled_hover_text(reason);
+            }
+            x += width + t.space_2;
+        }
+    }
     // The single editor is drawn on the foreground layer by shortcut_box::show, so it
     // can grow over the ribbon without being clipped to the tab row.
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_ribbon_search"), search));
@@ -1068,34 +1143,55 @@ fn dropdown_arrow(painter: &egui::Painter, at: egui::Pos2, ink: Color32) {
     crate::ui_kit::dropdown_indicator(painter, Rect::from_center_size(at, vec2(10.0, 10.0)), ink);
 }
 
+pub(crate) fn shell_layout(app: &SolveApp) -> crate::shell::LayoutMode {
+    if crate::render_workspace::active(app) { crate::shell::LayoutMode::Floating } else { app.ui.layout }
+}
+
+pub(crate) fn shell_cards(app: &SolveApp, available: Rect) -> crate::shell::Cards {
+    if crate::render_workspace::active(app) {
+        crate::ui_kit::StageBar::cards(available)
+    } else {
+        crate::shell::Cards::new(available, shell_layout(app), ribbon_height(app.preferences.ribbon_labels))
+    }
+}
+
 pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     crate::workspace::sync_context(app);
-    let floating = Container::for_layout(app.ui.layout, Surface::Panel).floating();
+    let layout = shell_layout(app);
+    let floating = Container::for_layout(layout, Surface::Panel).floating();
     let labels = app.preferences.ribbon_labels;
     let button_height = if labels { BUTTON_HEIGHT } else { ICON_BUTTON_HEIGHT };
     let group_height = if labels { GROUP_HEIGHT } else { ICON_GROUP_HEIGHT };
     let ribbon_height = ribbon_height(labels);
     let gallery_width = if labels { CONSTRAINT_GRID_WIDTH } else { 6.0 * 27.0 };
-    let cards = crate::shell::Cards::new(ui.available_rect_before_wrap(), app.ui.layout, ribbon_height);
+    let cards = shell_cards(app, ui.available_rect_before_wrap());
     let height = if floating { cards.bottom - ui.available_rect_before_wrap().top() } else { ribbon_height };
     let fill = if floating { Color32::TRANSPARENT } else { t.toolbar };
-    let ribbon = Container::new(ui.ctx(), Surface::Chrome).edge("sc_toolbar", Edge::Top);
-    let frame = Container::new(ui.ctx(), Surface::Chrome).edge_frame(fill);
+    let host = Container::for_layout(layout, Surface::Chrome);
+    let ribbon = host.edge("sc_toolbar", Edge::Top);
+    let frame = host.edge_frame(fill);
     let chrome = ribbon.exact_size(height).show_separator_line(false).frame(frame).show(ui, |ui| {
         let r = if floating { Rect::from_min_max(cards.workspace.min, cards.ribbon.max) } else { frame.outer_rect(ui.max_rect()) };
         let ws = if floating { cards.workspace } else { Rect::from_min_size(r.left_top(), vec2(WORKSPACE_WIDTH, ribbon_height - 1.0)) };
         let ribbon_left = if floating { cards.ribbon.left() } else { ws.right() };
         if floating {
             for card in [ws, cards.ribbon] {
-                let frame = Container::new(ui.ctx(), Surface::Chrome).frame(ui.ctx(), t.toolbar, crate::frame::Side::Left);
+                let fill =
+                    if crate::render_workspace::active(app) && card == ws { crate::theme::TabAccent::current(ui.ctx()).soft } else { t.toolbar };
+                let frame = host.frame(ui.ctx(), fill, crate::frame::Side::Left);
                 ui.painter().add(frame.paint(card));
                 // Blank card space owns clicks as well as its buttons.
                 ui.interact(card, ui.id().with(("shell_card", card.left().to_bits())), Sense::click_and_drag());
             }
-            crate::scenario::publish_rect("ribbon:card", cards.ribbon);
+            if !crate::render_workspace::active(app) {
+                crate::scenario::publish_rect("ribbon:card", cards.ribbon);
+            }
         }
         app.shell.cards = vec![ws, Rect::from_min_max(pos2(ribbon_left, r.top()), r.max)];
+        if crate::render_workspace::active(app) {
+            ui.set_clip_rect(ui.clip_rect().intersect(r));
+        }
         let painter = ui.painter().clone();
         let bg = ui.interact(if floating { cards.ribbon } else { r }, ui.id().with("toolbar_bg"), Sense::click());
         if bg.secondary_clicked() {
@@ -1107,42 +1203,56 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             painter.rect_filled(ws, if floating { t.radius_lg } else { 0 }, t.hover);
         }
         // Keep the accent straight while leaving the floating card's top corners round.
-        let accent_inset = if floating { f32::from(t.radius_lg) } else { 0.0 };
+        let accent_inset = if crate::render_workspace::active(app) {
+            t.space_12
+        } else if floating {
+            f32::from(t.radius_lg)
+        } else {
+            0.0
+        };
         painter.rect_filled(
             Rect::from_min_size(ws.left_top() + vec2(accent_inset, 0.0), vec2((ws.width() - 2.0 * accent_inset).max(0.0), t.space_3)),
             egui::CornerRadius { nw: 0, ne: 0, sw: if floating { t.radius_sm / 2 } else { 0 }, se: if floating { t.radius_sm / 2 } else { 0 } },
-            t.accent,
+            if crate::render_workspace::active(app) { crate::theme::TabAccent::current(ui.ctx()).color } else { t.accent },
         );
         if !floating {
             t.secondary_line(&painter, [ws.right_top(), ws.right_bottom()], t.border);
         }
         let render = crate::render_workspace::active(app);
-        let workspace_icon = if render { "ws_render" } else { "ws_design" };
-        icons::paint_icon(
-            &painter,
-            Rect::from_center_size(pos2(ws.center().x, ws.top() + if labels { 39.0 } else { 25.0 }), vec2(30.0, 30.0)),
-            workspace_icon,
-            1.0,
-        );
-        ribbon_text(
-            ui,
-            pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }),
-            app.tr(if render { "ui.render" } else { "ui.design" }),
-            t.font_button,
-            t.text,
-            true,
-        );
-        let label = app.tr("ui.ribbon_workspace");
-        let label_width =
-            painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;
-        ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + if labels { 89.0 } else { 70.0 }), label, t.font_small, t.text_dim, false);
-        dropdown_arrow(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + if labels { 89.5 } else { 70.5 }), t.text_dim);
+        if render {
+            crate::ui_kit::StageBar::workspace(ui, ws, "ws_render", app.tr("ui.render"), app.tr("ui.ribbon_workspace"));
+        } else {
+            let workspace_icon = if render { "ws_render" } else { "ws_design" };
+            icons::paint_icon(
+                &painter,
+                Rect::from_center_size(pos2(ws.center().x, ws.top() + if labels { 39.0 } else { 25.0 }), vec2(30.0, 30.0)),
+                workspace_icon,
+                1.0,
+            );
+            ribbon_text(
+                ui,
+                pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }),
+                app.tr(if render { "ui.render" } else { "ui.design" }),
+                t.font_button,
+                t.text,
+                true,
+            );
+            let label = app.tr("ui.ribbon_workspace");
+            let label_width =
+                painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;
+            ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + if labels { 89.0 } else { 70.0 }), label, t.font_small, t.text_dim, false);
+            dropdown_arrow(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + if labels { 89.5 } else { 70.5 }), t.text_dim);
+        }
         if wresp.on_hover_text(app.tr("ui.change_workspace")).clicked() {
             crate::context_menu::toggle_for(app, ws, ws.left_bottom(), crate::context_menu::Target::Workspace);
         }
         crate::scenario::publish_rect("toolbar", r);
         crate::scenario::publish_rect("workspace_switcher", ws);
         crate::scenario::publish_target("ribbon:workspace", ws);
+        if render {
+            crate::render_ui::stage_bar(app, ui, cards.ribbon);
+            return;
+        }
         ribbon_tabs(app, ui, Rect::from_min_max(pos2(ribbon_left, r.top()), pos2(r.right(), r.top() + TAB_ROW_HEIGHT)));
         // Panels.
         let tab = app.ui.tab.clone();
@@ -1209,17 +1319,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let right = r.right();
         // The Sketch exit group follows the last sketch panel, and is always kept room for so it
         // stays reachable at every width; when panels go into the » menu it moves to the far right.
-        let finish_plan = sizes.last().and_then(|size| {
-            if tab == "SKETCH" {
-                Some(Plan::full(size))
-            } else if tab == "RENDER" {
-                // Personal pins remain uncapped: extra Image actions use the same
-                // trimming/menu policy rather than overflowing a fixed reservation.
-                fit(std::slice::from_ref(size), (right - 4.0 - px).clamp(0.0, 240.0)).pop()
-            } else {
-                None
-            }
-        });
+        let finish_plan = sizes.last().and_then(|size| if tab == "SKETCH" { Some(Plan::full(size)) } else { None });
         let finish_width = finish_plan.as_ref().map_or(0.0, |p| p.width().max(80.0));
         let normal_count = sizes.len().saturating_sub(usize::from(finish_plan.is_some()));
         let mut plans = fit(sizes.get(..normal_count).unwrap_or_default(), right - 4.0 - px - finish_width);
@@ -1243,7 +1343,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let collapsed = plan.fit == Fit::Collapsed || (shown.is_empty() && !cmds.is_empty());
             let trimmed = plan.shown < plan.widths.len();
             let finish = tab == "SKETCH" && *panel == "FINISH SKETCH";
-            let pinned = finish || (tab == "RENDER" && *panel == "IMAGE");
+            let pinned = finish;
             let width = if pinned { finish_width } else { plan.width() };
             if pinned && finish_right {
                 px = right - finish_width;
@@ -1336,7 +1436,12 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 let accent = crate::theme::TabAccent::for_tab(&t, &tab);
                 let family_open = family.is_some_and(|f| egui::Popup::is_id_open(ui.ctx(), ui.id().with(("family", f.label)).with("popup")));
-                if !finish && (resp.is_pointer_button_down_on() || running.as_deref() == Some(selected.id) || family_open) {
+                if !finish
+                    && (resp.is_pointer_button_down_on()
+                        || running.as_deref() == Some(selected.id)
+                        || family_open
+                        || (selected.id == "view.shots_strip" && app.preferences.render_shots_strip))
+                {
                     painter.rect(whole, t.radius_sm, accent.soft, Stroke::new(1.0, accent.color), egui::StrokeKind::Inside);
                 } else if resp.hovered() && info.enabled {
                     painter.rect_filled(whole, t.radius_sm, t.hover);
@@ -1651,7 +1756,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     });
     if floating {
-        let frame = Container::new(ui.ctx(), Surface::Chrome).frame(ui.ctx(), t.toolbar, crate::frame::Side::Left);
+        let frame = host.frame(ui.ctx(), t.toolbar, crate::frame::Side::Left);
         for card in [cards.workspace, cards.ribbon] {
             Container::paint_inset(ui.painter(), frame.widget_rect(card), frame);
         }
@@ -1755,7 +1860,7 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
             ui.add(egui::Label::new(egui::RichText::new(help).color(t.text_dim)).wrap());
         }
         if let Some(reason) = disabled {
-            ui.add(egui::Label::new(egui::RichText::new(reason).color(t.text_dim)).wrap());
+            ui.add(egui::Label::new(egui::RichText::new(app.tr_label(reason)).color(t.text_dim)).wrap());
         }
     })
 }
@@ -1832,6 +1937,9 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     let hot = info.enabled && (pointer_on || resp.has_focus());
     let mut row = crate::ui_kit::MenuItem::new(c.id, &label, info.icon);
     row.enabled = info.enabled;
+    if c.id == "view.shots_strip" {
+        row.checked = Some(app.preferences.render_shots_strip);
+    }
     row.highlighted = hot;
     let shortcut = crate::keymap::display_for(app, c.id).unwrap_or_default();
     row.shortcut = &shortcut;
@@ -1852,7 +1960,7 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
         return RowAction::TogglePin;
     }
     // A disabled row says why; a documented command also shows its help (#2758).
-    let reason = info.disabled_reason.as_deref().filter(|_| !info.enabled);
+    let reason = info.disabled_reason.as_deref().filter(|_| !info.enabled).map(|reason| app.tr_label(reason));
     let resp = match crate::command_help::row_tip(c.id, &label, Some(shortcut.as_str()).filter(|k| !k.is_empty()), reason) {
         Some(tip) => crate::command_help::tooltip(resp, c.id, tip),
         None => resp,
@@ -2967,9 +3075,10 @@ mod dropdown_tests {
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         let cmds: Vec<_> = solidcraft_engine::command_specs().into_iter().filter(|c| c.tab == "SKETCH" && c.panel == "CREATE").collect();
         crate::icon_svg::audit::start();
-        let _ = h.ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = h.ctx.run_ui(egui::RawInput::default(), |ui| {
             sketch_create_menu(&mut h.app, ui, &cmds, &mut None, &mut None);
         });
+        output.textures_delta.clear();
         let requested = crate::icon_svg::audit::take();
         crate::icon_svg::audit::stop();
         for family in crate::sketch_families::FAMILIES {
@@ -3303,7 +3412,7 @@ mod ribbon_label_tests {
                             assert!(
                                 label.char_indices().any(|(at, ch)| {
                                     let end = at + ch.len_utf8();
-                                    (ch.is_whitespace() || ch == '/')
+                                    (ch.is_whitespace() || ch == '/' || cjk_word_break(label, end))
                                         && label[end..].trim_start().starts_with(next)
                                         && (first.ends_with('…') || label[..end].trim() == first)
                                 }),
@@ -3343,6 +3452,24 @@ mod ribbon_label_tests {
             let lines = ribbon_button_lines(&painter, "長い日本語のラベル 続き", 50.0);
             assert_eq!(lines.len(), 2);
             assert!(lines[0].ends_with('…'));
+            let ja = crate::i18n::Locale::for_language("ja");
+            for (id, expected) in [
+                ("sketch.create", vec!["新規", "スケッチ"]),
+                ("config.table", vec!["構成", "テーブル"]),
+                ("construct.plane.offset", vec!["オフセット", "平面"]),
+                ("surface.loft", vec!["サーフェス", "ロフト"]),
+                ("mesh.convert", vec!["メッシュを", "変換"]),
+                ("component.create", vec!["新規", "コンポ"]),
+                ("joint.origin", vec!["ジョイント", "原点"]),
+                ("joint.drive", vec!["ジョイント", "を駆動"]),
+            ] {
+                let command = solidcraft_engine::find_command(id).unwrap();
+                let label = ja.label(crate::workspace::ribbon_button_label(command));
+                let width = ribbon_button_width(&painter, label) - BUTTON_LABEL_PADDING;
+                assert_eq!(ribbon_button_lines(&painter, label, width), expected, "{id}");
+            }
+            let comp = solidcraft_engine::find_command("component.create").unwrap();
+            assert_eq!(ja.label(comp.label), "新規コンポーネント");
             // Hebrew comes in display order (`bidi::visual`): the reader starts at the right end,
             // so "סקיצה חדשה" (New Sketch, stored as "חדשה סקיצה") puts סקיצה on the first line.
             let label = crate::bidi::visual("סקיצה חדשה").into_owned();
