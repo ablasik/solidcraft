@@ -201,6 +201,9 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             ui_kit::status_palette_sample(ui, app.preferences.color_vision);
         });
+        // What the modes recolour, in the mode being chosen (#7152): the status chips above keep
+        // their colours in every mode.
+        ui_kit::colour_vision_sample(ui, &crate::theme::Tokens::get_in(app.preferences.color_vision));
         if app.preferences.color_vision != mode {
             ui.ctx().request_repaint();
         }
