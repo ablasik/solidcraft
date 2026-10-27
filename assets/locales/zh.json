@@ -1380,6 +1380,7 @@
   "nav.blender.help": "中键拖动旋转，Shift+中键拖动平移，Ctrl+中键拖动缩放；右键拖动不会移动相机",
   "nav.free_orbit.help": "鼠标和3D鼠标可保持滚转并越过两个极点旋转。Shift轴吸附将被禁用。",
   "nav.free_orbit.label": "自由旋转",
+  "nav.free_orbit.snap_help": "鼠标和3D鼠标可越过两极旋转，并保留画面旋转角度。在拖动环绕时按住Shift，可吸附视图方向和画面旋转角度。",
   "nav.fusion.help": "中键拖动平移，Shift+中键拖动旋转，右键拖动旋转",
   "nav.inventor.help": "中键拖动平移，Shift+中键拖动旋转，Ctrl+中键拖动缩放，右键拖动旋转",
   "nav.openscad.help": "在空白处左键拖动旋转，Shift+左键拖动框选，拖动草图几何可编辑；右键或中键拖动平移，Shift+右键或 Shift+中键拖动缩放",

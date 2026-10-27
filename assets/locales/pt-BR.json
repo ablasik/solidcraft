@@ -1157,6 +1157,7 @@
   "nav.blender.help": "Arrastar com o meio orbita, Shift+meio desloca, Ctrl+meio aplica zoom; arrastar com o direito não mexe na câmera",
   "nav.free_orbit.help": "O mouse e o mouse 3D giram passando pelos dois polos e preservam o giro lateral (roll). O encaixe em eixo com Shift fica desativado.",
   "nav.free_orbit.label": "Órbita livre",
+  "nav.free_orbit.snap_help": "Mouse e mouse 3D giram através dos dois polos e preservam a rotação da imagem. Mantenha Shift pressionado durante uma órbita por arraste para alinhar a direção da vista e a rotação da imagem.",
   "nav.fusion.help": "Arrastar com o meio desloca, Shift+meio orbita, arrastar com o direito orbita",
   "nav.inventor.help": "Arrastar com o meio desloca, Shift+meio orbita, Ctrl+meio aplica zoom, arrastar com o direito orbita",
   "nav.openscad.help": "Arrastar com o esquerdo no espaço vazio orbita, Shift+arrastar com o esquerdo seleciona por caixa, arrastar a geometria do esboço a edita; arrastar com o direito ou o meio desloca, Shift+arrastar com o direito ou o meio aplica zoom",

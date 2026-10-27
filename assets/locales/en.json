@@ -1380,6 +1380,7 @@
   "nav.blender.help": "Middle drag orbits, Shift+middle pans, Ctrl+middle zooms; right drag leaves the camera alone",
   "nav.free_orbit.help": "Mouse and 3D mouse rotate through both poles and preserve roll. Shift axis snapping is disabled.",
   "nav.free_orbit.label": "Free orbit",
+  "nav.free_orbit.snap_help": "Mouse and 3D mouse rotate through both poles and preserve roll. Hold Shift during an orbit drag to snap the view direction and roll.",
   "nav.fusion.help": "Middle drag pans, Shift+middle orbits, right drag orbits",
   "nav.inventor.help": "Middle drag pans, Shift+middle orbits, Ctrl+middle zooms, right drag orbits",
   "nav.openscad.help": "Left drag on empty space orbits, Shift+left drag box-selects, sketch geometry drags edit; right or middle drag pans, Shift+right or Shift+middle drag zooms",
