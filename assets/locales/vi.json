@@ -1009,6 +1009,7 @@
   "cmd.sketch_spline_control_point": "Đường cong Spline qua điểm điều khiển",
   "cmd.sketch_spline_control_point_5": "Đường cong Spline qua điểm điều khiển (Bậc 5)",
   "cmd.sketch_spline_fit_point": "Đường cong Spline qua các điểm",
+  "cmd.sketch_spline_insert_point": "Thêm điểm vào đường cong Spline",
   "cmd.sketch_spun_profile": "Biên dạng xoay tròn (Spun Profile)",
   "cmd.sketch_toggle_driven": "Chuyển đổi kích thước tham chiếu (Driven Dimension)",
   "cmd.sketch_transform": "Biến đổi",

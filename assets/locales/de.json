@@ -947,6 +947,7 @@
   "cmd.sketch_spline_control_point": "Spline mit Kontrollpunkten",
   "cmd.sketch_spline_control_point_5": "Spline mit Kontrollpunkten (Grad 5)",
   "cmd.sketch_spline_fit_point": "Spline mit Fitpunkten",
+  "cmd.sketch_spline_insert_point": "Splinepunkt hinzufügen",
   "cmd.sketch_spun_profile": "Gedrehtes Profil",
   "cmd.sketch_toggle_driven": "Abhängiges Maß umschalten",
   "cmd.sketch_transform": "Transformieren",

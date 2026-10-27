@@ -1009,6 +1009,7 @@
   "cmd.sketch_spline_control_point": "ספליין נקודות בקרה",
   "cmd.sketch_spline_control_point_5": "ספליין נקודות בקרה (מעלה 5)",
   "cmd.sketch_spline_fit_point": "ספליין נקודות התאמה",
+  "cmd.sketch_spline_insert_point": "הוספת נקודה לספליין",
   "cmd.sketch_spun_profile": "פרופיל סיבובי",
   "cmd.sketch_toggle_driven": "מעבר בין מידה מונעת למניעה",
   "cmd.sketch_transform": "התמרה",

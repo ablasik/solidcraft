@@ -1009,6 +1009,7 @@
   "cmd.sketch_spline_control_point": "Control Point Spline",
   "cmd.sketch_spline_control_point_5": "Control Point Spline (Degree 5)",
   "cmd.sketch_spline_fit_point": "Fit Point Spline",
+  "cmd.sketch_spline_insert_point": "Add Spline Point",
   "cmd.sketch_spun_profile": "Spun Profile",
   "cmd.sketch_toggle_driven": "Toggle Driven Dimension",
   "cmd.sketch_transform": "Transform",

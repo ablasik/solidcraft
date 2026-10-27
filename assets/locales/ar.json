@@ -1009,6 +1009,7 @@
   "cmd.sketch_spline_control_point": "منحنى شريحي بنقاط تحكم",
   "cmd.sketch_spline_control_point_5": "منحنى شريحي بنقاط تحكم (الدرجة 5)",
   "cmd.sketch_spline_fit_point": "منحنى شريحي بنقاط ملاءمة",
+  "cmd.sketch_spline_insert_point": "إضافة نقطة إلى المنحنى الشريحي",
   "cmd.sketch_spun_profile": "مقطع دوراني",
   "cmd.sketch_toggle_driven": "تبديل البُعد المُشتق",
   "cmd.sketch_transform": "تحويل",
