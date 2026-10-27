@@ -980,6 +980,8 @@
   "manage.material_hint": "Seleziona i corpi e scegli il loro materiale fisico.",
   "manage.parameters_hint": "Modifica espressioni e unità. Le modifiche vengono applicate premendo Invio o uscendo da un campo.",
   "manage.rules_hint": "Scegli una regola da modificare o creane una nuova. Conferma per salvare la regola.",
+  "material.selection.choose": "Scegli un materiale",
+  "material.selection.mixed": "Materiali diversi",
   "measure.at": "In",
   "measure.item": "Elemento {number}",
   "messages.ago_h": "{n} h fa",
