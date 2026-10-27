@@ -128,6 +128,28 @@ fn apply_commits_once_keeps_values_and_waits_for_new_selection_ok_closes() {
     }
 }
 
+/// Interface › Dialog buttons › Top (#6708): Apply sits between Cancel and OK in the header row
+/// and still commits once, keeping the dialog open.
+#[test]
+fn apply_in_the_header_row_commits_once_and_keeps_the_dialog() {
+    let mut h = fixture();
+    h.call("ui.prefs", json!({"dialog_buttons":"top"}));
+    h.app.dialog = Some(picked(&h, "sketch.offset"));
+    h.settle();
+    let header = scenario::rect_of("dialog:header").unwrap();
+    assert!(scenario::rect_of("dialog:footer").is_none());
+    let (cancel, apply, ok) =
+        (scenario::rect_of("dialog:cancel").unwrap(), scenario::rect_of("dialog:apply").unwrap(), scenario::rect_of("dialog:ok").unwrap());
+    assert!(header.contains_rect(cancel) && header.contains_rect(apply) && header.contains_rect(ok));
+    assert!(cancel.right() < apply.left() && apply.right() < ok.left());
+    let undo = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"dialog:apply"}})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one Apply, one undo");
+    assert!(h.app.dialog.is_some(), "Apply keeps the dialog");
+    assert_eq!(scenario::rect_of("dialog:apply"), Some(apply), "the buttons stay where they were");
+}
+
 #[test]
 fn picked_list_removes_one_item_and_field_still_activates_input() {
     let mut h = fixture();

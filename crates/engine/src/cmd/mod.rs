@@ -46,6 +46,7 @@ pub use view_navigation::standard_view;
 mod component_link;
 pub use component_link::resolve_design_links;
 mod config;
+mod design_link;
 mod file;
 mod frame;
 pub(crate) mod inspect;

@@ -628,6 +628,8 @@ preference_settings! {
     layout: crate::shell::LayoutMode = Default::default(), PAGE_INTERFACE;
     /// Show command names beneath ribbon icons, independently of workspace layout.
     ribbon_labels: bool = true, PAGE_INTERFACE;
+    /// Where a dialog's OK and Cancel sit: under its inputs (the default) or in its title row (#6708).
+    dialog_buttons: crate::ui_kit::DialogButtons = Default::default(), PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
@@ -3397,6 +3399,7 @@ mod tests {
             ("ui_font", json!("test font"), PAGE_INTERFACE),
             ("layout", json!("compact"), PAGE_INTERFACE),
             ("ribbon_labels", json!(false), PAGE_INTERFACE),
+            ("dialog_buttons", json!("top"), PAGE_INTERFACE),
             ("timeline_left", json!(true), PAGE_INTERFACE),
             ("timeline_under_browser", json!(true), PAGE_INTERFACE),
             ("history_sketches", json!("under_feature"), PAGE_INTERFACE),
@@ -4025,6 +4028,35 @@ mod tests {
         assert_eq!(h.app.preferences.history_sketches, HistorySketches::InOrder);
         h.call("ui.prefs", json!({"button": "cancel"}));
         assert_eq!(h.app.preferences.history_sketches, HistorySketches::UnderFeature);
+    }
+
+    #[test]
+    fn dialog_buttons_default_bottom_and_follow_preferences_transactions() {
+        use crate::ui_kit::DialogButtons;
+        let old: Prefs = serde_json::from_value(json!({"ribbon_labels": false})).unwrap();
+        assert_eq!(old.dialog_buttons, DialogButtons::Bottom, "settings from before keep the footer");
+        assert_eq!(lenient(&json!({"dialog_buttons": "sideways"})).dialog_buttons, DialogButtons::Bottom);
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        super::reveal_preference(&mut h, "prefs:dialog_buttons:top");
+        h.step(&json!({"click": {"handle": "prefs:dialog_buttons:top"}})).unwrap();
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Top);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Bottom);
+
+        let reply = h.call("ui.prefs", json!({"dialog_buttons": "top"}));
+        assert_eq!(reply["result"]["dialog_buttons"], "top");
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.dialog_buttons, DialogButtons::Top);
+        let before = h.app.preferences.clone();
+        assert!(control(&mut h.app, &json!({"dialog_buttons": "sideways"})).is_err());
+        assert_eq!(h.app.preferences, before, "an unknown value changes nothing");
+        h.call("ui.prefs", json!({"open": "Interface"}));
+        h.call("ui.prefs", json!({"button": "defaults"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Bottom);
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        assert_eq!(h.app.preferences.dialog_buttons, DialogButtons::Top);
     }
 
     #[test]

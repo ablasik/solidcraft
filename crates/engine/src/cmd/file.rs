@@ -458,7 +458,7 @@ impl Session {
     pub(crate) fn design_at(&self, path: Option<&str>) -> std::borrow::Cow<'_, Document> {
         let mut design = std::borrow::Cow::Borrowed(&*self.doc);
         if let Some(path) = path {
-            let links = super::component_link::rebased(&self.doc, self.path.as_deref(), path);
+            let links = super::design_link::rebased(&self.doc, self.path.as_deref(), path);
             if links != self.doc.links {
                 design.to_mut().links = links;
             }

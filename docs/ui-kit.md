@@ -29,6 +29,10 @@ preferences, manager cards, prompts, context menus and the sketch palette. Impor
   pinned actions, compute status and keyboard routing. `wide()` uses three card
   widths. `feature_frame` and `palette_frame` retain docked/floating surfaces.
   `FeatureOptions::apply_label` adds Apply; `Panel::actions` supplies custom labels.
+  With `DialogButtons::Top` published (Preferences › Interface › Dialog buttons), `feature`
+  puts the actions in the header row through `HeaderActions` instead of a footer: the same
+  buttons, enabled states, keyboard and handles, each as wide as its bold label, with Cancel
+  standing in for the close button and the compute status in the title's place.
   `body_rows` caps a manager's scrolling body independently of its position; short
   viewports still keep the header and actions visible.
 - `Window` composes the shared Panel frame with a 40 pt icon/title/close header,
@@ -122,7 +126,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `primary_button` | Accent action outside a footer | `accent`, `on_accent`, form tokens |
 | `icon_button_at` | Icon action inside a supplied rectangle | `form_icon_inset`, `text/dim`, icon palette |
 | `button_pair`, `PairButton` | Equal secondary actions, optional icons and selected state | `form_button_height`, control/selection/icon tokens |
-| `footer`, `Footer`, `Action` | OK/Cancel with optional Apply, compute status or selected action | `form_footer/button_height`, `dialog_footer/rule`, `control_*`, `accent`, spacing |
+| `footer`, `Footer`, `Action`, `HeaderActions` | OK/Cancel with optional Apply, compute status or selected action; `HeaderActions` puts the same buttons in a header row | `form_footer/button_height`, `dialog_footer/rule`, `control_*`, `accent`, spacing |
 | `keyboard` | Esc cancels, unowned Enter submits when valid | none |
 | `action_menu`, `command_menu_button` | Nested dense action menu or ribbon overflow action retaining its icon, shortcut and enabled state | form control/font tokens, `space_16`, icon palette |
 | table: `table`, `table_custom`, `Column`, `Table::headers`, `Table::row`, `TableRow::cell`, `Table::add_prompt` | Left-aligned headers/cells, horizontal overflow, selected/hover rows and empty state. `table_custom` supplies header actions through `headers`. `Column::flex` shares remaining width by weight, freezing columns at their control minimums before redistributing the remaining space; `Column::icon_only` hides the heading while retaining its automation identity. `add_prompt` is the final slim dashed line and requests a regular draft row from its owner; `Column::new(label, width)` uses label-column multiples, `min_content_width(points)` reserves measured control content; `ContentWidth::name` measures strong configuration names | label-column tokens, `control_height`, `dialog_rule/footer`, `selected_bg`, spacing |

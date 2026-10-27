@@ -42,6 +42,23 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             app.preferences.ribbon_labels = selected == 0;
                         }
                     });
+                    // Where every feature dialog puts its OK and Cancel (#6708).
+                    ui_kit::row(ui, app.tr("prefs.dialog_buttons"), |ui| {
+                        let placements = [crate::ui_kit::DialogButtons::Bottom, crate::ui_kit::DialogButtons::Top];
+                        let mut selected = placements.iter().position(|p| *p == app.preferences.dialog_buttons).unwrap_or(0);
+                        if ui_kit::segmented(ui, &mut selected, &[app.tr("prefs.bottom"), app.tr("prefs.top")], Default::default())
+                            && let Some(placement) = placements.get(selected)
+                        {
+                            app.preferences.dialog_buttons = *placement;
+                        }
+                    });
+                    // Handles that don't depend on the language, by the saved value.
+                    let row = app.tr("prefs.dialog_buttons");
+                    for (label, key) in [("prefs.bottom", "bottom"), ("prefs.top", "top")] {
+                        if let Some(at) = crate::scenario::handle_at(&format!("dialog:{row}:{}", app.tr(label))) {
+                            crate::scenario::publish_handle(&format!("prefs:dialog_buttons:{key}"), at);
+                        }
+                    }
                     ui_kit::row(ui, app.tr("prefs.history"), |ui| {
                         let mut selected = if app.preferences.timeline_left { if app.preferences.timeline_under_browser { 2 } else { 1 } } else { 0 };
                         if ui_kit::segmented(
