@@ -828,6 +828,9 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(parts) = cut_scope(s, &p, operation, sketch, face_body)? {
         p.to_mut()["participants"] = json!(parts);
     }
+    if matches!(operation, Operation::Cut | Operation::Intersect) && targets.is_empty() && string_list(&p, "participants").is_empty() {
+        targets = shown_scope(s);
+    }
     let kind = FeatureKind::Extrude {
         sketch: SketchId(sketch),
         profiles: match face_profile {
@@ -970,6 +973,17 @@ fn face_body_reached(s: &Session, sketch: u64) -> Result<Option<String>> {
         )));
     }
     Ok(Some(body.name.clone()))
+}
+
+/// A cut or intersect that names no bodies leaves hidden bodies alone, as hiding a body to keep
+/// it out of a cut is the usual way to (#3961): while some of the active component's bodies
+/// are hidden, its shown ones, stored as the feature's targets so showing the others again
+/// later changes nothing. Empty (every body, as before) when none is hidden, or all are.
+fn shown_scope(s: &Session) -> Vec<String> {
+    let st = s.model.state();
+    let scope = active_scope(s, &st);
+    let shown: Vec<String> = scope.iter().filter(|b| s.body_visible(&b.name)).map(|b| b.name.clone()).collect();
+    if shown.len() == scope.len() { Vec::new() } else { shown }
 }
 
 /// The body whose face `sketch` is attached to (on the face itself, not offset from it), when

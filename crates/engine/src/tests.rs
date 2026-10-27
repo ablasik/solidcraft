@@ -4464,3 +4464,32 @@ fn parallel_pipe_large_nominals_support_shallow_and_thin_cylindrical_holes() {
         }
     }
 }
+
+/// #3961: a cut made while a body is hidden leaves that body alone, and keeps doing so once it
+/// is shown again (the shown bodies are stored as the cut's targets); with nothing hidden, a
+/// cut still goes through every body it meets.
+#[test]
+fn a_cut_leaves_hidden_bodies_alone() {
+    let setup = |hide: bool| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "Below"}));
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [0, 0, 10], "body_name": "Above", "operation": "new"}));
+        if hide {
+            run(&mut s, "browser.visibility", json!({"items": ["Below"], "visible": false}));
+        }
+        run(&mut s, "sketch.create", json!({"plane": {"face": [10, 10, 20]}}));
+        run(&mut s, "sketch.circle.center", json!({"center": [10, 10], "radius": 3}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 30, "direction": "negative", "operation": "cut"}));
+        s
+    };
+    let vol = |s: &Session, name: &str| solidcraft_kernel::measure(&s.world_state().body(name).unwrap().body).unwrap().volume;
+    let full = 20.0 * 20.0 * 10.0;
+    let mut hidden = setup(true);
+    assert!((vol(&hidden, "Below") - full).abs() < 1e-6, "the hidden body is not cut");
+    assert!(vol(&hidden, "Above") < full - 1.0, "the shown one is");
+    run(&mut hidden, "browser.visibility", json!({"items": ["Below"], "visible": true}));
+    assert!((vol(&hidden, "Below") - full).abs() < 1e-6, "shown again, it stays as it was");
+    let shown = setup(false);
+    assert!(vol(&shown, "Below") < full - 1.0 && vol(&shown, "Above") < full - 1.0, "with nothing hidden, both are cut");
+}
