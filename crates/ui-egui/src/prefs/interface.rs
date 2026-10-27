@@ -63,6 +63,21 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             crate::scenario::publish_handle(&format!("dialog:{row}:{}", app.tr(legacy)), at);
                         }
                     }
+                    // Only the History at the left can list a sketch under its feature (#6489).
+                    ui_kit::row(ui, app.tr("prefs.history_sketches"), |ui| {
+                        ui.add_enabled_ui(app.preferences.timeline_left, |ui| {
+                            let mut selected = usize::from(app.preferences.history_sketches == HistorySketches::UnderFeature);
+                            if ui_kit::segmented(
+                                ui,
+                                &mut selected,
+                                &[app.tr("prefs.history_sketches_in_order"), app.tr("prefs.history_sketches_under_feature")],
+                                ui_kit::Segments { proportional: true, compact: true, ..Default::default() },
+                            ) {
+                                app.preferences.history_sketches =
+                                    if selected == 1 { HistorySketches::UnderFeature } else { HistorySketches::InOrder };
+                            }
+                        });
+                    });
                     ui_kit::row(ui, app.tr("prefs.browser"), |ui| {
                         ui.add_enabled_ui(app.ui.layout == crate::shell::LayoutMode::Floating, |ui| {
                             let mut selected = usize::from(app.preferences.browser_float);
@@ -77,6 +92,7 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         crate::scenario::publish_target("prefs:view_confirm_corner", check.rect);
                     });
                     ui_kit::text(ui, app.tr("prefs.layout_note"), ui_kit::Text::Hint("layout"));
+                    ui_kit::text(ui, app.tr("prefs.history_sketches_note"), ui_kit::Text::Hint("history_sketches"));
                     ui_kit::LayoutPreview {
                         compact: app.ui.layout == crate::shell::LayoutMode::Docked,
                         labels: app.preferences.ribbon_labels,

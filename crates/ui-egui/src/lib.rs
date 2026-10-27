@@ -38,6 +38,7 @@ pub mod dialogs_assembly;
 pub mod dialogs_coupling;
 pub mod dialogs_frame;
 mod dialogs_hole;
+pub mod dialogs_insert_drawing;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
@@ -67,6 +68,7 @@ pub mod frame_rate;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
+pub(crate) mod history_rows;
 #[cfg(test)]
 mod hole_direction_ui_tests;
 pub(crate) mod hole_place;
@@ -89,6 +91,7 @@ mod i18n_ui_tests;
 pub mod icon_svg;
 pub mod icons;
 pub mod inference;
+pub mod insert_handles;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
@@ -1261,8 +1264,14 @@ impl SolveApp {
         if dialogs_sheet::start_export(self, id) {
             return;
         }
+        // The picked drawing is placed (position and scale, previewed) before OK adds it.
         if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
-            self.pick_open_command(id, json!({}), &[ext]);
+            let command = id.to_string();
+            self.pick_open_for(&[ext], move |app, path| {
+                if let Some(path) = path {
+                    dialogs_insert_drawing::open(app, &command, path);
+                }
+            });
             return;
         }
         if id == "component.update_links" && !self.session.doc.links.is_empty() {
