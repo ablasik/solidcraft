@@ -53,6 +53,22 @@ fn child() {
     set_environment("Renderer: test");
     let mut s = Session { crash_journal: true, ..Default::default() };
     s.execute("solid.box", &json!({"length": 10, "width": 20, "height": 30})).unwrap();
+    if mode == "read_only" {
+        let state = STATE.get().unwrap();
+        let before = read_live_journal(state);
+        assert_eq!(before.base, json!("new"));
+        assert_eq!(before.replay, vec![json!({"command":"solid.box","params":{"length":10,"width":20,"height":30}})]);
+        let evaluations = s.evaluations;
+        s.execute("document.inspect", &json!({})).unwrap();
+        assert_eq!(s.evaluations, evaluations, "reading the design does not evaluate it");
+        let after = read_live_journal(state);
+        assert_eq!(after.base, before.base, "a read must not rebase the recovery journal");
+        assert_eq!(after.replay, before.replay, "the command that made the box must remain replayable");
+        assert!(after.in_flight.is_none());
+        end_session();
+        println!("READ_ONLY_JOURNAL_OK");
+        return;
+    }
     // Commands that only read are not kept.
     for _ in 0..50 {
         s.execute("document.inspect", &json!({})).unwrap();
@@ -176,6 +192,14 @@ fn accepted_prepared_commands_replay_and_discarded_work_is_not_journaled() {
     let directory = fresh_dir("prepared");
     let (output, ok) = run_child(&directory, "prepared");
     assert!(ok && output.contains("PREPARED_JOURNAL_OK"), "{output}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_read_only_command_keeps_the_replay_after_body_names_are_pinned() {
+    let directory = fresh_dir("read-only");
+    let (output, ok) = run_child(&directory, "read_only");
+    assert!(ok && output.contains("READ_ONLY_JOURNAL_OK"), "{output}");
     let _ = fs::remove_dir_all(directory);
 }
 
