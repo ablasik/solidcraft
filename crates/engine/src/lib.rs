@@ -16,6 +16,7 @@ pub mod control_auth;
 pub mod control_pending;
 pub mod cosmetic_threads;
 pub mod crash;
+pub mod easyprint;
 pub mod frames;
 pub mod fuzz;
 pub mod licences;
@@ -26,6 +27,8 @@ pub mod recovery;
 pub mod render_jobs;
 pub mod sample;
 pub mod schema;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod slicer_files;
 mod slicer_icon;
 pub mod slicers;
 pub mod snap;
@@ -273,6 +276,9 @@ impl WorldCache {
     }
 }
 
+/// Source of [`Session::uid`].
+static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Commands evaluated in isolation, ready for an atomic handoff to their source session.
 pub struct ComputedCommands {
     source: Session,
@@ -309,6 +315,10 @@ impl ComputedCommands {
 }
 
 /// An editing session on one design.
+/// Starts an upload of a file (its name, its bytes) to EasyPrint and returns at once; the host
+/// reports how it went and opens the answer itself. `Err`: it couldn't start.
+pub type EasyPrintUpload = Arc<dyn Fn(&str, Vec<u8>) -> std::result::Result<(), String> + Send + Sync>;
+
 pub struct Session {
     pub doc: Arc<Document>,
     pub model: Model,
@@ -322,6 +332,10 @@ pub struct Session {
     pub feature_edit_sketch: Option<u64>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
+    /// Tells this document from every other one opened or started in this process: new for each
+    /// `Session::new` (so for each New, Open and Recover), the same for the life of the document.
+    /// Not saved.
+    pub uid: u64,
     /// `path`'s size and modification time when it was opened or last saved: a Save to it
     /// finding them changed would replace another program's or computer's work (#5467).
     pub disk: Option<solidcraft_io::design_lock::FileStamp>,
@@ -346,6 +360,9 @@ pub struct Session {
     /// How calls that break a command's parameter contract are treated (off by default). It
     /// belongs to the session, not the design, so it survives opening and starting designs.
     pub param_check: schema::ParamCheck,
+    /// How the host uploads a model to EasyPrint (`file.open_in_easyprint`); `None`: it can't. It
+    /// belongs to the session like `param_check`, so it survives opening and starting designs.
+    pub easyprint_upload: Option<EasyPrintUpload>,
     /// After a live frame: its sketch, the document it left and the revision. Its links were
     /// brought up to date by that frame, so the gesture's next frame needn't project them again
     /// while nothing else has run (#3222).
@@ -532,6 +549,7 @@ impl Session {
             feature_edit_sketch: None,
             selection: Vec::new(),
             path: None,
+            uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             disk: None,
             read_only: false,
             open_preview: None,
@@ -541,6 +559,7 @@ impl Session {
             followed: None,
             auto_project: true,
             param_check: schema::ParamCheck::Off,
+            easyprint_upload: None,
             live_links: None,
             active_component: 0,
             active_occurrence_path: None,
@@ -584,6 +603,7 @@ impl Session {
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
         let param_check = self.param_check;
+        let easyprint_upload = self.easyprint_upload.take();
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
         let checkpoints = std::mem::take(&mut self.checkpoints);
@@ -596,6 +616,7 @@ impl Session {
         self.crash_journal = crash_journal;
         self.auto_project = auto_project;
         self.param_check = param_check;
+        self.easyprint_upload = easyprint_upload;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
         self.checkpoints = checkpoints;
@@ -1270,6 +1291,7 @@ impl Session {
             feature_edit_sketch: self.feature_edit_sketch,
             selection: self.selection.clone(),
             path: None,
+            uid: self.uid,
             disk: self.disk,
             read_only: self.read_only,
             open_preview: None,
@@ -1280,6 +1302,7 @@ impl Session {
             followed: None,
             auto_project: self.auto_project,
             param_check: self.param_check,
+            easyprint_upload: self.easyprint_upload.clone(),
             live_links: None,
             active_component: self.active_component,
             active_occurrence_path: self.active_occurrence_path.clone(),
