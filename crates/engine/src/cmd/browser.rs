@@ -199,6 +199,12 @@ fn is_construction(k: &FeatureKind) -> bool {
 fn shown_item(s: &Session, key: &str) -> Option<Shown> {
     if let Some(f) = s.doc.find_feature(key) {
         if matches!(f.kind, FeatureKind::Sketch { .. }) {
+            // A sketch and a body with exactly the same name, a sketch named after the body it
+            // makes (#7206): the name is the body's. The browser names a sketch by its id and a
+            // body only by its name, so the body could not be reached otherwise.
+            if f.name == key && s.world_state().bodies.iter().any(|b| b.name == key) {
+                return Some(Shown::Body(key.to_string()));
+            }
             return Some(Shown::Sketch(f.id));
         }
         if is_construction(&f.kind) {
@@ -1587,6 +1593,31 @@ mod tests {
                 assert_eq!(s.visibility, visibility);
             }
         }
+    }
+
+    /// #7206, #7569: a sketch named after the body it makes. The name hides and shows the body,
+    /// as the body's eye in the browser asks; the sketch, which the browser names by its id,
+    /// still hides and shows by its id, and the body is left alone.
+    #[test]
+    fn a_body_hides_by_its_name_when_a_sketch_has_the_same_name() {
+        let mut s = Session::default();
+        let sketch = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "timeline.rename", json!({"feature": sketch, "name": "Deckel"}));
+        run(&mut s, "solid.extrude", json!({"sketch": sketch, "distance": 5, "body_name": "Deckel"}));
+        let r = run(&mut s, "browser.visibility", json!({"items": ["Deckel"], "visible": false}));
+        assert_eq!(r["changed"], 1);
+        assert_eq!(s.visibility.hidden_bodies, vec!["Deckel".to_string()]);
+        assert!(s.visibility.hidden_sketches.is_empty(), "the sketch is not the item that changed");
+        run(&mut s, "browser.visibility", json!({"items": ["Deckel"], "visible": true}));
+        assert!(s.visibility.hidden_bodies.is_empty());
+        // The sketch by its id: shown and hidden again, the body stays shown.
+        run(&mut s, "browser.visibility", json!({"items": [sketch], "visible": true}));
+        assert_eq!(s.visibility.shown_sketches, vec![sketch]);
+        run(&mut s, "browser.visibility", json!({"items": [sketch], "visible": false}));
+        assert_eq!(s.visibility.hidden_sketches, vec![sketch]);
+        assert!(s.visibility.hidden_bodies.is_empty());
     }
 
     #[test]
