@@ -1542,14 +1542,21 @@ impl PaletteGpu {
 const CHUNK_SPLIT: u64 = 32;
 const MAX_CHUNK_BODIES: usize = 128;
 
+/// A block's see-through triangles as the global glass stream took them ([`Batches::glass_from`]).
+struct GlassSource {
+    key: u64,
+    vertices: Arc<Vec<u8>>,
+    glass: Arc<Vec<std::ops::Range<u32>>>,
+}
+
 #[derive(Default)]
 struct Batches {
     /// What the last scene taken uploaded.
     uploads: UploadStats,
     /// The blocks' see-through triangles the global glass stream was assembled from (block key,
-    /// vertices and glass runs, by address), when it holds nothing else: an edit that changes
-    /// neither leaves the sorted stream as it is.
-    glass_from: Option<Vec<(u64, usize, usize)>>,
+    /// vertices and glass runs, held so their addresses cannot be reused), when it holds nothing
+    /// else: an edit that changes neither leaves the sorted stream as it is.
+    glass_from: Option<Vec<GlassSource>>,
     /// The scene's palette texture and its group 0 bind (uniform + palette).
     palette: Option<PaletteGpu>,
     /// The scene blocks on the GPU, by key, and their drawing order.
@@ -1668,16 +1675,23 @@ impl Batches {
             // so cross-body blend order is kept; the blocks' glass triangles join it here. With
             // OIT the blocks draw their own runs and nothing is sorted. A stream made of the same
             // blocks' glass as before (a colour or opacity edit, a selection) is kept as sorted.
-            let from: Vec<(u64, usize, usize)> = if oit_available {
+            let from: Vec<GlassSource> = if oit_available {
                 Vec::new()
             } else {
                 sc.blocks
                     .iter()
                     .filter(|b| !b.bytes.glass.is_empty())
-                    .map(|b| (b.key, Arc::as_ptr(&b.bytes.vertices) as usize, Arc::as_ptr(&b.bytes.glass) as usize))
+                    .map(|b| GlassSource { key: b.key, vertices: b.bytes.vertices.clone(), glass: b.bytes.glass.clone() })
                     .collect()
             };
-            let same_glass = sc.glass.is_empty() && self.glass_from.as_ref() == Some(&from);
+            let same_glass = sc.glass.is_empty()
+                && self.glass_from.as_ref().is_some_and(|was| {
+                    was.len() == from.len()
+                        && was
+                            .iter()
+                            .zip(&from)
+                            .all(|(a, b)| a.key == b.key && Arc::ptr_eq(&a.vertices, &b.vertices) && Arc::ptr_eq(&a.glass, &b.glass))
+                });
             if !same_glass {
                 self.glass_cpu.clear();
                 self.glass_cpu.extend_from_slice(&sc.glass);
