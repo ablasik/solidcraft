@@ -31,6 +31,7 @@ box
 cylinder
 sphere
 torus
+cone
 combine
   remap_bodies: target, tools[0]
 pattern_rectangular

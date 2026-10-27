@@ -2672,6 +2672,7 @@ fn note_join_apart(before: &ModelState, after: &ModelState, f: &Feature, warning
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
         | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. }
         | FeatureKind::Loft { operation, .. }
         | FeatureKind::Sweep { operation, .. }
         | FeatureKind::Pipe { operation, .. }
@@ -5727,6 +5728,13 @@ fn feature_tools_with_constructor(
         FeatureKind::Torus { center, major, minor, .. } => {
             Ok(unnamed(vec![kernel::torus(point(vals, center)?, val(vals, major, Kind::Length)?, val(vals, minor, Kind::Length)?)?]))
         }
+        FeatureKind::Cone { base, axis, radius, top_radius, height, .. } => Ok(unnamed(vec![more::cone(
+            point(vals, base)?,
+            axis.0,
+            val(vals, radius, Kind::Length)?,
+            val(vals, top_radius, Kind::Length)?,
+            val(vals, height, Kind::Length)?,
+        )?])),
         FeatureKind::Hole { .. } => Ok(hole_feature_tools(vals, st, f)?.into_iter().map(|(tool, _)| tool).collect()),
         _ => Err(DocError::Invalid(format!("{} cannot be patterned or mirrored yet", f.name))),
     }
@@ -6021,7 +6029,8 @@ fn feature_op(f: &Feature) -> (Operation, Vec<String>) {
         FeatureKind::Box { operation, .. }
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
-        | FeatureKind::Torus { operation, .. } => (*operation, Vec::new()),
+        | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. } => (*operation, Vec::new()),
         FeatureKind::Hole { .. } => (Operation::Cut, Vec::new()),
         FeatureKind::Pipe { operation, targets, .. } => (*operation, crate::plain(targets)),
         FeatureKind::Loft { operation, targets, .. } | FeatureKind::Sweep { operation, targets, .. } => (*operation, crate::plain(targets)),
@@ -7605,6 +7614,12 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let b = kernel::torus(point(vals, center)?, val(vals, major, Kind::Length)?, val(vals, minor, Kind::Length)?)?;
             apply_op(doc, st, f, vec![b], *operation, &[])
         }
+        FeatureKind::Cone { base, axis, radius, top_radius, height, operation } => {
+            let (radius, top_radius, height) =
+                (val(vals, radius, Kind::Length)?, val(vals, top_radius, Kind::Length)?, val(vals, height, Kind::Length)?);
+            let b = more::cone(point(vals, base)?, axis.0, radius, top_radius, height)?;
+            apply_op(doc, st, f, vec![b], *operation, &[])
+        }
         FeatureKind::Combine { target, tools, operation, keep_tools } => {
             if tools.iter().any(|t| t == target) {
                 return Err(DocError::Invalid("a body cannot be combined with itself".into()));
@@ -7940,6 +7955,7 @@ fn drawn_tools_change_bodies(kind: &FeatureKind) -> bool {
         | FeatureKind::Cylinder { operation, .. }
         | FeatureKind::Sphere { operation, .. }
         | FeatureKind::Torus { operation, .. }
+        | FeatureKind::Cone { operation, .. }
         | FeatureKind::Extrude { operation, .. }
         | FeatureKind::Revolve { operation, .. }
         | FeatureKind::Loft { operation, .. }

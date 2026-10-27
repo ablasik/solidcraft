@@ -714,6 +714,23 @@ pub enum FeatureKind {
         #[serde(default)]
         operation: Operation,
     },
+    /// A cone or a truncated cone (#5641): the base circle's centre `base`, its `radius`, the
+    /// radius of the top circle `height` along `axis` (`top_radius`, 0 for a full cone).
+    Cone {
+        #[serde(with = "point_expr")]
+        #[walk(placement)]
+        base: PointExpr,
+        #[serde(default = "z_axis")]
+        axis: Dir,
+        #[walk(length = "Radius")]
+        radius: Expr,
+        #[walk(length = "Top radius")]
+        top_radius: Expr,
+        #[walk(length = "Height")]
+        height: Expr,
+        #[serde(default)]
+        operation: Operation,
+    },
     Combine {
         target: BodyName,
         tools: Vec<BodyName>,
@@ -2315,6 +2332,7 @@ impl FeatureKind {
             FeatureKind::Cylinder { .. } => "CylinderFeature",
             FeatureKind::Sphere { .. } => "SphereFeature",
             FeatureKind::Torus { .. } => "TorusFeature",
+            FeatureKind::Cone { .. } => "ConeFeature",
             FeatureKind::Combine { .. } => "CombineFeature",
             FeatureKind::Pattern { pattern: PatternKind::Rectangular { .. }, .. } => "RectangularPatternFeature",
             FeatureKind::Pattern { pattern: PatternKind::Path { .. }, .. } => "PathPatternFeature",
@@ -2397,6 +2415,7 @@ impl FeatureKind {
             FeatureKind::Cylinder { .. } => "Cylinder",
             FeatureKind::Sphere { .. } => "Sphere",
             FeatureKind::Torus { .. } => "Torus",
+            FeatureKind::Cone { .. } => "Cone",
             FeatureKind::Combine { .. } => "Combine",
             FeatureKind::Pattern { pattern: PatternKind::Rectangular { .. }, .. } => "RectangularPattern",
             FeatureKind::Pattern { pattern: PatternKind::Path { .. }, .. } => "PathPattern",

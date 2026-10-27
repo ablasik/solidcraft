@@ -774,6 +774,8 @@ fn hostile_params_never_panic() {
         "base",
         "major",
         "minor",
+        "top_radius",
+        "top_diameter",
         "edges",
         "body",
         "target",
@@ -3784,7 +3786,7 @@ fn feature_params_docs_list_shared_keys() {
     let params =
         |id: &str| cmds.as_array().unwrap().iter().find(|c| c["id"] == id).and_then(|c| c["params"].as_str()).unwrap_or_default().to_string();
     let with_targets = ["solid.extrude", "solid.revolve", "solid.sweep", "solid.loft", "solid.pipe", "solid.coil"];
-    let without_targets = ["solid.box", "solid.cylinder", "solid.sphere", "solid.torus", "sheet.flange"];
+    let without_targets = ["solid.box", "solid.cylinder", "solid.sphere", "solid.torus", "solid.cone", "sheet.flange"];
     for id in with_targets.iter().chain(&without_targets) {
         let doc = params(id);
         assert!(doc.contains("name?") && doc.contains("body_name?"), "{id}: {doc}");

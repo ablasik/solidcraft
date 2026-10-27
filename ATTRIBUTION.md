@@ -527,6 +527,7 @@ Editable drawing code, native projects and shipped exports are collected under `
 | docs/book/scripts/hem.json | SolidCraft contributors | original parametric recipe for an 80 × 50 mm sheet with an 8 mm returned edge, authored for the command guide | MIT OR Apache-2.0 |
 | assets/styles/ui/themes/clay.json | SolidCraft contributors | original SolidCraft theme file (Clay, light): warm paper palette chosen for SolidCraft | MIT OR Apache-2.0 |
 | assets/styles/ui/themes/clay-dark.json | SolidCraft contributors | original SolidCraft theme file (Clay Dark): warm charcoal palette chosen for SolidCraft | MIT OR Apache-2.0 |
+| assets/icons/ui/design/svg/model/cone.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
 
 ## Code adapted from sibling projects
 

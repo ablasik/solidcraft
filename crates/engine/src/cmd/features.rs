@@ -44,6 +44,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.torus", "Torus", prim_torus).at("SOLID", "CREATE").icon("torus").params("major, minor: expr (radii); center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.cone", "Cone", prim_cone).at("SOLID", "CREATE").icon("cone").params("radius | diameter, height: expr (the base circle, and the top's distance along the axis; a negative height goes the other way); top_radius? | top_diameter?: expr (the top circle; default 0: a full cone ending in an apex); base?: [x,y,z] (centre of the base circle: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.fillet", "Fillet", fillet)
         .at("SOLID", "MODIFY")
         .icon("fillet")
@@ -666,7 +667,10 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
         }
     };
     // Primitives have no `targets` of their own: their `targets` are the bodies taking part (#259).
-    let primitive = matches!(kind, FeatureKind::Box { .. } | FeatureKind::Cylinder { .. } | FeatureKind::Sphere { .. } | FeatureKind::Torus { .. });
+    let primitive = matches!(
+        kind,
+        FeatureKind::Box { .. } | FeatureKind::Cylinder { .. } | FeatureKind::Sphere { .. } | FeatureKind::Torus { .. } | FeatureKind::Cone { .. }
+    );
     let (participants, key) = match string_list(p, "participants") {
         v if v.is_empty() && primitive => (string_list(p, "targets"), "targets"),
         v => (v, "participants"),
@@ -1337,6 +1341,32 @@ fn prim_torus(s: &mut Session, p: &Value) -> Result<Value> {
     check_expr(s, &minor, Kind::Length, cmd, "minor")?;
     let center = point_param(s, p, "center", cmd)?.unwrap_or_else(|| point_expr(Vec3::ZERO));
     add_feature(s, p, FeatureKind::Torus { center, major, minor, operation: operation(p, cmd)? })
+}
+
+/// A cone or truncated cone (#5641), placed and sized like a cylinder, with the top circle's
+/// radius (or diameter) besides; none is a full cone.
+fn prim_cone(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.cone";
+    let radius = radius_expr(s, p, cmd)?;
+    let top_radius = match (expr(p, "top_radius"), expr(p, "top_diameter")) {
+        (Some(r), _) => r,
+        (None, Some(d)) => {
+            let [d] = length_operands(s, [(&d, &typed_length_unit(s))]);
+            format!("({d}) / 2").into()
+        }
+        // Given but unreadable (a huge number, a list): refused, never a full cone instead.
+        (None, None) if p.get("top_radius").is_some() || p.get("top_diameter").is_some() => {
+            return Err(bad(cmd, "`top_radius` (or `top_diameter`) must be a length expression"));
+        }
+        (None, None) => "0".into(),
+    };
+    let height = req_expr(cmd, p, "height")?;
+    for (e, n) in [(&radius, "radius"), (&top_radius, "top_radius"), (&height, "height")] {
+        check_expr(s, e, Kind::Length, cmd, n)?;
+    }
+    let base = point_param(s, p, "base", cmd)?.unwrap_or_else(|| point_expr(Vec3::ZERO));
+    let axis = axis_dir_param(p, cmd)?;
+    add_feature(s, p, FeatureKind::Cone { base, axis: Dir(axis), radius, top_radius, height, operation: operation(p, cmd)? })
 }
 
 /// Edge references → points on the edges.
