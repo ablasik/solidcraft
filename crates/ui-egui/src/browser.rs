@@ -230,16 +230,36 @@ pub fn group_name(app: &SolveApp, id: u64) -> Option<String> {
     find_group(app, id).map(|g| g.name.clone())
 }
 
+/// The placement a folder's scope key names: `c0` the design, `o:<ids>` a placement's path.
+fn scope_path(scope: &str) -> Vec<u64> {
+    scope.strip_prefix("o:").map(|ids| ids.split('/').filter_map(|id| id.parse().ok()).collect()).unwrap_or_default()
+}
+
+/// Paste on a Bodies or Sketches folder or group: copied (or cut) bodies, or copied sketches and
+/// features, go into its component (that placement), and into the group.
+fn paste_item(app: &SolveApp, component: u64, scope: &str, folder: &str, group: Option<u64>) -> Item {
+    let mut item = Item::action("ui.paste", "Paste", "paste")
+        .key("Ctrl+V")
+        .with(json!({ "component": component, "path": scope_path(scope), "group": group, "folder": folder }));
+    item.enabled = if folder == "sketches" { crate::edit_clipboard::pasting_features(app) } else { crate::edit_clipboard::pasting_bodies(app) };
+    item
+}
+
 /// The menu of a group row.
 pub fn group_items(app: &SolveApp, id: u64, scope: &str) -> Vec<Item> {
     let Some(g) = find_group(app, id) else { return Vec::new() };
-    let mut v = vec![
+    let mut v = Vec::new();
+    // Paste beside Rename, as the clipboard sits beside Delete and Rename in every menu.
+    if g.folder == "bodies" || g.folder == "sketches" {
+        v.push(paste_item(app, g.component, scope, &g.folder, Some(id)));
+    }
+    v.extend([
         Item::action("ui.rename", "Rename", "rename").with(json!({ "group": id })),
         Item::action("ui.ungroup", "Ungroup", "folder").with(json!({ "group": id })),
         Item::sep(),
         // The group itself: its items keep their own state.
         Item::action("ui.folderVisible", "Show/Hide", "eye").key("V").with(json!({ "key": format!("{scope}/g{id}") })),
-    ];
+    ]);
     if g.folder == "bodies" {
         v.push(Item::action("ui.isolate", "Isolate", "body").with(json!({ "bodies": group_bodies(app, id) })));
     }
@@ -253,7 +273,11 @@ pub fn folder_items(app: &SolveApp, component: u64, folder: &str, scope: &str) -
     let mut v = Vec::new();
     if folder == "bodies" {
         let bodies: Vec<String> = all.iter().map(|e| e.key.clone()).collect();
+        v.push(paste_item(app, component, scope, folder, None));
         v.push(Item::action("component.from_bodies", "Create Components from Bodies", "component").with(json!({ "bodies": bodies })));
+    }
+    if folder == "sketches" {
+        v.push(paste_item(app, component, scope, folder, None));
     }
     v.push(
         Item::action("ui.newGroup", if folder == "sketches" { "New Sketch Group" } else { "New Group" }, "folder")
@@ -1273,6 +1297,12 @@ fn occurrence_key(path: &[u64]) -> String {
     key
 }
 
+/// Show a placement's row closed: a pasted (or moved) component arrives folded, whatever a row
+/// at that path showed before.
+pub(crate) fn close_placement(app: &mut SolveApp, path: &[u64]) {
+    app.tree.collapsed.insert(occurrence_key(path));
+}
+
 /// A placement, rather than a component definition: repeated child IDs remain distinct
 /// because their complete paths are the selection and row identity.
 fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: &[u64], depth: usize, acts: &mut Actions, cache: &mut cache::Cache) {
@@ -1316,7 +1346,8 @@ fn occurrence_rows_inner(
             label: &placement.label,
             name: true,
             selected,
-            dim: faded || !visible,
+            // A cut component is faded until Paste moves it.
+            dim: faded || !visible || app.cut_placements.iter().any(|p| p.as_slice() == path),
             radio: Some(active),
             badges,
             mark: acts.lit.placement(&app.session.doc, path, placement.component),
@@ -2248,7 +2279,8 @@ fn entry_row(
             label: &e.label,
             name: true,
             selected,
-            dim: !visible || parent_hidden,
+            // A cut body is faded until Paste moves it.
+            dim: !e.visible || parent_hidden || (folder == "bodies" && app.cut_bodies.contains(&e.key)),
             color: e.color,
             badges,
             mark,

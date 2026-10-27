@@ -37,6 +37,12 @@ pub struct DocSlot {
 #[derive(Clone, Debug, Default)]
 struct DocView {
     render: crate::render_workspace::ViewState,
+    /// Bodies and components copied or cut in this design: their names and paths mean nothing
+    /// in another one (copied features stay with the session the same way).
+    copied_bodies: Vec<String>,
+    copied_placements: Vec<Vec<u64>>,
+    cut_bodies: Vec<String>,
+    cut_placements: Vec<Vec<u64>>,
 }
 
 impl DocSlot {
@@ -92,7 +98,13 @@ impl Documents {
 }
 
 fn take_view(app: &mut SolveApp) -> DocView {
-    DocView { render: std::mem::take(&mut app.render_workspace.view) }
+    DocView {
+        render: std::mem::take(&mut app.render_workspace.view),
+        copied_bodies: std::mem::take(&mut app.copied_bodies),
+        copied_placements: std::mem::take(&mut app.copied_placements),
+        cut_bodies: std::mem::take(&mut app.cut_bodies),
+        cut_placements: std::mem::take(&mut app.cut_placements),
+    }
 }
 
 fn put_view(app: &mut SolveApp, v: DocView) {
@@ -100,6 +112,10 @@ fn put_view(app: &mut SolveApp, v: DocView) {
     crate::render_workspace::invalidate_images(app);
     crate::render_workspace::invalidate_scene(app);
     crate::render_workspace::sync_backend(app);
+    app.copied_bodies = v.copied_bodies;
+    app.copied_placements = v.copied_placements;
+    app.cut_bodies = v.cut_bodies;
+    app.cut_placements = v.cut_placements;
 }
 
 /// Put `slot` into the app and return what was there.

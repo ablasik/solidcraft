@@ -193,3 +193,28 @@ impl std::fmt::Display for SketchId {
         self.0.fmt(f)
     }
 }
+
+/// The name of a copy of `name` (a pasted body, feature or component): the name and the next
+/// number in brackets that `taken` doesn't hold — `Cube` → `Cube (2)`, another copy of `Cube` →
+/// `Cube (3)`. A name that already ends in brackets takes the number right after them: a copy of
+/// `Cube (2)` → `Cube (2)(2)`.
+pub fn copy_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let name = name.trim();
+    let gap = if name.ends_with(')') { "" } else { " " };
+    (2..100_002u64).map(|i| format!("{name}{gap}({i})")).find(|c| !taken(c)).unwrap_or_else(|| format!("{name}{gap}(2)"))
+}
+
+#[cfg(test)]
+mod copy_name_tests {
+    use super::copy_name;
+
+    #[test]
+    fn a_copy_takes_the_next_free_number() {
+        let taken = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
+        assert_eq!(copy_name("Cube", taken(&["Cube"])), "Cube (2)");
+        assert_eq!(copy_name("Cube", taken(&["Cube", "Cube (2)"])), "Cube (3)");
+        assert_eq!(copy_name("Cube (2)", taken(&["Cube", "Cube (2)", "Cube (3)"])), "Cube (2)(2)");
+        assert_eq!(copy_name("Cube (2)", taken(&["Cube (2)", "Cube (2)(2)"])), "Cube (2)(3)");
+        assert_eq!(copy_name("Sketch1", taken(&["Sketch1"])), "Sketch1 (2)");
+    }
+}

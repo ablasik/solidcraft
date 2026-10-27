@@ -364,7 +364,15 @@ fn component_menu_activates_grounds_and_pastes() {
     act(&mut app, &t, "Ground");
     assert!(app.session.doc.occurrence_of(c).unwrap().grounded);
     assert!(!find(&context_menu::items(&app, &t), "Move/Copy").enabled, "grounded");
-    act(&mut app, &t, "Paste New");
+    // Paste New pastes an independent copy of the copied component into another one (here the
+    // design): it is off until a component is copied, and never into itself.
+    let placement = Target::Occurrence { path: app.session.doc.first_path(c) };
+    app.session.selection = vec![solidcraft_engine::Sel::Occurrence { path: app.session.doc.first_path(c) }];
+    act(&mut app, &placement, "Copy");
+    assert_eq!(app.copied_placements.len(), 1, "{:?}", app.status);
+    let design = Target::Component { id: 0 };
+    assert!(find(&context_menu::items(&app, &design), "Paste New").enabled);
+    act(&mut app, &design, "Paste New");
     assert_eq!(app.session.doc.components.len(), 2);
 }
 

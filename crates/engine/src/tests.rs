@@ -1955,13 +1955,20 @@ fn components_occurrences_and_world_placement() {
     run(&mut s, "component.capture_position", json!({}));
     assert!(s.pending_moves.is_empty());
     assert!((bbox(&mut s, "ArmBody")["min"][2].as_f64().unwrap() - 5.0).abs() < 1e-9);
-    // A definition placed twice cannot receive one world body without duplicating it.
+    // A component placed twice gets a body in both instances, placed by the placement named or
+    // active: with neither, the move is refused and names the parameter that would settle it.
     let document = s.doc.to_json();
     let pending = s.pending_moves.clone();
     let error = s.execute("component.move_bodies", &json!({"bodies": ["Base"], "component": "Arm"})).unwrap_err();
-    assert!(error.to_string().contains("one source and destination placement"), "{error}");
+    assert!(error.to_string().contains("placed more than once") && error.to_string().contains("`component_path`"), "{error}");
     assert_eq!(s.doc.to_json(), document);
     assert_eq!(s.pending_moves, pending);
+    // Placed by the first placement, the body stays where it is in the world there.
+    run(&mut s, "component.move_bodies", json!({"bodies": ["Base"], "component": "Arm", "component_path": [occ]}));
+    assert_eq!(s.world_state().body("Base").unwrap().component, cid);
+    assert_eq!(bbox(&mut s, "Base")["min"], json!([0.0, 0.0, 0.0]));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.to_json(), document);
     // The independent Paste New result has one placement and can receive it.
     let copied = pn["component"].as_u64().unwrap();
     run(&mut s, "component.move_bodies", json!({"bodies": ["Base"], "component": copied}));

@@ -505,6 +505,18 @@ pub struct SolveApp {
     pub(crate) apply_gate: Option<std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>>,
     /// The last command started interactively (id, label), for Repeat.
     pub last_command: Option<(String, String)>,
+    /// Bodies copied with Copy (by name), pasted into the active component by Paste.
+    pub copied_bodies: Vec<String>,
+    /// Text a copy left for the system clipboard, written on the next frame (so a paste event
+    /// follows: the window system sends one only while the clipboard holds text).
+    pub(crate) clipboard_text: Option<String>,
+    /// Component placements copied with Copy (by path): Paste places new instances of them in
+    /// the active component, Paste New (Ctrl+Shift+V) independent copies.
+    pub copied_placements: Vec<Vec<u64>>,
+    /// Bodies cut with Cut (by name): they stay until Paste moves them into a component.
+    pub cut_bodies: Vec<String>,
+    /// Component placements cut with Cut (by path): they stay until Paste moves them.
+    pub cut_placements: Vec<Vec<u64>>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
     pub esc_handled: bool,
     /// When Esc was last pressed (input time): a second press soon after finishes the sketch.
@@ -679,6 +691,11 @@ impl SolveApp {
             #[cfg(test)]
             apply_gate: None,
             last_command: None,
+            copied_bodies: Vec::new(),
+            clipboard_text: None,
+            copied_placements: Vec::new(),
+            cut_bodies: Vec::new(),
+            cut_placements: Vec::new(),
             esc_handled: false,
             last_escape: None,
             status: None,

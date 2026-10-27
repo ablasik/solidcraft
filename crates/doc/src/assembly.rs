@@ -272,6 +272,12 @@ impl Document {
         Some((c, m))
     }
 
+    /// World transform of one placement of `component`: the occurrence `path` from the root
+    /// (empty for the root itself). `None` when the path no longer leads to that component.
+    pub fn path_transform(&self, component: u64, path: &[u64]) -> Option<Mat> {
+        self.path_placement(path).and_then(|(c, m)| (c == component).then_some(m))
+    }
+
     /// Every placement of each component: (component, occurrence path ids, world transform).
     /// A branch stops past [`MAX_PLACEMENT_DEPTH`] levels, the walk past [`MAX_PLACEMENTS`] placements.
     pub fn placements(&self) -> Vec<(u64, Vec<u64>, Mat)> {
@@ -389,12 +395,36 @@ impl Document {
         false
     }
 
+    /// Would putting a placement of `component` into `parent` put it inside itself: is `parent`
+    /// the component, or inside it, created in it or placed in it at any depth? Placements can sit
+    /// apart from where their component was created ([`Self::component_within`] follows only
+    /// that), so both are followed.
+    pub fn inside_component(&self, parent: u64, component: u64) -> bool {
+        if self.component_within(parent, component) {
+            return true;
+        }
+        let mut stack = vec![component];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(c) = stack.pop() {
+            if !seen.insert(c) || seen.len() > MAX_PLACEMENTS {
+                continue;
+            }
+            for o in self.occurrences.iter().filter(|o| o.parent == c) {
+                if o.component == parent {
+                    return true;
+                }
+                stack.push(o.component);
+            }
+        }
+        false
+    }
+
     /// Add an occurrence of an existing component into `parent`.
     pub fn add_occurrence(&mut self, component: u64, parent: u64, transform: Mat) -> Result<u64> {
         if component == 0 || !self.components.iter().any(|c| c.id == component) {
             return Err(DocError::Unknown(format!("component {component}")));
         }
-        if self.component_within(parent, component) {
+        if self.inside_component(parent, component) {
             return Err(DocError::Invalid("a component can't contain itself".into()));
         }
         if self.occurrences.len() >= 100_000 {
