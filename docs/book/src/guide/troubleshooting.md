@@ -15,7 +15,7 @@ start), skips the "Recover unsaved design?" offer and draws with the software re
 - Windows: run `solidcraft.exe --safe-mode` from a terminal in the install folder, or add
   ` --safe-mode` to the end of a shortcut's *Target*.
 - macOS: `open -a SolidCraft --args --safe-mode`
-- Linux: `solidcraft --safe-mode` (Flatpak: `flatpak run ai.storyteller.solidcraft --safe-mode`)
+- Linux: `solidcraft --safe-mode` (Flatpak: `flatpak run io.tangencylabs.solidcraft --safe-mode`)
 
 Setting `SOLIDCRAFT_SAFE_MODE=1` does the same. From 0.10.2, if two launches in a row stop
 before the window opens, the next one starts in safe mode by itself. `SOLIDCRAFT_RENDERER=cpu`
@@ -47,7 +47,7 @@ with a bug report.
 | Windows | `%APPDATA%\SolidCraft` | `%LOCALAPPDATA%\SolidCraft` |
 | macOS | `~/Library/Application Support/SolidCraft` | (the same folder) |
 | Linux | `~/.local/share/solidcraft` | (the same folder); thumbnails in `$XDG_CACHE_HOME/SolidCraft` or `/tmp/SolidCraft` |
-| Linux (Flatpak) | `~/.var/app/ai.storyteller.solidcraft/data/solidcraft` | (the same folder) |
+| Linux (Flatpak) | `~/.var/app/io.tangencylabs.solidcraft/data/solidcraft` | (the same folder) |
 
 On Windows, paste `%APPDATA%` or `%LOCALAPPDATA%` into the Explorer address bar to open the
 folder. Releases before the rename used `SolveCraft` folders next to these; SolidCraft only

@@ -615,26 +615,26 @@ fn graphics_path() -> Option<std::path::PathBuf> {
 /// Compatibility shim (docs/compatibility.md): on the first launch after the rename, copy the
 /// settings of earlier releases into the new folder. They kept `graphics.json` (and, on Linux
 /// and macOS, the recovery folder) under the old product name, and eframe's `app.ron` under the
-/// window's old app id. In the Flatpak sandbox, releases before 0.8 kept everything under the
-/// old app id's `~/.var/app` folder; that copy comes first, as it is the newest. The old folders
+/// window's old app id. In the Flatpak sandbox, earlier releases kept everything under an
+/// old app id's `~/.var/app` folder; those copies come first, newest first. The old folders
 /// are never changed.
 fn adopt_legacy_settings() {
     let (Some(current), Some(legacy)) = (settings_dir().ok().flatten(), eframe::storage_dir("SolveCraft")) else { return };
     let legacy_eframe = eframe::storage_dir(solidcraft_engine::io::LEGACY_APP_ID);
-    let old_flatpak = solidcraft_engine::io::legacy_flatpak_path(&current);
-    if let Err(e) = adopt_settings(&current, old_flatpak.as_deref(), &legacy, legacy_eframe.as_deref()) {
+    let old_flatpak = solidcraft_engine::io::legacy_flatpak_paths(&current);
+    if let Err(e) = adopt_settings(&current, &old_flatpak, &legacy, legacy_eframe.as_deref()) {
         log::warn!("settings: could not copy the previous release's settings into {}: {e}", current.display());
     }
 }
 
 fn adopt_settings(
     current: &std::path::Path,
-    old_flatpak: Option<&std::path::Path>,
+    old_flatpak: &[std::path::PathBuf],
     legacy: &std::path::Path,
     legacy_eframe: Option<&std::path::Path>,
 ) -> std::io::Result<()> {
     let fresh = !current.exists();
-    if let Some(old) = old_flatpak {
+    for old in old_flatpak {
         solidcraft_engine::io::adopt_legacy_dir(current, old)?;
     }
     solidcraft_engine::io::adopt_legacy_dir(current, legacy)?;
@@ -1388,14 +1388,14 @@ mod msaa_tests {
         std::fs::create_dir_all(&legacy_eframe).unwrap();
         std::fs::write(legacy.join("graphics.json"), r#"{"msaa":8}"#).unwrap();
         std::fs::write(legacy_eframe.join("app.ron"), "(prefs)").unwrap();
-        super::adopt_settings(&current, None, &legacy, Some(&legacy_eframe)).unwrap();
+        super::adopt_settings(&current, &[], &legacy, Some(&legacy_eframe)).unwrap();
         assert_eq!(std::fs::read_to_string(current.join("graphics.json")).unwrap(), r#"{"msaa":8}"#);
         assert_eq!(std::fs::read_to_string(current.join("app.ron")).unwrap(), "(prefs)");
         assert!(legacy.join("graphics.json").is_file() && legacy_eframe.join("app.ron").is_file());
         // Later launches leave the current settings alone.
         std::fs::write(current.join("app.ron"), "(mine)").unwrap();
         std::fs::remove_file(current.join("graphics.json")).unwrap();
-        super::adopt_settings(&current, None, &legacy, Some(&legacy_eframe)).unwrap();
+        super::adopt_settings(&current, &[], &legacy, Some(&legacy_eframe)).unwrap();
         assert_eq!(std::fs::read_to_string(current.join("app.ron")).unwrap(), "(mine)");
         assert!(!current.join("graphics.json").exists());
         let _ = std::fs::remove_dir_all(&d);
