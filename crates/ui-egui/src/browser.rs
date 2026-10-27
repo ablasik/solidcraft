@@ -130,6 +130,9 @@ pub struct TreeState {
     pub timeline_reveal: Option<u64>,
     /// The Edit Canvas / Calibrate panel.
     pub canvas_panel: Option<CanvasPanel>,
+    /// The bodies a row at the top of the history lights this frame (`history_rows`), for the
+    /// browser, drawn after it, to keep.
+    history_hover: Vec<String>,
     /// A Section Analysis hidden with its eye in the Analysis folder: its plane (origin,
     /// normal), so the eye can bring it back (#822).
     pub hidden_section: Option<(solidcraft_engine::geom::Vec3, solidcraft_engine::geom::Vec3)>,
@@ -1218,12 +1221,53 @@ fn rows_scrolling(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, shr
     app.tree.cache = Some(cache);
 }
 
+/// The Bodies folder and the Origin at the top of the vertical History (Preferences › Interface:
+/// Show origin and bodies at the top, #6490): the browser's own rows, with their eyes, selection,
+/// menus and fold state. The bodies are the active component's, in the placement being edited,
+/// as that component's folder in the browser lists them. The rows stay out of the browser's row
+/// order, automation list and reveal, which the browser keeps for its own rows.
+pub(crate) fn history_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
+    prepare_model(app);
+    let mut acts = Actions { lit: Lit::of(app), ..Default::default() };
+    let reveal = app.tree.reveal.take();
+    let order = app.tree.order_len;
+    let drawn = DRAWN.with(|d| d.borrow().len());
+    let component = app.session.active_component;
+    let path = (component != 0)
+        .then(|| app.session.active_occurrence_path.clone().unwrap_or_else(|| app.session.doc.first_path(component)))
+        .filter(|path| !path.is_empty());
+    // The Bodies folder as the browser draws it for that component or placement (`browser_cache`).
+    let mut cache = app.tree.cache.take().unwrap_or_default();
+    cache.prepare(app);
+    let bodies = cache.folder(app, component, path.as_deref(), "bodies");
+    app.tree.cache = Some(cache);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        folder_rows_at(app, ui, component, path.as_deref(), "bodies", 0, &mut acts, &bodies);
+        origin_rows(app, ui, 0, &acts);
+    });
+    app.tree.reveal = reveal;
+    // The browser's own rows reuse these order slots (`TreeState::remember`).
+    app.tree.order_len = order;
+    DRAWN.with(|d| d.borrow_mut().truncate(drawn));
+    app.viewport.hover_bodies = acts.hover_bodies.clone();
+    app.tree.history_hover = acts.hover_bodies;
+    if let Some(d) = acts.drop {
+        apply_drop(app, d);
+    }
+    if let Some((at, target)) = acts.menu {
+        crate::context_menu::open_for(app, at, target);
+    }
+}
+
 fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, mut acts: Actions) {
     app.tree.order.truncate(app.tree.order_len);
     if !acts.hovered {
         acts.hover_bodies.clear();
     }
-    app.viewport.hover_bodies = acts.hover_bodies;
+    // The history's rows, drawn before the browser, light bodies too (`history_rows`).
+    let history = std::mem::take(&mut app.tree.history_hover);
+    app.viewport.hover_bodies = if acts.hover_bodies.is_empty() { history } else { acts.hover_bodies };
     if let Some(d) = acts.drop {
         apply_drop(app, d);
     }

@@ -95,6 +95,15 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             }
                         });
                     });
+                    // Only the history on the left or under the browser has room for these rows.
+                    ui_kit::row(ui, "", |ui| {
+                        ui.add_enabled_ui(app.preferences.timeline_left, |ui| {
+                            let check = ui_kit::checkbox(ui, app.tr("prefs.history_origin_bodies"), &mut app.preferences.timeline_origin_bodies)
+                                .on_hover_text(app.tr("prefs.history_origin_bodies_note"))
+                                .on_disabled_hover_text(app.tr("prefs.history_origin_bodies_note"));
+                            crate::scenario::publish_target("prefs:history_origin_bodies", check.rect);
+                        });
+                    });
                     ui_kit::row(ui, app.tr("prefs.browser"), |ui| {
                         ui.add_enabled_ui(app.ui.layout == crate::shell::LayoutMode::Floating, |ui| {
                             let mut selected = usize::from(app.preferences.browser_float);

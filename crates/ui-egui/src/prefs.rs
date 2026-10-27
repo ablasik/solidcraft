@@ -654,6 +654,9 @@ preference_settings! {
     timeline_left_browser_collapsed: bool = false, PAGE_INTERFACE;
     /// Whether the History at the left lists a sketch under the feature built from it.
     history_sketches: HistorySketches = HistorySketches::default(), PAGE_INTERFACE;
+    /// The vertical history (left, or under the browser) starts with the active component's Bodies
+    /// folder and the Origin, as the browser shows them (#6490). The bottom strip is unchanged.
+    timeline_origin_bodies: bool = false, PAGE_INTERFACE;
     /// Width of the browser sidebar, which
     /// the user drags wider or narrower at its right edge.
     browser_width: f32 = DEFAULT_BROWSER_WIDTH, PAGE_INTERFACE;

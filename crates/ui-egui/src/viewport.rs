@@ -2817,17 +2817,34 @@ const SKETCH_HALO_WIDTH: f32 = 2.0;
 
 /// A highlighted edge: a halo and a core, and where the model hides it, the core dimmed (so a
 /// pick on the far side still shows).
-fn edge_lines(sc: &mut GpuScene, e: &[Vec3], core: Color32, halo: Color32, w: f32, normals: &[[[f32; 3]; 2]]) {
-    for (col, width) in [(halo, w + 3.0), (core, w)] {
-        let col = sc.color(c4(col));
+/// The palette entries of a highlighted edge: its halo, its core, and its dimmed part where the
+/// model hides it. Interned once for every edge drawn in them.
+#[derive(Clone, Copy)]
+struct EdgeColours {
+    halo: crate::gpu::PaletteIndex,
+    core: crate::gpu::PaletteIndex,
+    hidden: crate::gpu::PaletteIndex,
+}
+
+impl EdgeColours {
+    fn new(sc: &mut GpuScene, core: Color32, halo: Color32) -> EdgeColours {
+        EdgeColours { halo: sc.color(c4(halo)), core: sc.color(c4(core)), hidden: sc.color(c4(core.gamma_multiply(0.45))) }
+    }
+}
+
+fn edge_lines(sc: &mut GpuScene, e: &[Vec3], cols: EdgeColours, w: f32, normals: &[[[f32; 3]; 2]]) {
+    let segments = e.len().saturating_sub(1);
+    sc.reserve_lines(2 * segments, segments);
+    for (col, width) in [(cols.halo, w + 3.0), (cols.core, w)] {
+        // Segments without their faces' normals share one width word.
+        let flat = crate::gpu::lifted_width(width, [[0.0; 3]; 2]);
         for (i, p) in e.windows(2).enumerate() {
-            let n = normals.get(i).copied().unwrap_or_default();
-            sc.lifted_line(p[0].to_f32(), p[1].to_f32(), col, width, n);
+            let word = normals.get(i).map_or(flat, |n| crate::gpu::lifted_width(width, *n));
+            sc.lifted_line_word(p[0].to_f32(), p[1].to_f32(), col, word);
         }
     }
-    let hidden = sc.color(c4(core.gamma_multiply(0.45)));
     for p in e.windows(2) {
-        sc.hidden_line(p[0].to_f32(), p[1].to_f32(), hidden, (w * 0.7).max(1.0));
+        sc.hidden_line(p[0].to_f32(), p[1].to_f32(), cols.hidden, (w * 0.7).max(1.0));
     }
 }
 
@@ -3307,6 +3324,8 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         return sc;
     }
     let mut feedback = GpuScene { palette: std::sync::Arc::new((*sc.palette).clone()), ..Default::default() };
+    let (hover_edge, selected_edge) =
+        (EdgeColours::new(&mut feedback, t.hover_edge, t.hover_edge_halo), EdgeColours::new(&mut feedback, t.sel_edge, t.sel_edge_rim));
     let mut hover_instances = HighlightInstances::default();
     let mut selected_instances = HighlightInstances::default();
     // Selected things.
@@ -3337,7 +3356,7 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 {
                     let m = drawn_mesh(app, b);
                     if let Some(e) = edge_of(&m, *index, *point) {
-                        edge_lines(&mut feedback, e, t.sel_edge, t.sel_edge_rim, 3.0, &edge_normals(&m, e));
+                        edge_lines(&mut feedback, e, selected_edge, 3.0, &edge_normals(&m, e));
                     }
                 }
             }
@@ -3440,7 +3459,7 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         }
         for (ei, e) in m.edges.iter().enumerate() {
             if m.edge_pickable(ei) && (whole || m.edge_faces.get(ei).is_some_and(|fs| fs.iter().any(|f| faces.contains(&(*f as usize))))) {
-                edge_lines(&mut feedback, e, t.hover_edge, t.hover_edge_halo, 1.5, &[]);
+                edge_lines(&mut feedback, e, hover_edge, 1.5, &[]);
             }
         }
     }
@@ -3477,7 +3496,7 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                     if let Some(p) = m.edges.get(e)
                         && m.edge_pickable(e)
                     {
-                        edge_lines(&mut feedback, p, t.hover_edge, t.hover_edge_halo, 1.5, &[]);
+                        edge_lines(&mut feedback, p, hover_edge, 1.5, &[]);
                     }
                 }
             }
@@ -3489,7 +3508,7 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 for i in m.circular_rim(*index) {
                     let selected = sel.iter().any(|x| matches!(x, Sel::Edge { body: b, index: j, .. } if b == body && *j == i));
                     if !selected && let Some(e) = if i == *index { edge_of(&m, i, *mid) } else { m.edges.get(i) } {
-                        edge_lines(&mut feedback, e, t.hover_edge, t.hover_edge_halo, 2.0, &edge_normals(&m, e));
+                        edge_lines(&mut feedback, e, hover_edge, 2.0, &edge_normals(&m, e));
                     }
                 }
             }

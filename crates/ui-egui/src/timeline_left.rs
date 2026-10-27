@@ -1007,6 +1007,17 @@ struct Rows<'a> {
 
 fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
     let t = Tokens::get();
+    // Show origin and bodies at the top (#6490): the browser's Bodies folder and Origin rows lead
+    // the history when it is wide enough for names. They are not places in the history: nothing
+    // drags or drops among them, and the features start below them.
+    let features_top = (names && app.preferences.timeline_origin_bodies).then(|| {
+        crate::browser::history_rows(app, ui);
+        ui.add_space(t.space_3);
+        t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top(), t.border);
+        ui.add_space(t.space_3);
+        ui.cursor().top()
+    });
+    let among_features = |y: f32| features_top.is_none_or(|top| y >= top);
     ui.spacing_mut().item_spacing.y = if names { t.space_2 } else { t.space_4 };
     let features: Vec<_> = app
         .session
@@ -1142,6 +1153,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
     }
     // The marker dropped where it already is needs no bar: the marker shows the spot.
     if let (Some(active), Some(pointer)) = (drag.as_ref(), pointer)
+        && among_features(pointer.y)
         && let Some(slot) = nearest_vertical_slot(&slots, pointer.y)
         && !(matches!(active, Drag::Marker) && slot.position == marker.min(n))
     {
@@ -1170,7 +1182,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
     }
     if ui.input(|input| input.pointer.any_released())
         && let Some(active) = drag.take()
-        && let Some(pointer) = pointer
+        && let Some(pointer) = pointer.filter(|pointer| among_features(pointer.y))
         && let Some(slot) = nearest_vertical_slot(&slots, pointer.y)
     {
         match active {
@@ -1885,6 +1897,101 @@ mod tests {
         assert!(handle_at("timeline:Base").is_some(), "Find in Timeline must open the folders holding the feature");
         let base = harness.app.session.doc.find_feature("Base").unwrap().id;
         assert_eq!(harness.app.session.selection, vec![solidcraft_engine::Sel::Feature { id: base }]);
+    }
+
+    /// The handle `name` drawn inside the vertical history (the browser publishes the same names).
+    fn in_history(name: &str) -> Option<egui::Pos2> {
+        let card = crate::scenario::rect_of("history:vertical")?;
+        crate::scenario::handles(name).into_iter().filter(|(n, _)| n == name).map(|(_, at)| at).find(|at| card.contains(*at))
+    }
+
+    /// Show origin and bodies at the top (#6490): off by default; on, the vertical history starts
+    /// with the active component's Bodies folder and the Origin, the browser's rows with their
+    /// folds, eyes, selection and menus; they take no drops; too narrow for names, it leaves them out.
+    #[test]
+    fn origin_and_bodies_lead_the_vertical_history_when_asked() {
+        let mut h = Harness::new();
+        h.app.preferences.timeline_left = true;
+        h.app.preferences.timeline_left_width = 240.0;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "First", "body_name": "Block"})).unwrap();
+        h.app
+            .run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body", "name": "Second", "body_name": "Other"}))
+            .unwrap();
+        h.frames(4);
+        assert!(in_history("row:Origin").is_none() && in_history("row:Bodies").is_none(), "off by default");
+        h.call("ui.prefs", json!({"timeline_origin_bodies": true}));
+        h.frames(3);
+        let bodies = in_history("row:Bodies").expect("the Bodies folder");
+        let origin = in_history("row:Origin").expect("the Origin");
+        let first = handle_at("timeline:First").unwrap();
+        assert!(bodies.y < origin.y && origin.y < first.y, "Bodies, Origin, then the features");
+        assert!(in_history("row:Block").is_some() && in_history("row:Other").is_some(), "the Bodies folder starts open, as in the browser");
+        assert!(in_history("row:XY").is_none(), "the Origin starts closed, as in the browser");
+
+        // The fold is the browser's: opening it here opens it there.
+        h.call("ui.click", json!({"x": origin.x, "y": origin.y}));
+        h.frames(2);
+        assert!(crate::browser::is_open(&h.app, "origin", false));
+        let xy = in_history("row:XY").expect("the origin planes");
+        let eye = in_history("eye:XY").unwrap();
+        h.call("ui.click", json!({"x": eye.x, "y": eye.y}));
+        h.frames(2);
+        assert!(h.app.session.visibility.hidden_origin.iter().any(|p| p == "XY"), "the plane's eye hides it");
+        let eye = in_history("eye:Block").unwrap();
+        h.call("ui.click", json!({"x": eye.x, "y": eye.y}));
+        h.frames(2);
+        assert!(h.app.session.visibility.hidden_bodies.iter().any(|b| b == "Block"), "the body's eye hides it");
+        h.call("ui.click", json!({"x": xy.x, "y": xy.y, "button": "right"}));
+        h.frames(2);
+        assert_eq!(h.app.menu.target, crate::context_menu::Target::OriginPlane { name: "XY".into() }, "the plane's own menu");
+        crate::context_menu::close(&mut h.app);
+        h.frames(2);
+        let other = in_history("row:Other").unwrap();
+        h.call("ui.click", json!({"x": other.x, "y": other.y}));
+        h.frames(2);
+        assert_eq!(h.app.session.selection, vec![solidcraft_engine::Sel::Body { name: "Other".into() }]);
+
+        // Neither the marker nor a feature drops among these rows.
+        let order = |h: &Harness| h.app.session.doc.features.iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+        let before = order(&h);
+        h.step(&json!({"drag": [{"handle": "timeline:rollback"}, [origin.x, origin.y]]})).unwrap();
+        assert_eq!(h.app.session.doc.marker, None, "the marker stays at the end");
+        h.step(&json!({"drag": [{"handle": "timeline:Second"}, [bodies.x, bodies.y]]})).unwrap();
+        assert_eq!(order(&h), before, "the feature keeps its place");
+        let first = handle_at("timeline:First").unwrap();
+        h.step(&json!({"drag": [{"handle": "timeline:Second"}, [first.x, first.y - 8.0]]})).unwrap();
+        assert_eq!(order(&h), vec!["Second".to_string(), "First".to_string()], "the first feature's top is still a place");
+
+        // Under the browser too; not in the icons-only width, nor in the bottom strip.
+        h.app.preferences.timeline_under_browser = true;
+        h.frames(4);
+        assert!(in_history("row:Origin").is_some());
+        h.app.preferences.timeline_under_browser = false;
+        h.app.preferences.timeline_left_width = crate::ui_kit::history_width(false);
+        h.frames(4);
+        assert!(in_history("row:Origin").is_none(), "no room for the rows without names");
+        h.app.preferences.timeline_left = false;
+        h.frames(4);
+        assert_eq!(crate::scenario::handles("row:Origin").into_iter().filter(|(n, _)| n == "row:Origin").count(), 1, "only the browser's");
+    }
+
+    /// In a design with components, the Bodies folder is the active component's, in the
+    /// placement being edited, as the browser lists it under that placement.
+    #[test]
+    fn the_history_lists_the_active_components_bodies() {
+        let mut h = Harness::new();
+        h.app.preferences.timeline_left = true;
+        h.app.preferences.timeline_left_width = 240.0;
+        h.app.preferences.timeline_origin_bodies = true;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "RootBlock"})).unwrap();
+        h.app.run("component.create", json!({"name": "Part"})).unwrap();
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "body_name": "Inside"})).unwrap();
+        h.frames(4);
+        assert!(in_history("row:Inside").is_some() && in_history("row:RootBlock").is_none(), "the active component's bodies");
+        assert!(in_history("row:Origin").is_some());
+        h.app.run("component.activate", json!({"component": "root"})).unwrap();
+        h.frames(4);
+        assert!(in_history("row:RootBlock").is_some() && in_history("row:Inside").is_none(), "the root's own bodies");
     }
 
     #[test]

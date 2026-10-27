@@ -326,7 +326,9 @@ mod tests {
             let pending: BTreeMap<String, Messages> = serde_json::from_str(&std::fs::read_to_string(entry.path()).unwrap()).unwrap();
             for (locale, messages) in pending {
                 for (id, text) in messages {
-                    assert_eq!(Locale::for_language(&locale).text(&id), text, "{locale}: {id}");
+                    // The catalogs hand right-to-left text out in display order (`crate::bidi`);
+                    // pending files hold it in reading order, as the catalogs do (#7527).
+                    assert_eq!(Locale::for_language(&locale).text(&id), crate::bidi::visual_template(&text), "{locale}: {id}");
                 }
             }
         }

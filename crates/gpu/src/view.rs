@@ -745,21 +745,11 @@ impl BlockBuilder {
 
     /// A depth-tested line, or one only shown where the model hides it.
     pub fn line(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: f32) {
-        let out = &mut self.lines;
-        for v in a.iter().chain(&b) {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        out.extend_from_slice(&c.0.to_le_bytes());
-        out.extend_from_slice(&width.to_le_bytes());
+        self.lines.extend_from_slice(&line_record(a, b, c, width.to_bits()));
     }
 
     pub fn hidden_line(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: f32) {
-        let out = &mut self.hidden;
-        for v in a.iter().chain(&b) {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        out.extend_from_slice(&c.0.to_le_bytes());
-        out.extend_from_slice(&width.to_le_bytes());
+        self.hidden.extend_from_slice(&line_record(a, b, c, width.to_bits()));
     }
 
     /// How many vertices the block holds so far.
@@ -810,11 +800,14 @@ impl GpuScene {
     }
     /// A line shown only where the model hides it.
     pub fn hidden_line(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: f32) {
-        for v in a.iter().chain(&b) {
-            self.hidden.extend_from_slice(&v.to_le_bytes());
-        }
-        self.hidden.extend_from_slice(&c.0.to_le_bytes());
-        self.hidden.extend_from_slice(&width.to_le_bytes());
+        self.hidden.extend_from_slice(&line_record(a, b, c, width.to_bits()));
+    }
+
+    /// Room for `lines` more lines and `hidden` more hidden lines, so a highlight of many edges
+    /// is written without growing its buffers line by line.
+    pub fn reserve_lines(&mut self, lines: usize, hidden: usize) {
+        let _ = self.lines.try_reserve(lines.saturating_mul(LINE_SIZE));
+        let _ = self.hidden.try_reserve(hidden.saturating_mul(LINE_SIZE));
     }
     pub fn glass_tri(&mut self, p: [f32; 3], n: [f32; 3], c: PaletteIndex) {
         for v in p.iter().chain(&n) {
@@ -863,20 +856,28 @@ impl GpuScene {
     /// unknown), so a face seen at a grazing angle no longer buries part of the band (it showed as
     /// a thin wedge instead of a line). See [`lifted_width`] for how this travels.
     pub fn lifted_line(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: f32, normals: [[f32; 3]; 2]) {
-        for v in a.iter().chain(&b) {
-            self.lines.extend_from_slice(&v.to_le_bytes());
-        }
-        self.lines.extend_from_slice(&c.0.to_le_bytes());
-        self.lines.extend_from_slice(&lifted_width(width, normals).to_le_bytes());
+        self.lifted_line_word(a, b, c, lifted_width(width, normals));
+    }
+    /// [`GpuScene::lifted_line`] with its width word already worked out ([`lifted_width`]), for
+    /// many segments that share it.
+    pub fn lifted_line_word(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, word: u32) {
+        self.lines.extend_from_slice(&line_record(a, b, c, word));
     }
     pub fn line(&mut self, a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: f32, on_top: bool) {
         let out = if on_top { &mut self.overlay } else { &mut self.lines };
-        for v in a.iter().chain(&b) {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        out.extend_from_slice(&c.0.to_le_bytes());
-        out.extend_from_slice(&width.to_le_bytes());
+        out.extend_from_slice(&line_record(a, b, c, width.to_bits()));
     }
+}
+
+/// One line's [`LINE_SIZE`] bytes: its ends, its palette index and its width word (an `f32`'s
+/// bits, or [`lifted_width`]'s).
+fn line_record(a: [f32; 3], b: [f32; 3], c: PaletteIndex, width: u32) -> [u8; LINE_SIZE] {
+    let mut out = [0u8; LINE_SIZE];
+    let words = a.into_iter().chain(b).map(f32::to_bits).chain([c.0, width]);
+    for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+        *chunk = word.to_le_bytes();
+    }
+    out
 }
 
 pub type SceneSlot = Arc<Mutex<Option<GpuScene>>>;
@@ -4021,6 +4022,34 @@ mod glass_tests {
         assert_eq!(cut(&[(3, 6)], &[(0, 3), (6, 9)]), r(&[(3, 6)]));
         assert_eq!(cut(&[(0, 30)], &[(0, 30)]), r(&[]));
         assert_eq!(cut(&[(0, 12), (15, 24)], &[]), r(&[(0, 12), (15, 24)]));
+    }
+
+    /// A line is written as one record: its ends, its palette index and its width word, each
+    /// four little-endian bytes, as the shader reads them; a lifted line's word is
+    /// [`lifted_width`]'s, whether worked out per segment or once for many.
+    #[test]
+    fn lines_are_written_as_one_record() {
+        let (a, b, c): ([f32; 3], [f32; 3], _) = ([1.0, -2.0, 3.5], [4.0, 5.0, -6.25], PaletteIndex(7));
+        let mut expected = Vec::new();
+        for v in a.iter().chain(&b) {
+            expected.extend_from_slice(&v.to_le_bytes());
+        }
+        expected.extend_from_slice(&7u32.to_le_bytes());
+        expected.extend_from_slice(&1.5f32.to_le_bytes());
+        let mut sc = GpuScene::default();
+        sc.line(a, b, c, 1.5, false);
+        sc.hidden_line(a, b, c, 1.5);
+        assert_eq!(sc.lines, expected);
+        assert_eq!(sc.hidden, expected);
+        let normals = [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
+        let (mut per_segment, mut shared) = (GpuScene::default(), GpuScene::default());
+        per_segment.lifted_line(a, b, c, 2.0, normals);
+        shared.lifted_line_word(a, b, c, lifted_width(2.0, normals));
+        assert_eq!(per_segment.lines, shared.lines);
+        assert_eq!(per_segment.lines.get(28..32), Some(&lifted_width(2.0, normals).to_le_bytes()[..]));
+        let mut block = BlockBuilder::default();
+        block.line(a, b, c, 1.5);
+        assert_eq!(*block.freeze().lines, expected);
     }
 
     /// Without order-independent transparency, the sorted glass stream is kept while the blocks'
