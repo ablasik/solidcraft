@@ -195,7 +195,7 @@ impl ActionLook {
         } else if danger {
             t.form_error
         } else {
-            t.form_primary
+            t.form_primary_fill
         };
         let primary_ink = if t.borders.bevel.is_some() && !danger {
             t.form_ink
@@ -409,8 +409,8 @@ fn button_widget(label: egui::WidgetText, options: Button) -> egui::Button<'stat
     match options {
         Button::Small => egui::Button::new(label).small(),
         Button::Primary => {
-            let ink = if crate::theme::contrast_ratio(t.on_accent, t.form_primary) >= 4.5 { t.on_accent } else { t.tab_on_fill_dark };
-            egui::Button::new(label.color(ink)).fill(t.form_primary)
+            let ink = if crate::theme::contrast_ratio(t.on_accent, t.form_primary_fill) >= 4.5 { t.on_accent } else { t.tab_on_fill_dark };
+            egui::Button::new(label.color(ink)).fill(t.form_primary_fill)
         }
         Button::Ghost => egui::Button::new(label).frame(false),
         Button::SmallSelected => {
@@ -480,7 +480,7 @@ pub(crate) fn wide_primary_button(ui: &mut Ui, label: &str) -> Response {
         .inner_margin(egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8))
         .show(ui, |ui| {
             let button = egui::Button::new(crate::fonts::RichTextExt::bold_face(text))
-                .fill(if bevel { t.control_fill } else { t.form_primary })
+                .fill(if bevel { t.control_fill } else { t.form_primary_fill })
                 .stroke(egui::Stroke::NONE)
                 .corner_radius(t.control_radius);
             ui.add_sized(vec2(dimension(ui.available_width()), t.form_button_height), button)

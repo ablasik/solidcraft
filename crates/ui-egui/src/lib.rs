@@ -32,6 +32,7 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod dialog_column;
 mod dialog_descriptor;
 pub mod dialogs;
 pub mod dialogs_appearance;
@@ -196,6 +197,7 @@ pub mod prefs_notice;
 #[cfg(test)]
 mod preselect_tests;
 pub mod preview;
+mod primitive_placement;
 #[cfg(test)]
 mod primitive_units_tests;
 pub mod recovery_ui;
@@ -2209,7 +2211,8 @@ impl SolveApp {
             self.shell.cards = vec![cards.workspace, cards.ribbon];
             self.shell.history = if left_timeline {
                 let below_ribbon = egui::Rect::from_min_max(egui::pos2(full.left(), cards.bottom), full.max);
-                Some(timeline_left::floating_rect(self, below_ribbon))
+                // A dialog in the left column holds the History's place.
+                (!dialog_column::holds(self)).then(|| timeline_left::floating_rect(self, below_ribbon))
             } else {
                 show_timeline.then(|| timeline::floating_rect(full))
             };
@@ -2238,6 +2241,7 @@ impl SolveApp {
         if floating && show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
+        dialog_column::layout(self, ui.available_rect_before_wrap());
         if left_timeline {
             timeline_left::left_panel(self, ui);
         }

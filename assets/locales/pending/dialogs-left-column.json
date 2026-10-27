@@ -1,0 +1,56 @@
+{
+  "en": {
+    "prefs.dialogs": "Dialogs",
+    "prefs.dialogs_edge": "At the view's edge",
+    "prefs.dialogs_left_column": "In the left column",
+    "prefs.dialogs_note": "Where command dialogs open: docked at the view's edge, or in the left column in place of the browser and the History, which come back as they were when the dialog closes."
+  },
+  "de": {
+    "prefs.dialogs": "Dialoge",
+    "prefs.dialogs_edge": "Am Rand der Ansicht",
+    "prefs.dialogs_left_column": "In der linken Spalte",
+    "prefs.dialogs_note": "Wo Befehlsdialoge öffnen: am Rand der Ansicht angedockt oder in der linken Spalte anstelle von Browser und Verlauf, die beim Schließen des Dialogs wie zuvor zurückkehren."
+  },
+  "ja": {
+    "prefs.dialogs": "ダイアログ",
+    "prefs.dialogs_edge": "ビューの端",
+    "prefs.dialogs_left_column": "左の列",
+    "prefs.dialogs_note": "コマンドダイアログを開く場所：ビューの端にドッキングするか、左の列でブラウザーと履歴の代わりに表示します。ダイアログを閉じるとブラウザーと履歴は元どおりに戻ります。"
+  },
+  "ko": {
+    "prefs.dialogs": "대화 상자",
+    "prefs.dialogs_edge": "뷰 가장자리",
+    "prefs.dialogs_left_column": "왼쪽 열",
+    "prefs.dialogs_note": "명령 대화 상자가 열리는 위치: 뷰 가장자리에 고정하거나, 왼쪽 열에서 브라우저와 이력 대신 표시합니다. 대화 상자를 닫으면 브라우저와 이력이 그대로 돌아옵니다."
+  },
+  "nl": {
+    "prefs.dialogs": "Dialogen",
+    "prefs.dialogs_edge": "Aan de rand van de weergave",
+    "prefs.dialogs_left_column": "In de linkerkolom",
+    "prefs.dialogs_note": "Waar opdrachtdialogen openen: vastgezet aan de rand van de weergave, of in de linkerkolom in plaats van de browser en de geschiedenis, die terugkomen zoals ze waren wanneer de dialoog sluit."
+  },
+  "zh": {
+    "prefs.dialogs": "对话框",
+    "prefs.dialogs_edge": "视图边缘",
+    "prefs.dialogs_left_column": "左侧栏",
+    "prefs.dialogs_note": "命令对话框的打开位置：停靠在视图边缘，或在左侧栏中替代浏览器和历史；关闭对话框后，浏览器和历史恢复原样。"
+  },
+  "ar": {
+    "prefs.dialogs": "الحوارات",
+    "prefs.dialogs_edge": "عند حافة العرض",
+    "prefs.dialogs_left_column": "في العمود الأيسر",
+    "prefs.dialogs_note": "مكان فتح حوارات الأوامر: مثبتة عند حافة العرض، أو في العمود الأيسر مكان المستعرض والسجل، اللذين يعودان كما كانا عند إغلاق الحوار."
+  },
+  "he": {
+    "prefs.dialogs": "תיבות דו־שיח",
+    "prefs.dialogs_edge": "בקצה התצוגה",
+    "prefs.dialogs_left_column": "בעמודה השמאלית",
+    "prefs.dialogs_note": "היכן נפתחות תיבות הדו־שיח של הפקודות: מעוגנות בקצה התצוגה, או בעמודה השמאלית במקום הדפדפן וההיסטוריה, שחוזרים כפי שהיו כשהתיבה נסגרת."
+  },
+  "vi": {
+    "prefs.dialogs": "Hộp thoại",
+    "prefs.dialogs_edge": "Ở cạnh khung nhìn",
+    "prefs.dialogs_left_column": "Trong cột bên trái",
+    "prefs.dialogs_note": "Nơi hộp thoại lệnh mở ra: gắn ở cạnh khung nhìn, hoặc trong cột bên trái thay cho trình duyệt và Lịch sử, hai phần này trở lại như cũ khi hộp thoại đóng."
+  }
+}

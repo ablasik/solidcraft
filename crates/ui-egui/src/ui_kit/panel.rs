@@ -194,11 +194,13 @@ pub(crate) struct Panel<'a> {
     ok: &'a str,
     cancel: &'a str,
     reset_scroll: bool,
+    joined: Option<super::DockEdges>,
 }
 
 pub(crate) struct FeatureOptions<'a> {
     pub icon: &'a str,
     pub title: &'a str,
+    /// The dock offset the title band drags; empty for a card that stays in its place.
     pub drag_key: &'a str,
     pub moved: egui::Vec2,
     pub docked: egui::Pos2,
@@ -265,7 +267,15 @@ impl<'a> Panel<'a> {
             ok: "OK",
             cancel: "Cancel",
             reset_scroll: false,
+            joined: None,
         }
+    }
+
+    /// The edges the card meets the window or a docked surface at (a dialog in the left column):
+    /// in Compact, only its other corners round.
+    pub(crate) fn joined(mut self, edges: super::DockEdges) -> Self {
+        self.joined = Some(edges);
+        self
     }
 
     /// A newly opened manager starts at its first section. Later frames retain user scrolling.
@@ -324,7 +334,8 @@ impl<'a> Panel<'a> {
             crate::frame::Side::Right => anchor.x,
             crate::frame::Side::Left => anchor.x + self.width.min(self.viewport.width().max(0.0)),
         };
-        super::Container::new(ctx, super::Surface::Feature).tool_frame(self.frame, right >= self.viewport.right() - 0.5)
+        let container = super::Container::new(ctx, super::Surface::Feature);
+        self.joined.map_or(container, |edges| container.joined(edges)).tool_frame(self.frame, right >= self.viewport.right() - 0.5)
     }
 
     pub(crate) fn window(&self, ctx: &egui::Context) -> egui::Window<'a> {
@@ -403,7 +414,11 @@ impl<'a> Panel<'a> {
             let t = Tokens::get();
             let min = ui.cursor().min;
             let band = egui::Rect::from_min_size(min, vec2(ui.available_width(), super::header_height()));
-            crate::frame::drag_dock(ui, band, heading.drag_key, heading.moved, self.bounded_anchor(ui.ctx()) - heading.docked);
+            if heading.drag_key.is_empty() {
+                scenario::publish_handle("dialog:title", band.center());
+            } else {
+                crate::frame::drag_dock(ui, band, heading.drag_key, heading.moved, self.bounded_anchor(ui.ctx()) - heading.docked);
+            }
             let mut close = false;
             let top = if DialogButtons::current(ui.ctx()) == DialogButtons::Top {
                 Some(TopHeader::new(ui, self.ok, heading.apply_label, self.cancel, collapsed.as_deref_mut(), &mut close))

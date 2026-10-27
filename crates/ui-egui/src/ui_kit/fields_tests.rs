@@ -358,8 +358,31 @@ fn selection_field_has_three_distinct_looks_in_every_theme() {
         assert!(!accented(&filled), "{name}: a filled inactive input is not accented: {filled:?}");
         assert!(!accented(&empty), "{name}: an empty inactive input is not accented: {empty:?}");
         let outline = |l: &Look| l.0.last().copied().unwrap();
-        assert_ne!(outline(&filled).0, outline(&empty).0, "{name}: filled and empty fills differ");
-        assert_ne!(outline(&filled).1, outline(&empty).1, "{name}: filled and empty borders differ");
+        // Two colours can't give filled and empty their own fill and border on top of the accent;
+        // in 1-bit and 1-bit Dark the text itself tells them apart (a count against the prompt).
+        if crate::theme_files::is_two_colour(&name) {
+            // Inactive inputs are the page with an ink border: white on black in 1-bit, the
+            // reverse in 1-bit Dark.
+            let (paper, ink) = if dark { (egui::Color32::BLACK, egui::Color32::WHITE) } else { (egui::Color32::WHITE, egui::Color32::BLACK) };
+            for look in [&active_filled, &active_empty, &filled, &empty] {
+                for &(fill, border) in &look.0 {
+                    for color in [fill, border] {
+                        assert!(matches!(color, egui::Color32::BLACK | egui::Color32::WHITE), "{name}: {look:?}");
+                    }
+                }
+            }
+            for look in [&active_filled, &active_empty] {
+                assert_eq!(outline(look).0, t.selected_bg, "{name}");
+                assert_eq!(outline(look).0, ink, "{name}: the active input is inverted");
+                assert_eq!(look.1, Some(t.selected_ink), "{name}");
+            }
+            for look in [&filled, &empty] {
+                assert_eq!(outline(look), (paper, ink), "{name}");
+            }
+        } else {
+            assert_ne!(outline(&filled).0, outline(&empty).0, "{name}: filled and empty fills differ");
+            assert_ne!(outline(&filled).1, outline(&empty).1, "{name}: filled and empty borders differ");
+        }
         assert_eq!(filled.1, Some(t.form_ink), "{name}: a filled input's count is in text colour");
         assert_eq!(empty.1, Some(t.form_dim), "{name}: an empty input's prompt is dim");
     }

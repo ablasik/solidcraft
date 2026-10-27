@@ -181,10 +181,16 @@ pub fn left_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let available = ui.available_rect_before_wrap();
     app.shell.history_dock_space = Some(available);
+    // A dialog in the left column holds the History's place (`dialog_column`).
+    let held = crate::dialog_column::holds(app);
+    if held {
+        // No row is under the pointer: the view lights no feature for the History.
+        app.viewport.hover_feature = None;
+    }
     if Container::for_layout(app.ui.layout, Surface::Panel).floating() || stacked(app) {
         let bounds = floating_rect(app, available);
         app.shell.history = None;
-        if !bounds.is_finite() || bounds.width() < crate::ui_kit::history_width(false) || bounds.height() < t.control_height {
+        if held || !bounds.is_finite() || bounds.width() < crate::ui_kit::history_width(false) || bounds.height() < t.control_height {
             return;
         }
         let container = Container::new(ui.ctx(), Surface::Panel).joined(crate::ui_kit::DockEdges { left: true, top: true, ..Default::default() });
@@ -217,15 +223,22 @@ pub fn left_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         if width < crate::ui_kit::history_width(false) {
             return;
         }
+        // Held by a dialog, the docked panel stays allocated but empty, so the view keeps its size.
         let response = Container::new(ui.ctx(), Surface::Panel)
             .edge("sc_timeline_left", Edge::Left)
             .exact_size(width)
             .resizable(false)
             .frame(Container::new(ui.ctx(), Surface::Panel).edge_frame(t.panel).inner_margin(t.space_4))
-            .show(ui, |ui| left_timeline(app, ui));
-        crate::scenario::publish_rect("history:vertical", response.response.rect);
+            .show(ui, |ui| {
+                if !held {
+                    left_timeline(app, ui);
+                }
+            });
         app.shell.history = Some(response.response.rect);
-        seam_handle(app, ui, response.response.rect);
+        if !held {
+            crate::scenario::publish_rect("history:vertical", response.response.rect);
+            seam_handle(app, ui, response.response.rect);
+        }
     }
 }
 

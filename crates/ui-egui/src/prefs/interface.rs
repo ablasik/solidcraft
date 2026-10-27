@@ -112,6 +112,17 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             }
                         });
                     });
+                    // Where command dialogs open (#6707).
+                    ui_kit::row(ui, app.tr("prefs.dialogs"), |ui| {
+                        use crate::dialog_column::DialogPlace;
+                        let mut selected = usize::from(app.preferences.dialog_place == DialogPlace::LeftColumn);
+                        let options = [app.tr("prefs.dialogs_edge"), app.tr("prefs.dialogs_left_column")];
+                        let segments = ui.scope(|ui| ui_kit::segmented(ui, &mut selected, &options, Default::default()));
+                        segments.response.on_hover_text(app.tr("prefs.dialogs_note"));
+                        if segments.inner {
+                            app.preferences.dialog_place = if selected == 1 { DialogPlace::LeftColumn } else { DialogPlace::Edge };
+                        }
+                    });
                     // Where a dialog's and a sketch's OK and Cancel also sit (#6709).
                     ui_kit::row(ui, "", |ui| {
                         let check = setting::view_confirm_corner(app, ui).on_hover_text(app.tr("prefs.view_confirm_corner_note"));

@@ -313,17 +313,21 @@ pub(crate) fn selection_field(ui: &mut Ui, text: &str, options: Selection) -> Re
     let Selection { active, filled } = options;
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::CLICK);
-    if active && !filled {
+    // A separate action fill lets two-colour palettes reserve the focus accent for inverted ink.
+    let inverted = t.form_primary_fill != t.form_primary;
+    if active && !filled && !inverted {
         ui.painter().rect_filled(rect, t.control_radius, t.selected_bg);
     }
     let (fill, border) = match (active, filled) {
+        (true, _) if inverted => (t.selected_bg, t.form_primary),
+        (false, _) if inverted => (t.control_fill, t.control_border),
         (true, true) => (t.selected_bg, t.form_primary),
         (true, false) => (t.control_fill, t.form_primary),
         (false, true) => (t.control_fill.lerp_to_gamma(t.form_ink, 0.06), t.control_border.lerp_to_gamma(t.form_ink, 0.35)),
         (false, false) => (t.control_fill, t.control_border),
     };
     ui.painter().rect(
-        if active && !filled { rect.shrink(t.space_2) } else { rect },
+        if active && !filled && !inverted { rect.shrink(t.space_2) } else { rect },
         t.control_radius,
         fill,
         match (active, filled) {
@@ -345,6 +349,7 @@ pub(crate) fn selection_field(ui: &mut Ui, text: &str, options: Selection) -> Re
         text,
         crate::fonts::medium(t.font_label),
         match (active, filled) {
+            (true, _) if inverted => t.selected_ink,
             (true, true) => t.selected_ink,
             (false, true) => t.form_ink,
             _ => t.form_dim,

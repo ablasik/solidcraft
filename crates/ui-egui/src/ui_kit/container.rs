@@ -111,10 +111,11 @@ impl Container {
         }
     }
 
-    /// Movable tool sheets round all exposed corners, joining only their right dock edge.
+    /// Movable tool sheets round all exposed corners, joining only their right dock edge (or the
+    /// edges they were declared `joined` at).
     pub(crate) fn tool_frame(self, mut frame: Frame, right_docked: bool) -> Frame {
         if self.surface == Surface::Feature && !self.floating() {
-            frame.corner_radius = Self::compact_rounding(DockEdges { right: right_docked, ..Default::default() });
+            frame.corner_radius = Self::compact_rounding(self.joined.unwrap_or(DockEdges { right: right_docked, ..Default::default() }));
         }
         frame
     }

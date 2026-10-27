@@ -71,6 +71,7 @@
     "form_fill": "#ff5555",
     "form_ink": "#ffffff",
     "form_primary": "#ff55ff",
+    "form_primary_fill": "#ff55ff",
     "form_soft": "#000000",
     "form_success": "#55ff55",
     "form_success_fill": "#000000",

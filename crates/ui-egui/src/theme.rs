@@ -587,6 +587,8 @@ pub struct Tokens {
     pub form_ink: Color32,
     pub form_dim: Color32,
     pub form_primary: Color32,
+    /// Primary action fill; theme files without this token inherit `form_primary`.
+    pub form_primary_fill: Color32,
     pub form_error: Color32,
     pub form_error_fill: Color32,
     /// Successful validation text and its badge surface.

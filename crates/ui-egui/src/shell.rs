@@ -103,6 +103,10 @@ pub(crate) struct State {
     pub history_folding: Option<[f32; 2]>,
     pub history_fold_motion: Option<[crate::timeline_left::FoldMotion; 2]>,
     pub content: Option<Rect>,
+    /// The space the browser and a left History are laid out in this frame.
+    pub left_space: Option<Rect>,
+    /// The left column an open dialog holds this frame (`dialog_column`).
+    pub dialog_column: Option<Rect>,
 }
 
 /// One source of occlusion for navigation, picking, overlays and fit.
@@ -169,6 +173,9 @@ pub(crate) fn workspace_content(app: &SolveApp, mut content: Rect) -> Rect {
     }
     if let Some(browser) = app.shell.browser {
         content.min.x = (browser.right() + gap).clamp(content.left(), content.right());
+    }
+    if let Some(column) = app.shell.dialog_column {
+        content.min.x = (column.right() + gap).clamp(content.left(), content.right());
     }
     content
 }

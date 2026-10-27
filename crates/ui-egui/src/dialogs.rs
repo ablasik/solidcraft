@@ -933,7 +933,7 @@ impl Dialog {
                     operation: 0,
                     at: None,
                 },
-                vec![],
+                crate::primitive_placement::inputs("solid.box"),
             ),
             "solid.cylinder" => Dialog::new(
                 Kind::Primitive {
@@ -1567,6 +1567,10 @@ impl Dialog {
         self.error = None;
         self.sync_thread(s);
         self.sync_material(s);
+        if let Kind::Primitive { cmd, at, .. } = &mut self.kind {
+            let picked = self.inputs.get(self.active).and_then(|i| i.items.first());
+            crate::primitive_placement::picked(s, cmd, at, &mut self.extra, picked);
+        }
     }
 
     /// Box selection result: replace (or add to) the active input.
@@ -2743,6 +2747,24 @@ pub(crate) fn sync_feature_edit_sketch(app: &mut SolveApp) {
     });
 }
 
+/// Does this dialog dock as a card (at the view's edge or in the left column)? A delete
+/// confirmation is a centred prompt instead.
+pub(crate) fn docks(d: &Dialog) -> bool {
+    !matches!(d.kind, Kind::ConfirmDelete { .. })
+}
+
+/// The width a dialog's card asks for: the managers' wider form, a study's table, or a card.
+pub(crate) fn card_width(d: &Dialog) -> f32 {
+    let t = Tokens::get();
+    if matches!(d.kind, Kind::Appearance(_) | Kind::Material { .. }) {
+        t.form_card_width + t.form_label_width + t.space_6
+    } else if matches!(&d.kind, Kind::Motion(k) if k.wide()) {
+        t.form_card_width * 3.0
+    } else {
+        t.form_card_width
+    }
+}
+
 /// A dialog's primary and closing actions. Measure only closes; a deletion's primary action
 /// says what it does.
 pub(crate) fn action_labels(kind: &Kind) -> (&'static str, &'static str) {
@@ -2764,6 +2786,7 @@ pub(crate) fn corner_confirms(d: &Dialog) -> bool {
 /// Show the active dialog (if any), docked flush to an edge of the viewport just below the axis
 /// view, sized to its content. The right edge is its place, except while a sketch is open: the
 /// Sketch Palette keeps the right there, and the dialog takes the left so both stay on screen.
+/// With Dialogs › In the left column it holds the left column instead (`dialog_column`).
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // A click in the view's corner is for the dialog open this frame, or for none.
     let corner = app.viewport.corner.take();
@@ -2814,7 +2837,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let vp = crate::agent_chat::tool_space(app, crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect())));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
     // started there docks at the left instead, so neither panel hides the other.
-    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+    let column = crate::dialog_column::place(app, ctx, &d);
+    let side = if column.is_some() || (crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx)) {
         crate::frame::Side::Left
     } else {
         crate::frame::Side::Right
@@ -2826,12 +2850,17 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     // Command dialogs share the last dragged offset on this side until the application
-    // exits, kept inside the viewport.
-    let drag_key = side.dialog_offset_key();
-    let moved = crate::frame::dock_offset(ctx, drag_key);
-    let docked = egui::pos2(side.anchor_x(vp), top);
-    let drag_bounds = crate::shell::tool_drag_rect(app, vp);
-    let anchor = crate::frame::offset_anchor(docked, moved, drag_bounds, side);
+    // exits, kept inside the viewport. In the left column a dialog stays in its place.
+    let (drag_key, moved, docked, drag_bounds, anchor) = if let Some(column) = column {
+        crate::scenario::publish_rect("dialog:column", column);
+        ("", egui::Vec2::ZERO, column.min, crate::dialog_column::bounds(app, column, vp), column.min)
+    } else {
+        let drag_key = side.dialog_offset_key();
+        let moved = crate::frame::dock_offset(ctx, drag_key);
+        let docked = egui::pos2(side.anchor_x(vp), top);
+        let drag_bounds = crate::shell::tool_drag_rect(app, vp);
+        (drag_key, moved, docked, drag_bounds, crate::frame::offset_anchor(docked, moved, drag_bounds, side))
+    };
     let mut keep = true;
     let mut ok = false;
     let mut applied = false;
@@ -2865,18 +2894,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let ok_enabled = valid && !ok_label.is_empty() && app.applying.is_none();
     let panel = crate::ui_kit::Panel::new(&heading, egui::Id::new(("sc_dialog", title(&d.kind))), anchor, drag_bounds, side, frame)
         .actions(ok_label, close_label);
-    let panel = if matches!(d.kind, Kind::Appearance(_) | Kind::Material { .. }) {
-        panel.width(t.form_card_width + t.form_label_width + t.space_6)
-    } else if wide {
-        let panel = panel.wide();
-        if side == crate::frame::Side::Left {
-            let available = app.viewport.palette_rect.map_or(vp.width(), |r| (r.left() - vp.left() - t.space_8).max(0.0));
-            panel.width((t.form_card_width * 3.0).min(available))
-        } else {
-            panel
-        }
+    let panel = if let Some(column) = column {
+        panel.width(column.width()).joined(crate::ui_kit::DockEdges { left: true, top: true, ..Default::default() })
+    } else if wide && side == crate::frame::Side::Left {
+        let available = app.viewport.palette_rect.map_or(vp.width(), |r| (r.left() - vp.left() - t.space_8).max(0.0));
+        panel.width(card_width(&d).min(available))
     } else {
-        panel
+        panel.width(card_width(&d))
     };
     let reset_scroll = d.reset_scroll;
     let panel =
@@ -3415,7 +3439,7 @@ pub(crate) fn length_default(s: &Session, number: &str) -> String {
 /// A feature's length as its edit field shows it. A bare number is kept in millimetres: where the
 /// design reads bare numbers in another unit, the field says "mm" (as the configuration table
 /// does), so OK keeps the size. Anything else shows as stored.
-fn stored_length(s: &Session, e: &str) -> String {
+pub(crate) fn stored_length(s: &Session, e: &str) -> String {
     if s.doc.with_design_unit(e, ValueKind::Length) == e { e.to_string() } else { format!("{} mm", e.trim()) }
 }
 
@@ -4478,6 +4502,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         p.insert("center".into(), pt(point));
                     }
                 }
+            } else {
+                crate::primitive_placement::params(s, cmd, &d.extra, &mut p);
             }
             p.insert("operation".into(), json!(OPS.get(*operation).copied().unwrap_or("new")));
             (cmd, Value::Object(p))

@@ -804,6 +804,9 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
             if *cmd == "solid.coil" {
                 enter |= coil_rows(ui, &mut d.extra);
             }
+            if at.is_none() {
+                enter |= crate::primitive_placement::rows(ui, &app.session, cmd, &mut d.extra);
+            }
             if let Some((p, _)) = *at {
                 form_row(ui, "Position", |ui| {
                     ui.horizontal(|ui| {

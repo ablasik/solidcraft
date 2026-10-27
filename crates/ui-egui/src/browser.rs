@@ -957,6 +957,12 @@ pub(crate) fn resize_column(app: &mut SolveApp, ui: &egui::Ui, rect: Rect, width
     crate::scenario::publish_handle(handle, pos2(rect.right() - BROWSER_RAIL / 2.0, rect.center().y));
 }
 
+/// The width of the browser folded to its rail beside a left History.
+pub(crate) fn collapsed_width() -> f32 {
+    let t = Tokens::get();
+    t.space_24 + t.space_10
+}
+
 /// One content-hugging browser; the shared container supplies floating or flush compact chrome.
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let available = ui.available_rect_before_wrap();
@@ -986,11 +992,12 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let bounds = if stacked {
         crate::timeline_left::stacked_rects(app, available).0
     } else {
-        panel_bounds(available, if vertical { None } else { app.shell.history }, if collapsed { t.space_24 + t.space_10 } else { width }, gap)
+        panel_bounds(available, if vertical { None } else { app.shell.history }, if collapsed { collapsed_width() } else { width }, gap)
     };
     app.shell.browser = None;
     let min_height = HEADER_H + 2.0 * (CARD_INSET + 1.0);
-    if bounds.is_positive() && bounds.height() >= min_height {
+    // A dialog in the left column holds the browser's place (`dialog_column`).
+    if !crate::dialog_column::holds(app) && bounds.is_positive() && bounds.height() >= min_height {
         let fill = if container.floating() && app.preferences.browser_float { t.panel.gamma_multiply(BROWSER_FLOAT_ALPHA) } else { t.panel };
         let frame = container.frame(ui.ctx(), fill, crate::frame::Side::Left).inner_margin(CARD_INSET as i8);
         let inner_width = (bounds.width() - frame.total_margin().sum().x).max(0.0);
