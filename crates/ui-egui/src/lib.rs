@@ -13,6 +13,7 @@ pub mod access;
 pub mod agent_chat;
 pub mod agent_cursor;
 pub mod ai_connect;
+pub mod bidi;
 pub mod bom_panel;
 pub mod browser;
 pub mod browser_canvas;
