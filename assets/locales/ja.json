@@ -1478,6 +1478,8 @@
   "prefs.graphics_note": "速度と滑らかさのバランスを調整します。各選択肢の効果をサンプルで確認できます。",
   "prefs.graphics_presets_note": "プリセットは以下の設定をまとめて変更します。",
   "prefs.history": "履歴",
+  "prefs.history_origin_bodies": "原点とボディを先頭に表示",
+  "prefs.history_origin_bodies_note": "左側またはブラウザー下の履歴の先頭に、アクティブなコンポーネントのボディフォルダーと原点を、ブラウザーと同じ表示切り替えとメニュー付きで表示します。下部の履歴は変わりません。",
   "prefs.history_sketches": "スケッチ",
   "prefs.history_sketches_in_order": "作成順",
   "prefs.history_sketches_note": "スケッチ：「フィーチャーの下」では、左側の履歴に名前が表示される幅があるとき、スケッチをそれから作成した最初のフィーチャーの下に 1 段字下げして表示します。下部のタイムラインは常に作成順です。",

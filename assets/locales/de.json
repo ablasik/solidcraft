@@ -1148,6 +1148,8 @@
   "pick a hole to seat it, or OK places it at the origin": "Wählen Sie eine Bohrung zum Einsetzen, oder OK platziert es im Ursprung",
   "pick one or two vertices, edges or faces": "Wählen Sie ein oder zwei Ecken, Kanten oder Flächen",
   "prefs.cpu": "CPU (Software)",
+  "prefs.history_origin_bodies": "Ursprung und Körper oben zeigen",
+  "prefs.history_origin_bodies_note": "Der Verlauf links oder unter dem Browser beginnt mit dem Körper-Ordner der aktiven Komponente und dem Ursprung, mit Augen und Menüs wie im Browser. Der Verlauf unten bleibt unverändert.",
   "prefs.minutes_suffix": " min",
   "properties.title": "Eigenschaften: {name}",
   "recovery.days_ago": "vor {count} Tagen",

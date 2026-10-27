@@ -1478,6 +1478,8 @@
   "prefs.graphics_note": "Trade speed for smoothness. Each choice shows its effect on a sample.",
   "prefs.graphics_presets_note": "Presets set the choices below together.",
   "prefs.history": "History",
+  "prefs.history_origin_bodies": "Show origin and bodies at the top",
+  "prefs.history_origin_bodies_note": "The History on the left or under the browser starts with the active component's Bodies folder and the Origin, with their eyes and menus as in the browser. The History at the bottom is unchanged.",
   "prefs.history_sketches": "Sketches",
   "prefs.history_sketches_in_order": "In order",
   "prefs.history_sketches_note": "With Sketches set to Under their feature, the History at the left lists each sketch one level in, under the first feature built from it, whenever it is wide enough for names. The timeline at the bottom always keeps the creation order.",

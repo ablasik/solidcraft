@@ -1478,6 +1478,8 @@
   "prefs.graphics_note": "在速度与平滑度之间取舍。每个选项均以示例展示效果。",
   "prefs.graphics_presets_note": "预设会同时设置以下选项。",
   "prefs.history": "历史",
+  "prefs.history_origin_bodies": "在顶部显示原点和实体",
+  "prefs.history_origin_bodies_note": "左侧或浏览器下方的历史以活动组件的实体文件夹和原点开头，并带有与浏览器相同的显示切换和菜单。底部的历史保持不变。",
   "prefs.history_sketches": "草图",
   "prefs.history_sketches_in_order": "按创建顺序",
   "prefs.history_sketches_note": "草图：选择“位于其特征下”后，左侧历史在宽度足以显示名称时，会将草图缩进一级，列在由其创建的第一个特征下。底部时间轴始终保持创建顺序。",

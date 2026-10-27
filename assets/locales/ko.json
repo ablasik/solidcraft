@@ -1242,6 +1242,8 @@
   "prefs.graphics_note": "속도와 부드러움 중에서 선택합니다. 각 선택의 효과가 샘플에 표시됩니다.",
   "prefs.graphics_presets_note": "프리셋은 아래의 선택 항목을 한 번에 설정합니다.",
   "prefs.history": "이력",
+  "prefs.history_origin_bodies": "원점과 바디를 맨 위에 표시",
+  "prefs.history_origin_bodies_note": "왼쪽 또는 브라우저 아래의 히스토리가 활성 구성 요소의 바디 폴더와 원점으로 시작하며, 브라우저처럼 표시 아이콘과 메뉴가 있습니다. 아래쪽 히스토리는 바뀌지 않습니다.",
   "prefs.hold_stop_snapping": "누르고 있으면 스냅 중지",
   "prefs.icons_only": "아이콘만",
   "prefs.imported_file": "가져온 파일",
