@@ -161,6 +161,36 @@ pub fn material_look(material: &str) -> Option<Look> {
 }
 
 impl Document {
+    /// Resolve a picked face through the same appearance chain used by the viewport.
+    pub fn model_face_look(&self, body: &crate::ModelBody, face: usize) -> Option<Look> {
+        self.face_colors(body).into_iter().find(|(index, _)| *index == face).map(|(_, look)| look).or_else(|| self.model_display_look(body))
+    }
+
+    /// Body appearance including the imported fallback used by `body_color`.
+    pub fn model_display_look(&self, body: &crate::ModelBody) -> Option<Look> {
+        self.model_body_look(body).or_else(|| {
+            let color = body.body.color().or_else(|| body.imported.as_ref().and_then(|p| p.color))?;
+            Some(Look::custom(color.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8), self.model_body_opacity(body)))
+        })
+    }
+
+    /// Distinct appearances used by an object, including its face overrides. `None` is
+    /// the unassigned/imported body appearance. Repeated faces count as one object user.
+    pub fn model_used_looks(&self, body: &crate::ModelBody) -> Vec<Option<Look>> {
+        let faces = self.face_colors(body);
+        let mut looks = Vec::new();
+        if faces.len() < body.body.face_count() || faces.is_empty() {
+            looks.push(self.model_display_look(body));
+        }
+        for (_, look) in faces {
+            let look = Some(look);
+            if !looks.contains(&look) {
+                looks.push(look);
+            }
+        }
+        looks
+    }
+
     /// Shared definition appearance for a computed occurrence body.
     pub fn model_body_look(&self, body: &crate::ModelBody) -> Option<Look> {
         let name = body.definition_name();

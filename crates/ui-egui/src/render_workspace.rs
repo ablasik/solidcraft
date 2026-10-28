@@ -43,6 +43,9 @@ mod materials;
 #[path = "render_workspace_setups.rs"]
 mod setups;
 
+#[path = "render_ui/scene.rs"]
+pub(crate) mod scene;
+
 #[path = "render_workspace_studio.rs"]
 mod studio;
 #[path = "render_workspace_transport.rs"]
@@ -240,11 +243,28 @@ impl Stage {
     }
 }
 
+/// Browser focus is transient per-document view state, never part of a saved design.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum RenderSelection {
+    #[default]
+    Nothing,
+    Object(Vec<solidcraft_engine::Sel>),
+    Environment,
+    /// Method/type/index identity until named light commands provide persistent IDs.
+    Light(String),
+    Shot(String),
+    Output,
+}
+
 /// Small per-document editor state; GPU uploads and host capabilities stay outside tabs.
 #[derive(Clone, Debug)]
 pub struct ViewState {
     pub name: String,
+    pub selection: RenderSelection,
     pub(crate) stage: Stage,
+    pub(crate) by_look: bool,
+    pub(crate) search_objects: bool,
+    pub(crate) object_query: String,
     draft: RenderSetup,
     dirty: bool,
     clean_setup: Option<RenderSetup>,
@@ -299,7 +319,11 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             name: "Studio".into(),
+            selection: RenderSelection::Nothing,
             stage: Stage::Look,
+            by_look: false,
+            search_objects: false,
+            object_query: String::new(),
             draft: RenderSetup::default(),
             dirty: false,
             clean_setup: None,
@@ -557,8 +581,15 @@ pub(crate) fn select_stage(app: &mut SolveApp, key: &str) {
     };
     app.render_workspace.view.stage = stage;
     app.render_workspace.view.inspector.page = stage.page();
-    // The current Browser has model folders only. Reveal Objects for Look; scene-specific
-    // Lights/Shots/Output expansion belongs to the scene Browser implementation.
+    let sections: &[&str] = match stage {
+        Stage::Look => &["objects"],
+        Stage::Light => &["lights", "environment"],
+        Stage::Frame => &["shots"],
+        Stage::Output => &[],
+    };
+    for section in sections {
+        app.tree.collapsed.remove(&format!("render:tree:{section}"));
+    }
     if stage == Stage::Look {
         app.tree.collapsed.remove("c0");
         app.tree.collapsed.remove("c0/bodies");
@@ -590,24 +621,35 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     inspector::panel(app, ui);
 }
 
+pub(crate) fn apply_browser_controls(app: &mut SolveApp, value: &serde_json::Value) {
+    let view = &mut app.render_workspace.view;
+    if let Some(by_look) = value.get("by_look").and_then(serde_json::Value::as_bool) {
+        view.by_look = by_look;
+        view.inspector.library_open = false;
+    }
+    if let Some(search) = value.get("search").and_then(serde_json::Value::as_bool) {
+        view.search_objects = search;
+        view.inspector.library_open = false;
+    }
+    if let Some(query) = value.get("query").and_then(serde_json::Value::as_str) {
+        view.object_query = query.into();
+    }
+}
+
 /// Local Browser-card content, never a new workspace or an alternative model tree.
 pub(crate) fn browser_mode(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     if !active(app) {
         return false;
     }
-    let labels = [app.tr("render.browser_model").to_string(), app.tr("render.browser_library").to_string()];
-    let mut selected = usize::from(app.render_workspace.view.inspector.library_open);
-    let top = ui.cursor().min;
-    let width = ui.available_width();
-    crate::ui_kit::segmented(ui, &mut selected, &labels.iter().map(String::as_str).collect::<Vec<_>>(), Default::default());
-    for (i, name) in ["render:browser-model", "render:browser-library"].iter().enumerate() {
-        crate::scenario::publish_target(
-            name,
-            egui::Rect::from_min_size(top + egui::vec2(width * i as f32 / 2.0, 0.0), egui::vec2(width / 2.0, crate::ui_kit::row_height())),
-        );
+    if app.render_workspace.view.search_objects {
+        let mut query = app.render_workspace.view.object_query.clone();
+        crate::ui_kit::scope(ui, |ui| {
+            if crate::ui_kit::search_field(ui, ui.id().with("render:tree:query"), &mut query, crate::i18n::tr("render.tree_search")).changed() {
+                let _ = app.run("view.render_browser", json!({"query":query}));
+            }
+        });
     }
-    app.render_workspace.view.inspector.library_open = selected == 1;
-    if selected == 1 {
+    if app.render_workspace.view.inspector.library_open {
         crate::ui_kit::scope(ui, |ui| library::browse(app, ui));
         true
     } else {

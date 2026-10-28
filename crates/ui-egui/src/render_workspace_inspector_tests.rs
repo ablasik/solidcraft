@@ -721,3 +721,39 @@ fn shots_strip_render_submits_the_current_job_request() {
     assert_eq!(status.request.background, [31, 57, 83]);
     assert_eq!(h.app.session.doc, document);
 }
+
+#[test]
+fn browser_shot_menus_keep_target_and_draft_through_confirmation() {
+    let mut h = fixture();
+    h.app.render_workspace.view.name = "A".into();
+    setups::save(&mut h.app).unwrap();
+    h.app.run("render.settings.set", json!({"name":"B","set":{"width":321,"job":{"method":"raster"}}})).unwrap();
+    h.app.render_workspace.view.draft.width = 123;
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"render:tree:shot:B"},"button":"right"})).unwrap();
+    h.step(&json!({"widget":h.app.tr("render.shot_rename")})).unwrap();
+    assert!(confirmation_open(&h.app));
+    assert_eq!(h.app.render_workspace.view.name, "A");
+    h.step(&json!({"widget":h.app.tr("render.keep_editing")})).unwrap();
+    assert_eq!(h.app.render_workspace.view.draft.width, 123);
+    assert_eq!(h.app.render_workspace.view.inspector.page, Page::Output);
+    shot_row_action(&mut h.app, "B".into(), "render.shot.rename");
+    h.frames(3);
+    h.step(&json!({"widget":h.app.tr("render.discard_continue")})).unwrap();
+    assert_eq!(h.app.render_workspace.view.name, "B");
+    assert_eq!(h.app.render_workspace.view.inspector.page, Page::Scene);
+    assert_eq!(h.app.render_workspace.view.draft.width, 321);
+    h.app.render_workspace.view.draft.width = 456;
+    shot_row_action(&mut h.app, "A".into(), "render.shot.remove");
+    h.frames(3);
+    assert!(confirmation_open(&h.app));
+    h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
+    assert!(
+        !h.app.session.doc.render.setups.contains_key("A"),
+        "pending={:?}, status={:?}",
+        h.app.render_workspace.view.inspector.pending,
+        h.app.status
+    );
+    assert_eq!(h.app.render_workspace.view.name, "B");
+    assert_eq!(h.app.render_workspace.view.draft.width, 456, "removing another shot preserves this draft");
+}

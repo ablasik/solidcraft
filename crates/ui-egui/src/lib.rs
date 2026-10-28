@@ -985,9 +985,22 @@ impl SolveApp {
             solidcraft_engine::slicers::set_chosen_programs(&self.preferences.custom_slicers);
         }
         let t0 = now_ms();
+        let selected_before = self.session.selection.clone();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         self.big_operation |= now_ms() - t0 >= recovery_ui::BIG_OPERATION_MS;
-        self.command_completed(id, r)
+        let done = self.command_completed(id, r);
+        // Render focus already applies its semantic selection after clearing object picks.
+        if done.is_ok()
+            && id != "view.render_select"
+            && (self.session.selection != selected_before || matches!(id, "select.set" | "select.clear" | "select.same_look"))
+        {
+            self.render_workspace.view.selection = if self.session.selection.is_empty() {
+                render_workspace::RenderSelection::Nothing
+            } else {
+                render_workspace::RenderSelection::Object(self.session.selection.clone())
+            };
+        }
+        done
     }
 
     /// Host effects shared by directly executed and already evaluated commands.
@@ -1018,6 +1031,20 @@ impl SolveApp {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
                 _ => {}
+            }
+            if id == "view.render_browser" {
+                render_workspace::apply_browser_controls(self, v);
+            }
+            if id == "view.render_select" {
+                use render_workspace::RenderSelection;
+                let selected = match v.get("kind").and_then(Value::as_str) {
+                    Some("environment") => RenderSelection::Environment,
+                    Some("output") => RenderSelection::Output,
+                    Some("light") => RenderSelection::Light(v.get("id").and_then(Value::as_str).unwrap_or_default().into()),
+                    Some("shot") => RenderSelection::Shot(v.get("id").and_then(Value::as_str).unwrap_or_default().into()),
+                    _ => RenderSelection::Nothing,
+                };
+                self.render_workspace.view.selection = selected;
             }
             if id == "view.layout" {
                 let layout =

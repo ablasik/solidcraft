@@ -695,7 +695,16 @@ mod tests {
             // rather than requiring its spelling to differ from English.
             assert!(locale.0.messages().contains_key("toolbar.render_studio"));
             assert_eq!(locale.label("STUDIO"), locale.text("toolbar.render_studio"));
-            for id in ["render.pick_label", "render.pick_body", "render.pick_face", "render.pick_component", "render.pick_help"] {
+            for id in [
+                "render.pick_label",
+                "render.pick_body",
+                "render.pick_face",
+                "render.pick_component",
+                "render.pick_help",
+                "render.tree_browser",
+                "render.tree_search",
+                "render.tree_more",
+            ] {
                 assert_ne!(locale.text(id), Locale::for_language("en").text(id), "{language}: {id}");
             }
             let session = solidcraft_engine::Session::default();

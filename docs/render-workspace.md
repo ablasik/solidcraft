@@ -361,3 +361,22 @@ Selection and hover use Design’s highlight drawing and theme tokens in a separ
 GPU overlay on the live product view. The product scene and its upload stay unchanged.
 CPU image jobs, exported PNGs, retained images and the Render Result canvas never
 contain this overlay; the Pick control is disabled on the result canvas.
+
+## Browser scene focus
+
+The shared Browser lists Environment (with its source), Lights, saved Shots,
+Objects and Output (with image dimensions and format). Shots **+** opens the
+existing Shots manager; Lights **+**, Solo and Mute remain faded with an explicit
+reason until named light commands exist. Existing light entries describe the
+current numerical image setup, without inventing a saved rig.
+
+`ViewState.selection` exposes `RenderSelection` for Nothing, Object (the existing
+engine selection), Environment, Light, Shot and Output. It belongs to each document
+view and is never saved in a design. `view.render_select` validates semantic focus
+requests without opening dialogs or editing/evaluating a design. Object picks and
+Browser selections keep the existing selection commands. Inspector routing stays
+as before; the focus state is available to a later Inspector change.
+
+Look expands Objects, Light expands Lights and Environment, and Frame expands
+Shots. Output leaves expansion unchanged. Stages preserve selection and never
+lock rows or prevent manual expansion.

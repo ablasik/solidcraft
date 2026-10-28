@@ -359,6 +359,14 @@ pub fn radial_items(app: &SolveApp) -> Vec<Item> {
 pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
     let mut v = match target {
         Target::Viewport => viewport_items(app),
+        Target::Body { name } if crate::render_workspace::active(app) => vec![
+            cmd(app, "select.set", "Select").with(json!({"items":[Sel::Body {name:name.clone()}]})),
+            cmd(app, "select.same_look", "Select Same Look").with(json!({"body":name})),
+            Item::sep(),
+            act("ui.isolate", "Isolate", "body").with(json!({"bodies":[name]})),
+            act(if app.session.visibility.hidden_bodies.contains(name) { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye")
+                .with(json!({"bodies":[name]})),
+        ],
         Target::Body { name } => body_items(app, std::slice::from_ref(name), true),
         Target::Sketch { id } => sketch_items(app, *id),
         Target::Feature { id } => feature_items(app, *id),
@@ -398,7 +406,31 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
             .collect(),
         Target::NamedView { name } => crate::browser::view_items(app, name),
     };
-    v.extend(crate::browser::folded_folder_items(app, target));
+    if !crate::render_workspace::active(app) {
+        v.extend(crate::browser::folded_folder_items(app, target));
+    }
+    if crate::render_workspace::active(app) {
+        let (bodies, selection) = match target {
+            Target::Component { id } => {
+                let bodies = component_bodies(app, *id);
+                let selection: Vec<Sel> = bodies.iter().map(|name| Sel::Body { name: name.clone() }).collect();
+                (bodies, selection)
+            }
+            Target::Occurrence { path } => {
+                (app.session.occurrence_bodies(path, true).unwrap_or_default(), vec![Sel::Occurrence { path: path.clone() }])
+            }
+            _ => (Vec::new(), Vec::new()),
+        };
+        if let Some(body) = bodies.first() {
+            v.insert(0, cmd(app, "select.set", "Select").with(json!({"items":selection})));
+            v.insert(
+                1,
+                cmd(app, "select.same_look", "Select Same Look")
+                    .with(json!({"body":body}))
+                    .on(crate::render_workspace::scene::same_look(app, &bodies)),
+            );
+        }
+    }
     // Several items of the folder selected: they can be grouped.
     if let Some(p) = crate::browser::selection_group(app, target) {
         v.push(Item::sep());

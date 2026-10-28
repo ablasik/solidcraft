@@ -5,6 +5,8 @@ mod actions;
 mod assistant;
 mod assistant_entry;
 mod checks;
+#[cfg(test)]
+pub(crate) use checks::tests::{raster as test_raster, textures_update as test_textures_update};
 mod choice;
 mod color;
 mod confirm;
@@ -36,6 +38,7 @@ mod stages;
 mod status;
 mod table;
 mod text;
+mod tree;
 mod value_focus;
 
 pub(crate) use actions::*;
@@ -76,6 +79,7 @@ pub use sphere::{FinishKind, Sphere, sphere_thumbnail};
 pub(crate) use stages::{StageAction, StageBar};
 pub(crate) use status::*;
 pub(crate) use table::*;
+pub(crate) use tree::*;
 pub(crate) use value_focus::*;
 
 #[cfg(test)]

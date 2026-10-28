@@ -3395,7 +3395,8 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
         let inspector = h.app.shell.workspace_panels["render:inspector"].0;
         let browser = h.app.shell.workspace_panels["render:browser"].0;
         let ribbon_bottom = h.app.shell.cards.iter().map(|r| r.bottom()).fold(0.0, f32::max);
-        assert!((inspector.bottom() - browser.bottom()).abs() < 1.0);
+        assert!((browser.top() - inspector.top()).abs() < 1.0);
+        assert!((browser.bottom() - inspector.bottom()).abs() < 1.0);
         for key in ["render:browser", "render:inspector"] {
             let card = h.app.shell.workspace_panels[key].0;
             assert!(
@@ -3409,8 +3410,12 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
             let header = crate::scenario::rect_of(&format!("{key}:header")).unwrap();
             assert!((header.height() - crate::ui_kit::header_height()).abs() < 0.1, "{key}: {header:?}");
             assert!((header.top() - card.top()).abs() <= 1.0, "header must have no outer content padding");
-            let control = crate::scenario::rect_of(if key == "render:browser" { "render:browser-library" } else { "render:page:output" }).unwrap();
-            assert!(control.top() >= header.bottom(), "navigation must be below the standard header: {control:?} {header:?}");
+            let control = crate::scenario::rect_of(if key == "render:browser" { "render:tree:by-look" } else { "render:page:output" }).unwrap();
+            if key == "render:browser" {
+                assert!(header.contains_rect(control), "Scene lens belongs in the title band");
+            } else {
+                assert!(control.top() >= header.bottom(), "navigation must be below the standard header: {control:?} {header:?}");
+            }
         }
 
         assert!(browser.left() > viewport.left() && inspector.right() < viewport.right());
@@ -3461,7 +3466,7 @@ fn render_workspace_card_grips_swap_sides_and_resize_without_design_edits() {
             assert!(h.app.preferences.render_inspector_width > width);
             assert!(h.app.shell.workspace_panels["render:inspector"].0.width() > card_width);
         }
-        h.step(&json!({"click":{"handle":"render:browser-library"}})).unwrap();
+        h.step(&json!({"click":{"handle":"render:tree:by-look"}})).unwrap();
         h.frames(3);
         h.step(&json!({"drag":[{"handle":"render:browser:grip"},[100.0,350.0]],"steps":8})).unwrap();
         h.frames(3);
@@ -3758,6 +3763,95 @@ fn navigation_bar_render_canvases_filter_slots_and_keep_product_fit() {
 }
 
 #[test]
+fn render_workspace_browser_sections_and_lights_describe_only_current_job_entries() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1100}));
+    enter(&mut h.app, true).unwrap();
+    h.frames(3);
+    let rows: Vec<_> = crate::browser::drawn_rows().into_iter().map(|r| r.0).collect();
+    for section in ["Environment", "Lights", "Shots", "Objects"] {
+        assert!(rows.iter().any(|label| label == section), "{section}: {rows:?}");
+    }
+    assert!(scene::light_types(&h.app).is_empty());
+    assert_eq!(scene::environment(&h.app).0, "Fixed studio");
+    h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
+    h.app.render_workspace.view.raytrace = serde_json::from_value(json!({
+        "lights":[{"direction":[0,0,-1],"color":[1,1,1],"intensity":1}],
+        "punctual_lights":[
+            {"position_mm":[0,0,10],"color":[1,1,1],"intensity":1,"reference_distance_mm":10,"minimum_distance_mm":0.1},
+            {"position_mm":[0,0,10],"color":[1,1,1],"intensity":1,"reference_distance_mm":10,"minimum_distance_mm":0.1,
+             "cone":{"emitted_axis":[0,0,-1],"inner_half_angle_radians":0.1,"outer_half_angle_radians":0.2}}
+        ],
+        "area_lights":[{"center_mm":[0,0,10],"edge_u_mm":[1,0,0],"edge_v_mm":[0,-1,0],"color":[1,1,1],"intensity":1}]
+    }))
+    .unwrap();
+    assert_eq!(scene::light_types(&h.app), ["render.tree_directional", "render.tree_point", "render.tree_spot", "render.tree_rectangle"]);
+    h.app.render_workspace.view.raytrace.lights = Some(vec![]);
+    h.app.render_workspace.view.raytrace.punctual_lights = None;
+    h.app.render_workspace.view.raytrace.area_lights = None;
+    assert!(scene::light_types(&h.app).is_empty(), "empty explicit rig must stay empty");
+    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+    let studio = &mut h.app.render_workspace.view.studio;
+    studio.sun_enabled = true;
+    assert!(scene::light_types(&h.app).is_empty(), "disabled rig must not expose editor defaults");
+    h.app.render_workspace.view.studio.lighting_enabled = true;
+    h.app
+        .render_workspace
+        .view
+        .studio
+        .area_lights
+        .push(serde_json::from_value(json!({"center":[0,0,10],"u":[1,0,0],"v":[0,-1,0],"radiance":[1,1,1]})).unwrap());
+    assert_eq!(scene::light_types(&h.app), ["render.tree_sun", "render.tree_rectangle"]);
+    h.app.render_workspace.view.studio.environment = studio::Environment::Sky;
+    h.app.render_workspace.view.studio.rotation_rad = std::f64::consts::FRAC_PI_2;
+    h.app.render_workspace.view.studio.intensity = 2.5;
+    assert_eq!(scene::environment(&h.app), ("Sky".into(), "90° · 2.50×".into()));
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"render:tree:environment:current"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Environment);
+    h.step(&json!({"click":{"browser":"Sun"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Lighting);
+}
+
+#[test]
+fn render_workspace_browser_look_lens_counts_distinct_objects_and_selects_them() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1100}));
+    for (name, x) in [("A", 0), ("B", 20), ("C", 40)] {
+        h.app.run("solid.box", json!({"corner":[x,0,0],"length":10,"width":10,"height":10,"body_name":name})).unwrap();
+    }
+    h.app.run("appearance.assign", json!({"bodies":["A","B"],"appearance":"ABS - Red"})).unwrap();
+    h.app.run("appearance.assign", json!({"bodies":["C"],"appearance":"ABS - Blue"})).unwrap();
+    // Two faces on C use the same look as A and B: still only one additional user.
+    h.app.run("appearance.assign", json!({"body":"C","faces":[[40,5,5],[45,0,5]],"appearance":"ABS - Red"})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    let groups = scene::groups(&h.app);
+    let red = groups.iter().position(|g| g.look.as_ref().is_some_and(|l| l.name == "ABS - Red")).unwrap();
+    assert_eq!(groups[red].objects, ["A", "B", "C"]);
+    assert_eq!(groups.len(), 2);
+    h.app.render_workspace.view.by_look = true;
+    h.frames(3);
+    let at = crate::scenario::handle_at("row:A").unwrap();
+    h.step(&json!({"move":[at.x,at.y]})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.viewport.hover_bodies, ["A"], "By look rows retain Browser hover outlines");
+    h.step(&json!({"move":[1000.0,800.0]})).unwrap();
+    h.frames(2);
+    assert!(h.app.viewport.hover_bodies.is_empty(), "leaving the row clears its hover outline");
+    h.step(&json!({"click":{"handle":format!("render:tree:look:{red}")}})).unwrap();
+    assert_eq!(h.app.session.selection.len(), 3);
+    for name in ["A", "B", "C"] {
+        assert!(h.app.session.selection.contains(&solidcraft_engine::Sel::Body { name: name.into() }));
+    }
+    h.step(&json!({"click":{"handle":"eye:A"}})).unwrap();
+    assert!(h.app.session.visibility.hidden_bodies.contains(&"A".into()));
+    let menu = crate::context_menu::items(&h.app, &crate::context_menu::Target::Body { name: "A".into() });
+    for id in ["select.set", "select.same_look", "ui.isolate", "ui.show"] {
+        assert!(menu.iter().any(|i| i.id == id));
+    }
+}
+
+#[test]
 fn render_workspace_dock_command_swaps_sides_without_design_edits() {
     for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
         let mut h = Harness::new();
@@ -3831,4 +3925,318 @@ fn render_workspace_dock_grip_menus_dispatch_the_other_side() {
             assert_eq!((h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision), history);
         }
     }
+}
+
+#[test]
+fn render_workspace_browser_shot_switch_keeps_the_existing_dirty_confirmation() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1100}));
+    enter(&mut h.app, true).unwrap();
+    h.app.render_workspace.view.name = "A".into();
+    setups::save(&mut h.app).unwrap();
+    h.app.run("render.settings.set", json!({"name":"B","set":{"width":321,"job":{"method":"raster"}}})).unwrap();
+    h.app.render_workspace.view.draft.width = 123;
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"render:tree:shot:B"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.name, "A");
+    assert!(inspector::confirmation_open(&h.app));
+    h.step(&json!({"widget":h.app.tr("render.keep_editing")})).unwrap();
+    assert_eq!(h.app.render_workspace.view.draft.width, 123);
+    h.step(&json!({"click":{"handle":"render:tree:shot:B"}})).unwrap();
+    h.step(&json!({"widget":h.app.tr("render.discard_continue")})).unwrap();
+    assert_eq!(h.app.render_workspace.view.name, "B");
+    assert_eq!(h.app.render_workspace.view.draft.width, 321);
+    assert!(!h.app.render_workspace.view.dirty);
+}
+
+#[test]
+fn render_workspace_browser_focus_covers_each_kind_without_design_edits() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1400}));
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Object"})).unwrap();
+    h.app.run("render.settings.set", json!({"name":"Shot","set":{"job":{"method":"raster"}}})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+    h.app.render_workspace.view.studio.lighting_enabled = true;
+    h.app.render_workspace.view.studio.sun_enabled = true;
+    h.frames(3);
+    let doc = h.app.session.doc.clone();
+    let before = (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
+    for label in ["Environment", "Lights", "Shots", "Objects", "Output"] {
+        assert!(crate::browser::drawn_rows().iter().any(|r| r.0 == label), "{label}");
+    }
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Nothing);
+    h.step(&json!({"click":{"handle":"row:Object"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Object(vec![Sel::Body { name: "Object".into() }]));
+    h.step(&json!({"click":{"handle":"render:tree:environment"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Environment);
+    assert!(h.app.session.selection.is_empty());
+    let focused_revision = h.app.session.revision;
+    h.step(&json!({"click":{"handle":"render:tree:light:0"}})).unwrap();
+    assert!(matches!(&h.app.render_workspace.view.selection, RenderSelection::Light(id) if id.contains("sun")));
+    setups::load(&mut h.app);
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"render:tree:shot:Shot"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Shot("Shot".into()));
+    h.step(&json!({"click":{"handle":"render:tree:output"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Output);
+    let page = h.app.render_workspace.view.inspector.page;
+    h.app.run("view.render_select", json!({"kind":"nothing"})).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Nothing);
+    assert_eq!(h.app.render_workspace.view.inspector.page, page, "focus alone does not dispatch Inspector editors");
+    assert_eq!(h.app.session.revision, focused_revision, "semantic selection only refreshes the view when clearing object picks");
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    assert_eq!(before, (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
+    assert!(h.app.dialog.is_none() && h.app.tool.is_none());
+}
+
+#[test]
+fn render_workspace_browser_add_and_light_actions_share_disabled_reasons_and_never_edit() {
+    fn has_text(shape: &egui::Shape, needle: &str) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.text().contains(needle),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| has_text(shape, needle)),
+            _ => false,
+        }
+    }
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1200}));
+    enter(&mut h.app, true).unwrap();
+    h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+    h.app.render_workspace.view.studio.lighting_enabled = true;
+    h.app.render_workspace.view.studio.sun_enabled = true;
+    h.frames(3);
+    let doc = h.app.session.doc.clone();
+    let history = (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision);
+    for target in ["render:tree:lights:add", "render:tree:light:0:solo", "render:tree:light:0:mute", "render:tree:light:0:visibility"] {
+        assert!(crate::scenario::handle_at(target).is_none(), "{target} must be disabled");
+        let at = crate::scenario::rect_of(target).unwrap().center();
+        h.step(&json!({"move":[at.x,at.y]})).unwrap();
+        h.frames(120);
+        assert!(h.shapes.iter().any(|s| has_text(&s.shape, h.app.tr("render.tree_lights_pending"))), "{target}: must show its disabled reason");
+        h.step(&json!({"click":[at.x,at.y]})).unwrap();
+        assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Nothing);
+    }
+    assert!(crate::scenario::handle_at("render:tree:shots:add").is_some());
+    h.step(&json!({"click":{"handle":"render:tree:shots:add"}})).unwrap();
+    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Scene);
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    assert_eq!(history, (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision));
+    assert!(h.app.dialog.is_none());
+}
+
+#[test]
+fn render_workspace_browser_stage_expansion_never_locks_rows_or_changes_focus() {
+    let mut h = Harness::new();
+    enter(&mut h.app, true).unwrap();
+    h.app.run("view.render_select", json!({"kind":"output"})).unwrap();
+    let doc = h.app.session.doc.clone();
+    let sections = ["objects", "lights", "environment", "shots"];
+    for (stage, expanded) in [("look", vec!["objects"]), ("light", vec!["lights", "environment"]), ("frame", vec!["shots"]), ("output", vec![])] {
+        for section in sections {
+            h.app.tree.collapsed.insert(format!("render:tree:{section}"));
+        }
+        h.app.run("view.render_stage", json!({"stage":stage})).unwrap();
+        for section in sections {
+            assert_eq!(crate::browser::is_open(&h.app, &format!("render:tree:{section}"), true), expanded.contains(&section), "{stage}/{section}");
+            crate::browser::toggle(&mut h.app, &format!("render:tree:{section}"), true);
+            assert_eq!(crate::browser::is_open(&h.app, &format!("render:tree:{section}"), true), !expanded.contains(&section));
+        }
+        assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Output);
+    }
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+}
+
+#[test]
+fn render_workspace_browser_semantic_focus_survives_clearing_object_picks() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Object"})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    let doc = h.app.session.doc.clone();
+    let evaluated = h.app.session.world_state();
+    let before = (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
+    for (request, expected) in [
+        (json!({"kind":"environment"}), RenderSelection::Environment),
+        (json!({"kind":"light","id":"sun"}), RenderSelection::Light("sun".into())),
+        (json!({"kind":"shot","id":"Shot"}), RenderSelection::Shot("Shot".into())),
+        (json!({"kind":"output"}), RenderSelection::Output),
+        (json!({"kind":"nothing"}), RenderSelection::Nothing),
+    ] {
+        h.app.run("select.set", json!({"items":[Sel::Body { name:"Object".into() }]})).unwrap();
+        assert!(matches!(h.app.render_workspace.view.selection, RenderSelection::Object(_)));
+        h.app.run("view.render_select", request.clone()).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.render_workspace.view.selection, expected, "{request}");
+        assert!(h.app.session.selection.is_empty());
+    }
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    assert!(Arc::ptr_eq(&evaluated, &h.app.session.world_state()));
+    assert_eq!(before, (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));
+}
+
+#[test]
+fn render_workspace_browser_focus_is_per_document_and_invalid_selection_is_atomic() {
+    let mut h = Harness::new();
+    h.app.run("view.render_select", json!({"kind":"environment"})).unwrap();
+    let doc = h.app.session.doc.clone();
+    for request in [
+        json!({}),
+        json!({"kind":"object"}),
+        json!({"kind":"light"}),
+        json!({"kind":"shot","id":""}),
+        json!({"kind":"output","id":"x"}),
+        json!({"kind":"shot","id":"x".repeat(1025)}),
+        json!({"kind":"nothing","extra":1}),
+    ] {
+        assert!(h.app.run("view.render_select", request).is_err());
+        assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Environment);
+    }
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Nothing);
+    h.app.run("view.render_select", json!({"kind":"output"})).unwrap();
+    crate::documents::switch(&mut h.app, 0);
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Environment);
+    crate::documents::switch(&mut h.app, 1);
+    assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Output);
+}
+
+/// Actual application tree at the approved card width, in both themes and both task states.
+#[test]
+fn render_workspace_browser_compact_geometry_search_and_theme_evidence() {
+    let previous = crate::theme::is_dark();
+    let mut themes = Vec::new();
+    for dark in [false, true] {
+        let mut h = Harness::new();
+        for (name, x, appearance) in [
+            ("Plate", 0, "Aluminum - Satin"),
+            ("Boss", 20, "Aluminum - Anodized Blue"),
+            ("Knob", 40, "Copper"),
+            ("Cover", 60, "Glass - Clear"),
+            ("Spacer", 80, "Aluminum - Satin"),
+            ("Bolt", 100, "Aluminum - Satin"),
+            ("Nut", 120, "Aluminum - Satin"),
+        ] {
+            h.app.run("solid.box", json!({"corner":[x,0,0],"length":10,"width":10,"height":10,"body_name":name})).unwrap();
+            h.app.run("appearance.assign", json!({"bodies":[name],"appearance":appearance})).unwrap();
+        }
+        let group =
+            h.app.run("browser.group", json!({"folder":"bodies","name":"Spacer, fasteners","items":["Spacer","Bolt","Nut"]})).unwrap()["group"]
+                .as_u64()
+                .unwrap();
+        h.app.tree.collapsed.insert(format!("c0/g{group}"));
+        for name in ["Hero", "Front", "Detail"] {
+            h.app.run("render.settings.set", json!({"name":name,"set":{"width":1920,"height":1080}})).unwrap();
+        }
+        enter(&mut h.app, true).unwrap();
+        h.app.preferences.render_browser_width = 266.0;
+        h.app.render_workspace.view.draft.width = 1920;
+        h.app.render_workspace.view.draft.height = 1080;
+        h.app.ui.dark = dark;
+        h.app.run("select.set", json!({"items":[solidcraft_engine::Sel::Body {name:"Boss".into()}]})).unwrap();
+        let ctx = crate::fonts::test_context();
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1440.0, 900.0));
+        let mut textures = std::collections::HashMap::new();
+        let mut images = Vec::new();
+        for stage in ["look", "light"] {
+            h.app.run("view.render_stage", json!({"stage":stage})).unwrap();
+            h.app.render_workspace.view.method = ImageMethod::CpuRaytrace;
+            h.app.render_workspace.view.raytrace.lights = Some(serde_json::from_value(json!([{"direction":[0,0,-1],"color":[1,1,1],"intensity":1},{"direction":[1,0,0],"color":[1,1,1],"intensity":1},{"direction":[0,1,0],"color":[1,1,1],"intensity":1}])).unwrap());
+            for section in ["lights", "shots", "objects"] {
+                if (stage == "look" && section == "objects") || (stage == "light" && section == "lights") {
+                    h.app.tree.collapsed.remove(&format!("render:tree:{section}"));
+                } else {
+                    h.app.tree.collapsed.insert(format!("render:tree:{section}"));
+                }
+            }
+            if stage == "light" {
+                h.app
+                    .run(
+                        "view.render_select",
+                        json!({"kind":"light","id":format!("{}:render.tree_directional:0",h.app.render_workspace.view.method.label())}),
+                    )
+                    .unwrap();
+            }
+            let mut image = None;
+            for frame in 0..12 {
+                crate::scenario::clear_handles();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(bounds),
+                        time: Some(ctx.cumulative_frame_nr() as f64 / 60.0),
+                        focused: true,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        h.app.logic(ui.ctx());
+                        h.app.ui(ui);
+                    },
+                );
+                crate::ui_kit::test_textures_update(&mut textures, &output.textures_delta);
+                output.textures_delta.clear();
+                if frame == 11 {
+                    let card = crate::scenario::rect_of("browser:card").unwrap();
+                    assert!((card.width() - 266.0).abs() < 0.1);
+                    let inspector = crate::scenario::rect_of("render:inspector").unwrap();
+                    assert!((card.top() - inspector.top()).abs() < 0.1);
+                    assert!((card.bottom() - inspector.bottom()).abs() < 0.1);
+                    let header = crate::scenario::rect_of("render:browser:header").unwrap();
+                    assert!(header.contains_rect(crate::scenario::rect_of("render:tree:by-look").unwrap()));
+                    assert!(crate::scenario::handle_at("render:browser-model").is_none());
+                    assert!(crate::scenario::handle_at("render:browser-library").is_none());
+                    for (name, row, _, _) in crate::browser::drawn_rows() {
+                        assert!((row.height() - 28.0).abs() < 0.1, "{name}: {row:?}");
+                    }
+                    if stage == "look" {
+                        let row = crate::browser::drawn_rows().into_iter().find(|r| r.0 == "Boss").unwrap().1;
+                        assert!((row.width() - (card.width() - 2.0)).abs() < 0.1);
+                        assert!(crate::scenario::handle_at("eye:Boss").unwrap().x > row.right() - 24.0);
+                    }
+                    if std::env::var_os("SOLIDCRAFT_BROWSER_EVIDENCE").is_some() {
+                        let full = crate::ui_kit::test_raster(&ctx, output.shapes, output.pixels_per_point, bounds, &textures);
+                        image = Some(
+                            image::imageops::crop_imm(&full, card.left() as u32, card.top() as u32, card.width() as u32, card.height() as u32)
+                                .to_image(),
+                        );
+                    }
+                }
+            }
+            if let (Some(image), Ok(dir)) = (image, std::env::var("SOLIDCRAFT_BROWSER_EVIDENCE")) {
+                std::fs::create_dir_all(&dir).unwrap();
+                image.save(std::path::Path::new(&dir).join(format!("scene-{stage}-{}.png", if dark { "dark" } else { "light" }))).unwrap();
+                images.push(image);
+            }
+        }
+        if let (Some(look), Some(light), Ok(dir)) = (images.first(), images.get(1), std::env::var("SOLIDCRAFT_BROWSER_EVIDENCE")) {
+            let mut pair = image::RgbaImage::new(look.width() + light.width(), look.height().max(light.height()));
+            image::imageops::overlay(&mut pair, look, 0, 0);
+            image::imageops::overlay(&mut pair, light, 266, 0);
+            pair.save(std::path::Path::new(&dir).join(format!("scene-stages-{}.png", if dark { "dark" } else { "light" }))).unwrap();
+        }
+        themes.push(images);
+        h.app.run("view.render_browser", json!({"search":true,"query":"Copper"})).unwrap();
+        h.app.tree.collapsed.remove("render:tree:objects");
+        h.frames(4);
+        let rows = crate::browser::drawn_rows();
+        assert!(rows.iter().any(|r| r.0 == "Knob"));
+        assert!(!rows.iter().any(|r| r.0 == "Boss"));
+        h.app.run("view.render_browser", json!({"search":false})).unwrap();
+        h.frames(3);
+        assert!(crate::browser::drawn_rows().iter().any(|r| r.0 == "Boss"));
+        for hidden in [true, false] {
+            h.step(&json!({"click":{"handle":"eye:Boss"}})).unwrap();
+            assert_eq!(h.app.session.visibility.hidden_bodies.iter().any(|name| name == "Boss"), hidden);
+        }
+    }
+    if let (Some(light), Some(dark), Ok(dir)) = (themes.first(), themes.get(1), std::env::var("SOLIDCRAFT_BROWSER_EVIDENCE")) {
+        for (index, stage) in ["look", "light"].iter().enumerate() {
+            let mut pair = image::RgbaImage::new(light[index].width() + dark[index].width(), light[index].height().max(dark[index].height()));
+            image::imageops::overlay(&mut pair, &light[index], 0, 0);
+            image::imageops::overlay(&mut pair, &dark[index], 266, 0);
+            pair.save(std::path::Path::new(&dir).join(format!("scene-{stage}-themes.png"))).unwrap();
+        }
+    }
+    crate::theme::set_dark(previous);
 }

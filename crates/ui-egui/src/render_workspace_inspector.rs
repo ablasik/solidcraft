@@ -162,6 +162,7 @@ struct Pending {
 #[derive(Clone, Debug)]
 enum PendingAction {
     Switch(String),
+    ManageShot { name: String, command: String },
     Reload,
     Remove(String),
 }
@@ -373,6 +374,15 @@ pub(super) fn switch_shot(app: &mut SolveApp, name: String) {
     request_action(app, PendingAction::Switch(name));
 }
 
+pub(super) fn shot_row_action(app: &mut SolveApp, name: String, command: &str) {
+    setups::refresh_dirty(app);
+    if command == "render.shot.remove" {
+        request_action(app, PendingAction::Remove(name));
+    } else {
+        request_action(app, PendingAction::ManageShot { name, command: command.into() });
+    }
+}
+
 fn request_action(app: &mut SolveApp, action: PendingAction) {
     if app.render_workspace.view.dirty || matches!(&action, PendingAction::Remove(_)) {
         app.render_workspace.view.inspector.pending =
@@ -387,11 +397,19 @@ fn perform_action(app: &mut SolveApp, action: PendingAction) -> Result<(), Strin
             app.render_workspace.view.name = name;
             setups::load(app);
         }
+        PendingAction::ManageShot { name, command } => {
+            app.render_workspace.view.name = name;
+            setups::load(app);
+            // The existing manager owns name validation and command execution.
+            app.start(&command);
+        }
         PendingAction::Reload => setups::load(app),
         PendingAction::Remove(name) => {
             app.run("render.shot.remove", json!({"name":name,"expected_revision":app.session.revision}))?;
-            app.render_workspace.view.name = app.session.doc.render.setups.keys().next().cloned().unwrap_or_else(|| "Studio".into());
-            setups::load(app);
+            if name == app.render_workspace.view.name {
+                app.render_workspace.view.name = app.session.doc.render.setups.keys().next().cloned().unwrap_or_else(|| "Studio".into());
+                setups::load(app);
+            }
         }
     }
     Ok(())

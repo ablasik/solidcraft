@@ -295,6 +295,29 @@ impl<'a> Panel<'a> {
         width: &mut f32,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<(R, Option<&'static str>)>> {
+        Self::workspace_with_header(
+            ui,
+            options,
+            side,
+            width,
+            false,
+            |ui, options| {
+                header_impl(ui, (options.icon, None), options.title, None, false, || {});
+            },
+            add,
+        )
+    }
+
+    /// Shared tree cards can place navigation in the title band and let rows own their insets.
+    pub(crate) fn workspace_with_header<R>(
+        ui: &mut Ui,
+        options: WorkspaceOptions<'_>,
+        side: &mut String,
+        width: &mut f32,
+        tree: bool,
+        header: impl FnOnce(&mut Ui, &WorkspaceOptions<'_>),
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<(R, Option<&'static str>)>> {
         let container = super::Container::floating_card(super::Surface::Panel);
         // The ribbon has already reserved the top gap, as for the Design Browser.
         let gap = Tokens::get().space_8;
@@ -340,7 +363,9 @@ impl<'a> Panel<'a> {
                 // persistent; their navigation lives in the separately padded body.
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let band = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), header_height()));
-                let grip = ui.interact(band, ui.id().with("workspace_grip"), egui::Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                let grip_rect = if tree { egui::Rect::from_min_size(band.min, vec2(t.space_24 * 2.0 + t.space_8, band.height())) } else { band };
+                let grip =
+                    ui.interact(grip_rect, ui.id().with("workspace_grip"), egui::Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
                 scenario::publish_target(&format!("{}:grip", options.id), grip.rect);
                 super::Menu::context(&grip, |ui| {
                     let (target, label) = if left { ("right", "Move to right side") } else { ("left", "Move to left side") };
@@ -351,7 +376,7 @@ impl<'a> Panel<'a> {
                         ui.close();
                     }
                 });
-                header_impl(ui, (options.icon, None), options.title, None, false, || {});
+                header(ui, &options);
                 scenario::publish_rect(&format!("{}:header", options.id), band);
                 if grip.dragged() {
                     let frame_nr = ui.ctx().cumulative_frame_nr();
@@ -365,9 +390,12 @@ impl<'a> Panel<'a> {
                     ui.ctx().request_repaint();
                 }
                 egui::Frame::NONE
-                    .inner_margin(t.space_12)
+                    .inner_margin(if tree { egui::Margin::symmetric(0, t.space_4 as i8) } else { egui::Margin::same(t.space_12 as i8) })
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = t.form_gap_y;
+                        if tree {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                        }
                         super::scope(ui, add)
                     })
                     .inner

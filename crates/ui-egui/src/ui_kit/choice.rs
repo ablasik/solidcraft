@@ -18,6 +18,7 @@ pub(crate) struct Segments<'a> {
     pub icons: &'a [&'a str],
     pub workspace_accent: bool,
     pub dense: bool,
+    pub small: bool,
     pub states: &'a [bool],
     pub compact: bool,
     pub primary: bool,
@@ -32,14 +33,15 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     if crate::prefs_search::querying(ui) && !crate::prefs_search::shows_all(ui) {
         crate::prefs_search::reveal(ui);
     }
-    let Segments { targets, icons, workspace_accent, dense, states, compact, primary, intrinsic, proportional } = config;
+    let Segments { targets, icons, workspace_accent, dense, small, states, compact, primary, intrinsic, proportional } = config;
     let accent = crate::theme::TabAccent::current(ui.ctx());
     let t = Tokens::get();
+    let font_size = if small { t.font_small } else { t.font_label };
     let natural: Vec<_> = options
         .iter()
         .enumerate()
         .map(|(index, option)| {
-            ui.painter().layout_no_wrap((*option).to_owned(), crate::fonts::semibold(t.font_label), t.form_ink).size().x.ceil()
+            ui.painter().layout_no_wrap((*option).to_owned(), crate::fonts::semibold(font_size), t.form_ink).size().x.ceil()
                 + t.space_16
                 + if icons.get(index).is_some() { t.space_14 + t.space_6 + t.space_4 } else { 0.0 }
         })
@@ -48,9 +50,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
     let widest = options
         .iter()
-        .map(|option| {
-            ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(t.font_label), t.form_ink).size().x
-        })
+        .map(|option| ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(font_size), t.form_ink).size().x)
         .fold(0.0, f32::max);
     // Judged on the whole row, which is what a scrollbar narrows, not on one segment.
     let need = if intrinsic { total } else { (widest + 2.0 * t.space_8) * options.len() as f32 };
@@ -61,7 +61,19 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         return *selected != before;
     }
     let desired = if intrinsic { total.min(dimension(ui.available_width())) } else { dimension(ui.available_width()) };
-    let (rect, _) = ui.allocate_exact_size(vec2(desired, if dense { t.control_height - t.space_2 } else { row_height() }), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(
+            desired,
+            if small {
+                t.control_height - t.space_4
+            } else if dense {
+                t.control_height - t.space_2
+            } else {
+                row_height()
+            },
+        ),
+        egui::Sense::hover(),
+    );
     ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
     let equal_width = rect.width() / options.len().max(1) as f32;
     let mut clicked = false;
@@ -97,7 +109,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         if index > 0 {
             ui.painter().vline(segment.left(), segment.y_range(), t.control_border_stroke(t.control_border));
         }
-        let font = if on { crate::fonts::semibold(t.font_label) } else { egui::FontId::proportional(t.font_label) };
+        let font = if on { crate::fonts::semibold(font_size) } else { egui::FontId::proportional(font_size) };
         let galley = ui.painter().layout_no_wrap((*option).to_string(), font.clone(), t.form_ink);
         let icon_width = if icons.get(index).is_some() { t.space_14 + t.space_6 } else { 0.0 };
         let text_rect = egui::Rect::from_min_size(

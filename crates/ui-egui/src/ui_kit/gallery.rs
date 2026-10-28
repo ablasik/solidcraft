@@ -118,6 +118,51 @@ const ELEMENTS: &[Element] = &[
             button(ui, "Reset to default", Button::Normal);
         });
     }),
+    element!("tree_row_rect", |ui, _| {
+        for (index, row) in [
+            Row { label: "Objects", ..Default::default() },
+            Row { label: "Output", subtitle: "1920 × 1080 · PNG", ..Default::default() },
+            Row { compact: true, label: "Environment", subtitle: "Studio Soft 2K", ..Default::default() },
+        ]
+        .iter()
+        .enumerate()
+        {
+            let rect = tree_row_rect(ui, row);
+            assert_eq!(tree_row(ui, ui.id().with(("tree_geometry", index)), row).rect, Some(rect));
+        }
+    }),
+    element!("tree_row", |ui, _| {
+        let actions = [TreeAction { icon: "plus", hover_only: false, label: "Add", reason: None, target: "gallery:tree:add" }];
+        tree_row(ui, ui.id().with("tree_plain"), &Row { label: "Objects", fold: Some(true), actions: &actions, ..Default::default() });
+        tree_row(ui, ui.id().with("tree_subtitle"), &Row { label: "Output", subtitle: "1920 × 1080 · PNG", selected: true, ..Default::default() });
+    }),
+    element!("tree_header", |ui, state| {
+        tree_header(ui, "Scene", &mut state.selected, &["By object", "By look"], "Search objects");
+        tree_row(
+            ui,
+            ui.id().with("compact_environment"),
+            &Row { compact: true, label: "Environment", icon: "environment_map", subtitle: "Studio Soft 2K", ..Default::default() },
+        );
+        tree_row(
+            ui,
+            ui.id().with("compact_object"),
+            &Row {
+                compact: true,
+                depth: 1,
+                label: "Boss",
+                swatch: Some(Tokens::get().accent),
+                eye: Some(true),
+                secondary: "Anodized Blue",
+                selected: true,
+                ..Default::default()
+            },
+        );
+    }),
+    element!("tree_row_disabled_actions", |ui, _| {
+        let actions =
+            [TreeAction { icon: "lookat", hover_only: true, label: "Solo", reason: Some("Not available yet"), target: "gallery:tree:solo" }];
+        tree_row(ui, ui.id().with("tree_actions"), &Row { label: "Light", actions: &actions, ..Default::default() });
+    }),
     element!("settings_form", |ui, state| {
         settings_form(ui, Tokens::get().form_label_width, |ui| {
             row(ui, "Sample", |ui| {
@@ -1524,6 +1569,7 @@ fn gallery_covers_every_inline_element() {
         "sphere.rs",
         "status.rs",
         "table.rs",
+        "tree.rs",
     ] {
         let source = std::fs::read_to_string(root.join(file)).unwrap();
         let ast = syn::parse_file(&source).unwrap();
@@ -2110,4 +2156,21 @@ fn material_widgets_board_in_both_themes() {
         }
     }
     crate::theme::set_dark(previous);
+}
+
+#[test]
+fn tree_icon_actions_keep_repeated_light_rows_independent() {
+    let ctx = crate::fonts::test_context();
+    let mut ids = std::collections::HashSet::new();
+    super::test_support::frame(&ctx, vec![], |ui| {
+        for index in 0..3 {
+            let target = format!("light:{index}:visibility");
+            let actions = [TreeAction { icon: "eye", hover_only: false, label: "Hide", reason: Some("Not available yet"), target: &target }];
+            let row = tree_row(ui, ui.id().with(index), &Row { compact: true, label: "Directional", actions: &actions, ..Default::default() });
+            for action in row.actions {
+                assert!(ids.insert(action.id), "each light action must have its own widget identity");
+            }
+        }
+    });
+    assert_eq!(ids.len(), 3);
 }
