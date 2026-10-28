@@ -5408,6 +5408,13 @@ pub(crate) fn refresh_layout(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(rect) = app.viewport.rect {
         let docks = crate::shell::covered_rects(app);
         let mut content = crate::shell::content_rect(app, rect);
+        if crate::render_ui::focused(app) {
+            // Focus releases dock reservations while keeping controls below the stage bar.
+            content = rect;
+            for card in &app.shell.cards {
+                content.min.y = (card.bottom() + Tokens::get().space_8).clamp(content.top(), content.bottom());
+            }
+        }
         // The full-height Assistant reserves control space, while rendering and picking
         // keep the original viewport projection. Ordinary feature dialogs do not move controls.
         if app.ui.layout == crate::shell::LayoutMode::Floating

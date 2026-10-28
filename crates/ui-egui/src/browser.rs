@@ -1067,15 +1067,37 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     let bounds = crate::shell::panel_bounds(app, ui.available_rect_before_wrap());
+    let narrow = bounds.width() < 800.0;
+    crate::shell::register_panel(app, "render:browser:show", None, None);
+    if narrow && !app.shell.render_browser_open {
+        app.shell.browser = None;
+        crate::shell::register_panel(app, "render:browser", None, None);
+        crate::render_ui::dock_chip(app, ui, "render:browser:show", "ui.browser_title", "view.render_browser", json!({"open":true}));
+        return;
+    }
     let mut side = app.preferences.render_browser_side.clone();
     let mut width = app.preferences.render_browser_width;
     let title = app.tr("ui.browser_title").to_string();
     let content = crate::ui_kit::Panel::workspace(
         ui,
-        crate::ui_kit::WorkspaceOptions { id: "render:browser", title: &title, icon: "list", bounds, fill_height: true },
+        crate::ui_kit::WorkspaceOptions {
+            id: "render:browser",
+            title: &title,
+            icon: "list",
+            bounds,
+            fill_height: true,
+            compact: crate::render_ui::compact(app, bounds.width()),
+        },
         &mut side,
         &mut width,
         |ui| {
+            if narrow {
+                let hide = crate::ui_kit::button(ui, app.tr("render.fold_browser"), crate::ui_kit::Button::Normal);
+                crate::scenario::publish_target("render:browser:hide", hide.rect);
+                if hide.clicked() {
+                    let _ = app.run("view.render_browser", json!({"open":false}));
+                }
+            }
             browser_contents(app, ui, acts, true);
         },
     );
@@ -1091,7 +1113,7 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
         app,
         "render:browser",
         rect,
-        Some(if side == "left" { crate::ui_kit::Edge::Left } else { crate::ui_kit::Edge::Right }),
+        if narrow { None } else { Some(if side == "left" { crate::ui_kit::Edge::Left } else { crate::ui_kit::Edge::Right }) },
     );
     if let Some(rect) = rect {
         crate::scenario::publish_rect("browser:card", rect);

@@ -4,7 +4,12 @@ use solidcraft_render::{Camera, StandardView};
 
 use super::CommandSpec;
 use crate::params::{bad, num, req_vec2, req_vec3, vec3};
+use crate::schema::view_navigation::{RenderBrowser, RenderFocus};
+use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Sel, Session};
+
+const FOCUS_CONTRACT: TypedContract<RenderFocus> = TypedContract::new();
+const BROWSER_CONTRACT: TypedContract<RenderBrowser> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
 CommandSpec::new("view.fit", "Fit", fit)
@@ -23,6 +28,14 @@ CommandSpec::new("view.ground_shadow", "Ground shadow", ground_shadow)
     .icon("style").noundo().doc_only().params("on?: bool (omitted: toggle) → on?; show the ground shadow"),
 CommandSpec::new("view.navigation_bar", "Navigation bar", navigation_bar)
     .icon("pan").noundo().doc_only().params("visible?: bool (omitted: toggle) → visible?; show the navigation bar (window setting)"),
+CommandSpec::new("view.render_focus", "Render Focus View", crate::checked!("view.render_focus", render_focus))
+    .icon("render_scene").noundo().doc_only()
+    .contract(&FOCUS_CONTRACT).output(output_schema_for::<RenderFocus>)
+    .params("on: bool → {on}; per-window UI state, never saved in the design; headless validation only"),
+CommandSpec::new("view.render_browser", "Render Browser", crate::checked!("view.render_browser", render_browser))
+    .icon("list").noundo().doc_only()
+    .contract(&BROWSER_CONTRACT).output(output_schema_for::<RenderBrowser>)
+    .params("open: bool → {open}; narrow-window Browser card; per-window UI state, headless validation only"),
 CommandSpec::new("view.render_stage", "Render Stage", render_stage)
     .icon("render_scene").noundo().doc_only()
     .params("stage: look|light|frame|output → {stage}; per-document UI state, never edits or evaluates the design; headless validation only"),
@@ -213,6 +226,16 @@ fn ground_shadow(_s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn navigation_bar(_s: &mut Session, p: &Value) -> Result<Value> {
     view_toggle(p, "view.navigation_bar", "visible")
+}
+
+fn render_focus(_s: &mut Session, p: &Value) -> Result<Value> {
+    let request: RenderFocus = serde_json::from_value(p.clone()).map_err(|e| bad("view.render_focus", e.to_string()))?;
+    Ok(json!(request))
+}
+
+fn render_browser(_s: &mut Session, p: &Value) -> Result<Value> {
+    let request: RenderBrowser = serde_json::from_value(p.clone()).map_err(|e| bad("view.render_browser", e.to_string()))?;
+    Ok(json!(request))
 }
 
 fn render_stage(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -883,6 +906,38 @@ fn workspace_layout_validates_modes_without_mutating_the_design() {
     }
     assert_eq!(session.doc.to_json(), before);
     assert!(session.undo.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn render_workspace_focus_and_browser_validate_without_side_effects() {
+    let mut session = Session { camera: Some(Camera::default()), ..Default::default() };
+    let camera = session.camera;
+    let document = session.doc.clone();
+    let before = (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty());
+    for (id, field) in [("view.render_focus", "on"), ("view.render_browser", "open")] {
+        let command = crate::find_command(id).unwrap();
+        assert!(command.contract.is_some() && command.output.is_some());
+        for on in [true, false] {
+            let request = json!({field:on});
+            assert_eq!(session.execute(id, &request).unwrap(), request);
+        }
+        for params in [
+            Value::Null,
+            json!([]),
+            json!({}),
+            json!({field:null}),
+            json!({field:"true"}),
+            json!({field:1e300}),
+            json!({field:[]}),
+            json!({field:true,"unknown":false}),
+        ] {
+            assert!(session.execute(id, &params).is_err(), "{id}: {params}");
+        }
+    }
+    assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
+    assert_eq!(session.camera, camera);
+    assert_eq!(before, (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty()));
 }
 
 #[cfg(test)]

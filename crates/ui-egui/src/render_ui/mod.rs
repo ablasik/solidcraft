@@ -7,8 +7,23 @@ use crate::{
 use egui::{Rect, vec2};
 
 pub(crate) fn reset_shell(app: &mut SolveApp) {
-    for id in ["render:inspector", "render:browser", "render:shots_strip", "render:shots:show"] {
-        crate::shell::register_panel(app, id, None, None);
+    app.shell.workspace_panels.retain(|id, _| !id.starts_with("render:"));
+    app.shell.browser = None;
+}
+
+pub(crate) fn focused(app: &SolveApp) -> bool {
+    crate::render_workspace::active(app) && app.shell.render_focus
+}
+
+pub(crate) fn compact(app: &SolveApp, width: f32) -> bool {
+    width < 1100.0 || app.ui.layout == crate::shell::LayoutMode::Docked
+}
+
+pub(crate) fn focus_shortcut(app: &mut SolveApp, ui: &mut egui::Ui) {
+    if crate::render_workspace::active(app) && !ui.ctx().text_edit_focused() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
+    {
+        ui.ctx().memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+        app.start("view.render_focus");
     }
 }
 
@@ -154,13 +169,40 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
+    crate::shell::register_panel(app, "render:focus:exit", None, None);
+    if focused(app) {
+        dock_chip(app, ui, "render:focus:exit", "render.exit_focus", "view.render_focus", serde_json::json!({"on":false}));
+    }
     let Some(viewport) = app.viewport.rect else { return };
     let free = canvas(app, viewport);
     if !free.is_positive() {
         return;
     }
     crate::navigation_bar_view::show(app, ui, viewport);
-    shots_pill(app, ui, free);
+    if !focused(app) {
+        shots_pill(app, ui, free);
+    }
+}
+
+/// Shared kit chip at the Browser's remembered side, below the stage bar.
+pub(crate) fn dock_chip(app: &mut SolveApp, ui: &mut egui::Ui, id: &'static str, label: &str, command: &str, params: serde_json::Value) {
+    let bounds = crate::shell::panel_bounds(app, ui.max_rect());
+    let t = Tokens::get();
+    if bounds.width() < t.control_height || bounds.height() < t.control_height {
+        return;
+    }
+    let left = app.preferences.render_browser_side == "left";
+    let position = if left { bounds.left_top() + vec2(t.space_8, 0.0) } else { bounds.right_top() - vec2(t.space_8, 0.0) };
+    let ctx = ui.ctx().clone();
+    let chip =
+        Container::navigation_card(&ctx, egui::Id::new(id), position, if left { egui::Align2::LEFT_TOP } else { egui::Align2::RIGHT_TOP }, |ui| {
+            let response = ui_kit::choice_chip(ui, id, app.tr(label), false);
+            crate::scenario::publish_target(id, response.rect);
+            if response.clicked() {
+                let _ = app.run(command, params);
+            }
+        });
+    crate::shell::register_panel(app, id, Some(chip.response.rect), None);
 }
 
 fn current_pick_mode(app: &SolveApp) -> &'static str {
@@ -199,7 +241,7 @@ fn shots_pill(app: &mut SolveApp, ui: &mut egui::Ui, free: Rect) {
 /// Existing saved-shot and job actions inside the shared floating bottom-strip host.
 pub(crate) fn shots_strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::shell::register_panel(app, "render:shots_strip", None, None);
-    if !app.preferences.render_shots_strip {
+    if focused(app) || !app.preferences.render_shots_strip {
         return;
     }
     let available = ui.available_rect_before_wrap();

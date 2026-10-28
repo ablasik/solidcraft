@@ -128,6 +128,18 @@ impl Layout {
         } else {
             Rect::NOTHING
         };
+        if fit_in_content {
+            // A focus-exit or folded-dock chip may occupy the compass's corner.
+            for _ in 0..obstacles.len() {
+                let bottom = obstacles.iter().filter(|dock| axis_view.intersect(**dock).is_positive()).map(Rect::bottom).max_by(f32::total_cmp);
+                let Some(bottom) = bottom else { break };
+                axis_view = if available.bottom() - bottom >= cube_size {
+                    Rect::from_min_size(pos2(axis_view.left(), bottom), vec2(cube_size, cube_size))
+                } else {
+                    Rect::NOTHING
+                };
+            }
+        }
         // On tiny viewports keep the bottom controls usable rather than overlapping them.
         // This decision depends only on viewport size, never on an overlay.
         if axis_view.intersect(navigation).is_positive() {

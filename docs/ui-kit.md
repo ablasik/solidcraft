@@ -528,6 +528,10 @@ closed/opening/open/closing transition in both themes with
 
 ### Compact workspace composition
 
+`Panel::workspace` accepts `WorkspaceOptions::compact` to display the minimum
+dock width while retaining the remembered width. Compact widths do not resize
+the saved preference; returning to a wider floating layout restores it.
+
 `Container::gap` and `Container::frame` supply the layout policy for every adaptive
 surface. Compact has no gaps or shadows between edge-bound panels; floating uses
 the shared card spacing and frame. `Panel` bounds draggable compact sheets to the workspace. The shared frame rounds

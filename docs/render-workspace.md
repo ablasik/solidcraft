@@ -42,6 +42,20 @@ remains. The Shots strip's independent `view.shots_strip` preference is unchange
 The current model/library Browser can reveal model bodies for Look; scene-specific
 Lights, Shots and Output expansion awaits the scene Browser change.
 
+`view.render_focus {on: true}` hides the Browser, Inspector and Shots strip and
+releases their canvas reservations. Tab toggles focus while Render is active and
+no text field has focus; the **Exit focus** chip sits at the Browser's remembered
+side below the stage bar. The workspace card, stage bar, compass and view bar
+remain available. Focus belongs to the window, is never saved in a design or
+preferences, and retains the docks' sides, widths and folded state.
+
+Below 1100 pt, or with `view.layout {mode: compact}`, the docks use their shared
+minimum width without overwriting the remembered width. Below 800 pt the Browser
+folds into a chip. Its floating card opens through
+`view.render_browser {open: true}` and closes through **Fold Browser**; it shields
+navigation beneath the card without reserving a canvas column. Neither command
+edits or evaluates the design, moves the camera or creates an undo step.
+
 ## Image methods and controls
 
 **CPU raster** produces the existing preview PNG with approximate transparency.

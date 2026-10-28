@@ -2877,7 +2877,20 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
         let mut h = Harness::new();
         enter(&mut h.app, true).unwrap();
         h.app.ui.layout = mode;
-        for (width, height) in [(1440, 900), (1100, 700), (800, 600), (640, 480), (320, 240), (240, 160), (120, 80), (32, 32), (1, 1)] {
+        for (width, height) in [
+            (1440, 900),
+            (1400, 900),
+            (1100, 700),
+            (900, 700),
+            (800, 600),
+            (700, 600),
+            (640, 480),
+            (320, 240),
+            (240, 160),
+            (120, 80),
+            (32, 32),
+            (1, 1),
+        ] {
             h.call("ui.resize", json!({"width":width,"height":height}));
             for stage in Stage::ALL {
                 h.app.run("view.render_stage", json!({"stage":stage.key()})).unwrap();
@@ -2906,13 +2919,23 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
                     assert!((browser.top() - inspector.top()).abs() < 1.0);
                     assert!((browser.bottom() - inspector.bottom()).abs() < 1.0);
                     assert!(!browser.intersect(*inspector).is_positive());
-                    if width >= 1100 {
-                        assert_eq!(browser.width(), 266.0);
-                        assert_eq!(inspector.width(), 305.0);
+                    if width >= 800 {
+                        let compact = crate::render_ui::compact(&h.app, width as f32);
+                        assert_eq!(browser.width(), if compact { crate::frame::DIALOG_MIN_W } else { 266.0 });
+                        assert_eq!(inspector.width(), if compact { crate::frame::DIALOG_MIN_W } else { 305.0 });
                         assert_eq!(browser.top() - bar.bottom(), 8.0);
                         let (strip, _) = h.app.shell.workspace_panels.get("render:shots_strip").unwrap();
                         assert_eq!(strip.top() - browser.bottom(), 8.0);
                         assert_eq!(strip.height(), 48.0);
+                    }
+                }
+                if (640..800).contains(&width) {
+                    assert!(crate::scenario::rect_of("render:browser:show").is_some());
+                    assert!(!h.app.shell.workspace_panels.contains_key("render:browser"));
+                }
+                if width >= 700 {
+                    for dock in &docks {
+                        assert!(!dock.x_range().contains(h.app.viewport.rect.unwrap().center().x), "{width}: {dock:?}");
                     }
                 }
                 for dock in docks {
@@ -2923,6 +2946,279 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
                 }
             }
         }
+    }
+}
+
+#[test]
+fn render_workspace_focus_restores_docks_without_design_history_or_camera_changes() {
+    for (side, folded, shots) in [("left", false, true), ("right", true, false)] {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        enter(&mut h.app, true).unwrap();
+        h.app.preferences.render_browser_side = side.into();
+        h.app.preferences.render_inspector_side = if side == "left" { "right" } else { "left" }.into();
+        h.app.preferences.render_browser_width = 350.0;
+        h.app.preferences.render_inspector_width = 390.0;
+        h.app.preferences.render_shots_strip = shots;
+        h.app.tree.panel_collapsed = folded;
+        h.app.shell.render_browser_open = folded;
+        h.frames(3);
+        let dock_preferences = h.app.prefs();
+        let docks = h.app.shell.workspace_panels.clone();
+        let camera = (h.app.cam, h.app.session.camera);
+        let document = h.app.session.doc.clone();
+        let state = (h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty());
+        let before = h.app.viewport.layout.as_ref().unwrap().content;
+        h.app.run("view.render_focus", json!({"on":true})).unwrap();
+        h.frames(3);
+        assert!(crate::render_ui::focused(&h.app));
+        crate::shell::register_panel(&mut h.app, "render:stage_panel", Some(before), Some(crate::ui_kit::Edge::Left));
+        assert!(!h.app.shell.workspace_panels.contains_key("render:stage_panel"));
+        for id in ["render:browser", "render:inspector", "render:shots_strip", "render:shots:show"] {
+            assert!(!h.app.shell.workspace_panels.contains_key(id));
+            assert!(crate::scenario::rect_of(id).is_none());
+        }
+        for id in ["render:focus:exit", "render:stage_bar", "ribbon:workspace"] {
+            assert!(crate::scenario::rect_of(id).is_some(), "{id}");
+        }
+        let layout = h.app.viewport.layout.as_ref().unwrap();
+        assert!(layout.content.width() > before.width());
+        assert!(layout.axis_view.is_positive() && layout.navigation.is_positive());
+        assert_eq!(h.app.prefs(), dock_preferences);
+        h.step(&json!({"click":{"handle":"render:focus:exit"}})).unwrap();
+        h.frames(3);
+        assert!(!h.app.shell.render_focus);
+        assert_eq!(h.app.shell.workspace_panels.len(), docks.len());
+        for (id, (rect, edge)) in docks {
+            let (restored_rect, restored_edge) = h.app.shell.workspace_panels.get(id).unwrap();
+            assert_eq!(*restored_rect, rect);
+            assert_eq!(restored_edge.as_ref().map(std::mem::discriminant), edge.as_ref().map(std::mem::discriminant));
+        }
+        assert_eq!(h.app.prefs(), dock_preferences);
+        assert_eq!(h.app.tree.panel_collapsed, folded);
+        assert_eq!(h.app.shell.render_browser_open, folded);
+        assert_eq!((h.app.cam, h.app.session.camera), camera);
+        assert!(Arc::ptr_eq(&h.app.session.doc, &document));
+        assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()), state);
+        assert!(!Harness::new().app.shell.render_focus);
+    }
+}
+
+#[test]
+fn render_workspace_focus_tab_only_toggles_render_without_text_focus() {
+    let mut h = Harness::new();
+    h.step(&json!({"key":"Tab"})).unwrap();
+    assert!(!h.app.shell.render_focus);
+    enter(&mut h.app, true).unwrap();
+    h.frames(3);
+    h.ctx.memory_mut(|memory| {
+        if let Some(id) = memory.focused() {
+            memory.surrender_focus(id);
+        }
+    });
+    h.step(&json!({"key":"Tab"})).unwrap();
+    assert!(h.app.shell.render_focus);
+    h.step(&json!({"key":"Tab"})).unwrap();
+    assert!(!h.app.shell.render_focus);
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"render:setup-name"}})).unwrap();
+    assert!(h.ctx.egui_wants_keyboard_input());
+    h.step(&json!({"key":"Tab"})).unwrap();
+    assert!(!h.app.shell.render_focus);
+}
+
+#[test]
+fn render_workspace_compact_browser_card_and_focus_preserve_remembered_widths() {
+    for side in ["left", "right"] {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        enter(&mut h.app, true).unwrap();
+        h.app.preferences.render_browser_side = side.into();
+        h.app.preferences.render_inspector_side = if side == "left" { "right" } else { "left" }.into();
+        h.app.preferences.render_browser_width = 320.0;
+        h.app.preferences.render_inspector_width = 360.0;
+        h.frames(3);
+        for width in [1100, 900, 700] {
+            h.call("ui.resize", json!({"width":width,"height":700}));
+            h.frames(3);
+            if width == 700 {
+                h.step(&json!({"click":{"handle":"render:browser:show"}})).unwrap();
+                h.frames(3);
+                let (browser, reservation) = h.app.shell.workspace_panels["render:browser"];
+                let (inspector, _) = h.app.shell.workspace_panels["render:inspector"];
+                assert!(reservation.is_none(), "narrow Browser overlays the canvas");
+                assert!(!browser.intersect(inspector).is_positive());
+                h.app.run("view.render_focus", json!({"on":true})).unwrap();
+                h.frames(3);
+                h.app.run("view.render_focus", json!({"on":false})).unwrap();
+                h.frames(3);
+                assert!(h.app.shell.render_browser_open);
+                assert!(h.app.shell.workspace_panels.contains_key("render:browser"));
+                h.step(&json!({"click":{"handle":"render:browser:hide"}})).unwrap();
+                h.frames(3);
+                assert!(!h.app.shell.workspace_panels.contains_key("render:browser"));
+            }
+            assert_eq!(h.app.preferences.render_browser_width, 320.0);
+            assert_eq!(h.app.preferences.render_inspector_width, 360.0);
+        }
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        h.frames(3);
+        assert_eq!(h.app.shell.workspace_panels["render:browser"].0.width(), 320.0);
+        assert_eq!(h.app.shell.workspace_panels["render:inspector"].0.width(), 360.0);
+    }
+}
+
+#[test]
+fn render_workspace_focus_messages_have_five_complete_locales() {
+    let keys = [
+        "cmd.view.render_focus",
+        "cmd.view.render_browser",
+        "render.exit_focus",
+        "render.fold_browser",
+        "render.spot_cone",
+        "render.emitted_axis",
+        "render.inner_half_angle",
+        "render.outer_half_angle",
+        "render.layer_off_suffix",
+        "render.tone_reinhard",
+        "render.tone_aces_fitted",
+        "render.size_hd",
+        "render.size_full_hd",
+        "render.size_4k_uhd",
+        "render.result_actual_size",
+        "render.property_unknown",
+        "render.property_fallback",
+        "render.property_source",
+        "render.property_qualifier",
+        "render.property_conditions",
+        "render.property_uncertainty",
+        "render.error_setup_panicked",
+        "render.error_setup_worker",
+        "render.error_setup_stopped",
+        "render.error_gpu_samples",
+        "render.error_preview_device",
+        "render.error_finish_operation",
+        "render.error_no_completed_image",
+        "render.error_provisional_identity",
+        "render.error_checkpoint_dimensions",
+        "render.error_display_dimensions",
+        "render.error_display_fit",
+        "render.error_display_width",
+        "render.error_display_height",
+        "render.error_image_profile",
+        "render.error_decode_budget",
+        "render.error_image_dimensions",
+        "render.error_upload_slot",
+        "render.error_export_document",
+        "render.error_geometry_size",
+        "render.error_vertex_envelope",
+        "render.error_body_bound",
+        "render.error_triangle_count",
+        "render.error_triangle_bound",
+        "render.error_face_cap",
+        "render.error_opacity",
+        "render.error_duplicate_face",
+        "render.error_pbr_opacity",
+        "render.error_vertex_allocation",
+        "render.error_product_triangle",
+        "render.error_surface_normals",
+        "render.error_vertex_packing",
+        "render.error_gpu_preview",
+        "render.error_fixed_preview",
+        "render.error_finish_gesture",
+        "render.error_no_scene",
+        "render.error_no_geometry",
+        "render.error_visible_solid",
+        "render.error_area_samples",
+        "render.error_quality_method",
+        "render.error_quality_projection",
+        "render.error_denoise_setting",
+        "render.error_quality_bounds",
+        "render.error_library_reply",
+        "render.error_source_preview",
+        "render.error_glass_recipe",
+        "render.error_physical_glass",
+        "render.error_scene_bodies",
+        "render.error_scene_body_limit",
+        "render.error_scene_identity",
+        "render.error_material_binding",
+        "render.error_surface_reply",
+        "render.error_binding_allocation",
+        "render.error_job_identity",
+        "render.error_regrade_identity",
+        "render.error_job_action",
+        "render.error_interactive_command",
+    ];
+    for (language, source) in [
+        ("en", include_str!(concat!(env!("OUT_DIR"), "/locales/en.json"))),
+        ("ja", include_str!(concat!(env!("OUT_DIR"), "/locales/ja.json"))),
+        ("zh", include_str!(concat!(env!("OUT_DIR"), "/locales/zh.json"))),
+        ("de", include_str!(concat!(env!("OUT_DIR"), "/locales/de.json"))),
+        ("ko", include_str!(concat!(env!("OUT_DIR"), "/locales/ko.json"))),
+    ] {
+        let translated: std::collections::BTreeMap<String, String> = serde_json::from_str(source).unwrap();
+        let locale = crate::i18n::Locale::for_language(language);
+        for key in keys {
+            let value = translated.get(key).unwrap_or_else(|| panic!("{language}: missing {key}"));
+            assert!(!value.is_empty());
+            assert_eq!(locale.text(key), value);
+        }
+        let sentence = locale.format("render.property_source", &[("id", "A"), ("locator", "B")]);
+        assert!(sentence.contains('A') && sentence.contains('B') && !sentence.contains('{'));
+    }
+}
+
+#[test]
+fn render_workspace_chrome_uses_tokens_instead_of_literal_colours() {
+    use syn::visit::{self, Visit};
+    #[derive(Default)]
+    struct Colours(Vec<String>);
+    impl<'ast> Visit<'ast> for Colours {
+        fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+            let names: Vec<_> = expr.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            if names.iter().any(|s| s == "Color32") && names.last().is_some_and(|s| matches!(s.as_str(), "WHITE" | "BLACK" | "GRAY")) {
+                self.0.push(names.join("::"));
+            }
+            visit::visit_expr_path(self, expr);
+        }
+        fn visit_expr_call(&mut self, expr: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = expr.func.as_ref() {
+                let names: Vec<_> = path.path.segments.iter().map(|s| s.ident.to_string()).collect();
+                if names.iter().any(|s| s == "Color32")
+                    && names.last().is_some_and(|s| s.starts_with("from_rgb") || s == "from_gray")
+                    && expr.args.iter().all(|arg| matches!(arg, syn::Expr::Lit(_)))
+                {
+                    self.0.push(names.join("::"));
+                }
+            }
+            visit::visit_expr_call(self, expr);
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|path| {
+            let name = path.file_name().unwrap().to_string_lossy();
+            name.starts_with("render_workspace") && name.ends_with(".rs") && !name.contains("tests")
+        })
+        .collect();
+    let mut folders = vec![root.join("render_ui")];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    for path in files {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let mut colours = Colours::default();
+        colours.visit_file(&syn::parse_file(&source).unwrap());
+        assert!(colours.0.is_empty(), "{}: {:?}", path.display(), colours.0);
     }
 }
 
@@ -3153,10 +3449,18 @@ fn render_workspace_card_grips_swap_sides_and_resize_without_design_edits() {
         assert_eq!(h.app.preferences.render_browser_side, "right");
         assert!(h.app.shell.workspace_panels["render:inspector"].0.right() < h.app.shell.workspace_panels["render:browser"].0.left());
         let width = h.app.preferences.render_inspector_width;
+        let card_width = h.app.shell.workspace_panels["render:inspector"].0.width();
         let rail = crate::scenario::handle_at("render:inspector:resize").unwrap();
         h.step(&json!({"drag":[[rail.x,rail.y],[rail.x+50.0,rail.y]],"steps":8})).unwrap();
         h.frames(3);
-        assert!(h.app.preferences.render_inspector_width > width);
+        // A compact dock keeps its minimum width and leaves the remembered width alone.
+        if layout == crate::shell::LayoutMode::Docked {
+            assert_eq!(h.app.preferences.render_inspector_width, width);
+            assert_eq!(h.app.shell.workspace_panels["render:inspector"].0.width(), card_width);
+        } else {
+            assert!(h.app.preferences.render_inspector_width > width);
+            assert!(h.app.shell.workspace_panels["render:inspector"].0.width() > card_width);
+        }
         h.step(&json!({"click":{"handle":"render:browser-library"}})).unwrap();
         h.frames(3);
         h.step(&json!({"drag":[{"handle":"render:browser:grip"},[100.0,350.0]],"steps":8})).unwrap();
