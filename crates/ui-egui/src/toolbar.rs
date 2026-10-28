@@ -2,7 +2,7 @@
 
 use crate::fonts::RichTextExt as _;
 use crate::icons::glyphs::pin_icon;
-use crate::ui_kit::{Container, Edge, Surface};
+use crate::ui_kit::{self, Container, Edge, Surface};
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -1423,8 +1423,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if let Some(d) = resp.dnd_hover_payload::<ToolbarDrag>()
                     && d.id != c.id
                 {
-                    painter
-                        .line_segment([pos2(br.left() - 1.0, br.top() + 2.0), pos2(br.left() - 1.0, br.bottom() - 2.0)], Stroke::new(2.0, t.accent));
+                    ui_kit::insertion_marker(&painter, br.left() - 1.0, br.top() + 2.0, br.bottom() - 2.0);
                 }
                 if let Some(d) = resp.dnd_release_payload::<ToolbarDrag>()
                     && d.id != c.id
@@ -1604,7 +1603,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 })
             });
             if !over_button && ui.rect_contains_pointer(panel_rect) && egui::DragAndDrop::payload::<ToolbarDrag>(ui.ctx()).is_some() {
-                painter.line_segment([pos2(px + width - 4.0, top + 4.0), pos2(px + width - 4.0, top + 38.0)], Stroke::new(2.0, t.accent));
+                ui_kit::insertion_marker(&painter, px + width - 4.0, top + 4.0, top + 38.0);
                 if ui.input(|input| input.pointer.any_released())
                     && let Some(d) = egui::DragAndDrop::take_payload::<ToolbarDrag>(ui.ctx())
                 {
@@ -2062,12 +2061,7 @@ fn sketch_menu_rows(
     }
 }
 
-/// A command being dragged: a toolbar button, or a row of a panel drop-down (`from_menu`).
-#[derive(Clone, Copy, Debug)]
-struct ToolbarDrag {
-    id: &'static str,
-    from_menu: bool,
-}
+type ToolbarDrag = ui_kit::ReorderPayload<&'static str>;
 
 /// The dragged command's icon under the pointer, crossed out when releasing removes it.
 fn drag_ghost(app: &SolveApp, ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {

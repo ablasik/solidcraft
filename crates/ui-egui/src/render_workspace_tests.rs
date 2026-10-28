@@ -3415,3 +3415,40 @@ fn render_workspace_component_filter_keeps_nested_repeated_occurrences_distinct(
         assert_eq!(candidate(&h.app, &[hit]).unwrap().1, Sel::Occurrence { path });
     }
 }
+
+#[test]
+fn navigation_bar_render_canvases_filter_slots_and_keep_product_fit() {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":20,"height":5})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    h.app.preferences.look_at_anim = false;
+    h.settle();
+    assert_eq!(crate::navigation_bar::canvas_caps(&h.app), crate::navigation::NavCaps::RENDER);
+    // The product preview picks (#6426), so the slots that need a pick are on the bar there too.
+    for slot in ["orbit", "pan", "zoom", "fit", "look_at", "home", "visual_style", "display"] {
+        assert!(crate::scenario::handle_at(&format!("nav:slot:{slot}")).is_some(), "{slot}");
+    }
+    h.app.cam.pan(100.0, 50.0, 600.0);
+    let panned = h.app.cam;
+    h.step(&json!({"click":{"handle":"nav:slot:fit"}})).unwrap();
+    assert_ne!(h.app.cam.target, panned.target, "Fit recentres the product");
+    assert_product_fits_canvas(&h.app);
+    let mut iso = h.app.cam;
+    iso.set_view(solidcraft_engine::render::StandardView::Iso);
+    h.app.cam.orbit(0.4, 0.2);
+    h.step(&json!({"click":{"handle":"nav:slot:home"}})).unwrap();
+    assert_eq!((h.app.cam.yaw, h.app.cam.pitch), (iso.yaw, iso.pitch), "Home returns to the isometric view");
+    assert_product_fits_canvas(&h.app);
+
+    let job = completed_preview(&mut h, [20, 40, 60]);
+    h.app.render_workspace.view.job = Some(job);
+    h.app.render_workspace.view.result = true;
+    h.settle();
+    assert_eq!(crate::navigation_bar::canvas_caps(&h.app), crate::navigation::NavCaps { orbit: false, pick: false });
+    for slot in ["orbit", "look_at", "visual_style"] {
+        assert!(crate::scenario::handle_at(&format!("nav:slot:{slot}")).is_none(), "{slot}");
+    }
+    for slot in ["pan", "zoom", "fit", "home", "display"] {
+        assert!(crate::scenario::handle_at(&format!("nav:slot:{slot}")).is_some(), "{slot}");
+    }
+}

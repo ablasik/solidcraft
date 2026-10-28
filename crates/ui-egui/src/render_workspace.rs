@@ -1321,7 +1321,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     app.viewport.rect = Some(rect);
-    crate::viewport::refresh_layout(app, ui.ctx().pixels_per_point());
+    crate::viewport::refresh_layout(app, ui.ctx());
     let size = [info.width, info.height];
     let scale = app.render_workspace.view.result_scale;
     if scale != ResultScale::Free {
@@ -1370,6 +1370,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
     );
     painter.rect_filled(badge, t.control_radius, t.panel);
     painter.galley(badge.min + egui::vec2(t.space_8, t.space_8 * 0.5), label, t.text);
+    crate::navigation_bar_view::show(app, ui, rect);
 }
 
 impl State {
@@ -1643,7 +1644,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let rect = ui.max_rect();
     app.viewport.rect = Some(rect);
-    crate::viewport::refresh_layout(app, ui.ctx().pixels_per_point());
+    crate::viewport::refresh_layout(app, ui.ctx());
     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
     let input = crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
     let navigating = input.scroll != 0.0
@@ -1763,6 +1764,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         preview_error(app, ui, rect, &error);
     }
     crate::viewport::axis_view(app, ui, rect);
+    crate::navigation_bar_view::show(app, ui, rect);
 }
 
 pub(crate) fn interactive_command_info(app: &SolveApp, command: &solidcraft_engine::CommandSpec) -> solidcraft_engine::CommandInfo {

@@ -298,6 +298,7 @@ macro_rules! theme_keys {
 
 theme_keys! {
     one: [
+        nav_hover, nav_press, nav_dim, nav_viewport, nav_tip, nav_tip_ink, nav_tip_key_border, nav_field,
         file_dim, file_recovery_well, file_background, file_surface, file_border, file_image_tint, file_rail, file_rail_ink, file_rail_hover,
         file_primary, file_primary_ink, file_primary_border, file_recovery, file_recovery_ink, file_recovery_border,
         app_bar, toolbar, panel, panel_header, border, text, text_dim, accent, accent_soft, sketch_accent, error, warning,
@@ -820,6 +821,33 @@ impl Follow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn navigation_board_colours_are_themeable_and_roundtrip_on_both_bases() {
+        for (base, tokens, colours) in [
+            ("light", Tokens::light(), ["#e9edf2", "#dce2ea", "#8895a7", "#eef1f5", "#1b2430", "#ffffff", "#ffffff"]),
+            ("dark", Tokens::dark(), ["#3a4150", "#464e60", "#7c879a", "#262b35", "#eef1f5", "#1b2430", "#2f343e"]),
+        ] {
+            for (actual, hex) in
+                [tokens.nav_hover, tokens.nav_press, tokens.nav_dim, tokens.nav_viewport, tokens.nav_tip, tokens.nav_tip_ink, tokens.nav_field]
+                    .into_iter()
+                    .zip(colours)
+            {
+                assert_eq!(actual, parse_color(hex).unwrap(), "{base}: {hex}");
+            }
+            let old = from_value(&json!({"format":FORMAT,"name":"Old","base":base})).unwrap();
+            assert_eq!(resolve(&old), tokens, "old themes retain the base's new navigation roles");
+            assert_eq!(resolve(&from_value(&export("Board", old.base, &tokens)).unwrap()), tokens);
+            let custom = from_value(&json!({"format":FORMAT,"name":"Custom","base":base,
+                "colors":{"nav_press":"#123456","nav_tip":"#abcdef","nav_tip_key_border":"#01020380"}}))
+            .unwrap();
+            let custom_tokens = resolve(&custom);
+            assert_eq!(custom_tokens.nav_press, parse_color("#123456").unwrap());
+            assert_eq!(custom_tokens.nav_tip, parse_color("#abcdef").unwrap());
+            assert_eq!(custom_tokens.nav_tip_key_border, parse_color("#01020380").unwrap());
+            assert_eq!(resolve(&from_value(&export("Custom", custom.base, &custom_tokens)).unwrap()), custom_tokens);
+        }
+    }
 
     #[test]
     fn border_roles_roundtrip_on_either_base_and_preserve_legacy_defaults() {

@@ -3,6 +3,9 @@ use super::{actions::icon_button_at, metrics::*, text::paint_text};
 use crate::{scenario, theme::Tokens};
 use egui::{Ui, vec2};
 
+const WINDOW_PAGES_NARROW_WIDTH: f32 = 150.0;
+const WINDOW_PAGES_NARROW_AT: f32 = 700.0;
+
 /// Shared active-tab hover tint for the browser and collapsible panel chrome.
 pub(crate) fn panel_header_hover(painter: &egui::Painter, rect: egui::Rect) {
     let t = Tokens::get();
@@ -11,16 +14,23 @@ pub(crate) fn panel_header_hover(painter: &egui::Painter, rect: egui::Rect) {
 
 /// Feature title/icon/close band. Tokens: `form_header_height, form_icon_size, form_close_size, form_inset, font_label, text, dialog_rule, space_8/10; icon_button_at tokens`.
 pub(crate) fn header(ui: &mut Ui, icon: &str, title: &str, on_close: impl FnOnce()) {
-    header_impl(ui, icon, title, None, true, on_close);
+    header_impl(ui, (icon, None), title, None, true, on_close);
 }
 
 /// Optional fold action for managers which historically hide their inputs without losing edits.
 /// Tokens: header tokens and space_4; retains the dialog:collapse scenario handle.
 pub(crate) fn collapsible_header(ui: &mut Ui, icon: &str, title: &str, collapsed: &mut bool, on_close: impl FnOnce()) {
-    header_impl(ui, icon, title, Some(collapsed), true, on_close);
+    header_impl(ui, (icon, None), title, Some(collapsed), true, on_close);
 }
 
-fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool>, closeable: bool, on_close: impl FnOnce()) {
+fn header_impl(
+    ui: &mut Ui,
+    icon: (&str, Option<egui::Color32>),
+    title: &str,
+    collapsed: Option<&mut bool>,
+    closeable: bool,
+    on_close: impl FnOnce(),
+) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), header_height()), egui::Sense::hover());
     // Shared card chrome: 12 pt left inset, 19 pt icon, 8 pt gap and 26 pt close target.
@@ -28,7 +38,11 @@ fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool
         egui::pos2(rect.left() + t.space_12 + t.form_icon_size / 2.0, rect.center().y),
         vec2(t.form_icon_size, t.form_icon_size),
     );
-    crate::icons::paint_icon(ui.painter(), icon_rect, icon, 1.0);
+    if let Some(ink) = icon.1 {
+        crate::icons::paint_ink(ui.painter(), icon_rect, icon.0, ink);
+    } else {
+        crate::icons::paint_icon(ui.painter(), icon_rect, icon.0, 1.0);
+    }
     let close_rect = egui::Rect::from_center_size(
         egui::pos2((rect.right() - t.space_8 - t.form_close_size / 2.0).max(rect.left()), rect.center().y),
         vec2(t.form_close_size, t.form_close_size),
@@ -319,7 +333,7 @@ impl<'a> Panel<'a> {
                 let band = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), header_height()));
                 let grip = ui.interact(band, ui.id().with("workspace_grip"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
                 scenario::publish_target(&format!("{}:grip", options.id), grip.rect);
-                header_impl(ui, options.icon, options.title, None, false, || {});
+                header_impl(ui, (options.icon, None), options.title, None, false, || {});
                 scenario::publish_rect(&format!("{}:header", options.id), band);
                 if grip.dragged() {
                     let frame_nr = ui.ctx().cumulative_frame_nr();
@@ -687,7 +701,8 @@ pub struct Window<'a> {
     width: f32,
     body_padding: bool,
     page_rows: f32,
-    page_padding: egui::Vec2,
+    page_padding: egui::Margin,
+    page_chrome: bool,
     left_slot: bool,
 }
 
@@ -709,7 +724,8 @@ impl<'a> Window<'a> {
             width: Tokens::get().form_card_width * 1.5,
             body_padding: true,
             page_rows: 16.0,
-            page_padding: vec2(Tokens::get().space_16, Tokens::get().space_16),
+            page_padding: egui::Margin::same(Tokens::get().space_16 as i8),
+            page_chrome: false,
             left_slot: false,
         }
     }
@@ -764,10 +780,9 @@ impl<'a> Window<'a> {
     }
 
     /// Content inset for a page-based window, independent of its navigation rail.
-    pub(crate) fn page_padding(mut self, padding: egui::Vec2) -> Self {
-        if padding.is_finite() {
-            self.page_padding = padding.max(egui::Vec2::ZERO);
-        }
+    pub(crate) fn page_padding(mut self, padding: egui::Margin) -> Self {
+        self.page_padding =
+            egui::Margin { left: padding.left.max(0), right: padding.right.max(0), top: padding.top.max(0), bottom: padding.bottom.max(0) };
         self
     }
 
@@ -808,7 +823,7 @@ impl<'a> Window<'a> {
             let t = Tokens::get();
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut close = false;
-            header_impl(ui, self.icon, self.title, None, self.closeable, || close = true);
+            header_impl(ui, (self.icon, self.page_chrome.then_some(t.form_primary)), self.title, None, self.closeable, || close = true);
             egui::Frame::NONE.inner_margin(if self.body_padding { t.space_12 } else { 0.0 }).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = t.form_gap_y;
                 if self.body_padding {
@@ -879,6 +894,7 @@ impl<'a> Window<'a> {
         left: impl FnOnce(&mut Ui),
     ) -> (bool, super::Action) {
         self.body_padding = false;
+        self.page_chrome = true;
         let rows = self.page_rows;
         let padding = self.page_padding;
         self.show_with_left(ctx, true, |ui| page_list_sized(ui, selected, pages, state, rows, padding, header, on_select), left)
@@ -886,7 +902,11 @@ impl<'a> Window<'a> {
 
     /// The same bounded card frame, either movable or an input-blocking modal.
     pub(super) fn surface(&self, ctx: &egui::Context, modal: bool, add: impl FnOnce(&mut Ui) -> (bool, super::Action)) -> (bool, super::Action) {
-        let frame = Panel::card_frame(ctx);
+        let frame = if self.page_chrome {
+            super::navigation_popup_frame().inner_margin(0).fill(Tokens::get().dialog_body.gamma_multiply(0.97))
+        } else {
+            Panel::card_frame(ctx)
+        };
         let inner_width = (self.width.min(dimension(ctx.content_rect().width())) - frame.total_margin().sum().x).max(0.0);
         if modal {
             let shown = super::Container::new(ctx, super::Surface::Window)
@@ -944,7 +964,7 @@ pub(crate) struct WindowPage<S> {
 
 #[cfg(test)]
 pub(super) fn page_list<S>(ui: &mut Ui, selected: &mut usize, pages: &[WindowPage<S>], state: &mut S) {
-    page_list_sized(ui, selected, pages, state, 16.0, vec2(Tokens::get().space_16, Tokens::get().space_16), None, None);
+    page_list_sized(ui, selected, pages, state, 16.0, egui::Margin::same(Tokens::get().space_16 as i8), None, None);
 }
 
 fn page_list_sized<S>(
@@ -953,7 +973,7 @@ fn page_list_sized<S>(
     pages: &[WindowPage<S>],
     state: &mut S,
     rows: f32,
-    padding: egui::Vec2,
+    padding: egui::Margin,
     header: Option<fn(&mut Ui, &mut S)>,
     on_select: Option<fn(&mut S)>,
 ) {
@@ -964,7 +984,12 @@ fn page_list_sized<S>(
     let height = (dimension(ui.ctx().content_rect().height()) - t.form_header_height - t.form_footer_height - t.space_24 * 3.0)
         .clamp(0.0, t.control_height * rows + header_band);
     let (body, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), height), egui::Sense::hover());
-    let width = (t.form_label_width * 2.0 + t.space_24 * 2.0).min(body.width());
+    let width = if body.width() + 2.0 * super::NAV_BORDER < WINDOW_PAGES_NARROW_AT {
+        WINDOW_PAGES_NARROW_WIDTH
+    } else {
+        t.form_label_width * 2.0 + t.space_24 * 2.0
+    }
+    .min(body.width());
     let nav = egui::Rect::from_min_size(body.min, vec2(width, body.height()));
     ui.painter().rect_filled(nav, 0.0, t.dialog_footer);
     t.secondary_vline(ui.painter(), nav.right(), nav.y_range(), t.dialog_rule);
@@ -994,11 +1019,11 @@ fn page_list_sized<S>(
                 if on || response.hovered() || response.has_focus() {
                     ui.painter().rect_filled(rect, t.control_radius, if on { t.selected_bg } else { t.hover });
                 }
-                let ink = if on { t.selected_ink } else { t.form_ink };
+                let ink = if on { t.form_primary } else { t.form_ink };
                 let icon =
                     egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_10 + t.space_8, rect.center().y), vec2(t.space_16, t.space_16));
                 crate::icons::paint_ink(ui.painter(), icon, page.icon, if on { ink } else { t.form_dim });
-                let text_rect = egui::Rect::from_min_max(egui::pos2(icon.right() + t.space_8, rect.top()), rect.right_bottom());
+                let text_rect = egui::Rect::from_min_max(egui::pos2(icon.right() + super::NAV_ROW_GAP, rect.top()), rect.right_bottom());
                 paint_text(
                     ui,
                     text_rect,
@@ -1017,11 +1042,17 @@ fn page_list_sized<S>(
         });
     });
     let content = egui::Rect::from_min_max(egui::pos2(nav.right(), body.top()), body.max);
-    let content = content.shrink2(vec2(padding.x.min(content.width() / 2.0), padding.y.min(content.height() / 2.0)));
+    let padding = egui::epaint::MarginF32 {
+        left: padding.leftf().min(content.width() / 2.0),
+        right: padding.rightf().min(content.width() / 2.0),
+        top: padding.topf().min(content.height() / 2.0),
+        bottom: padding.bottomf().min(content.height() / 2.0),
+    };
+    let content = content - padding;
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(content)
-            .ui_stack_info(egui::UiStackInfo::default().with_tag_value(super::preferences::PAGE_SCROLL_GUTTER, padding.x)),
+            .ui_stack_info(egui::UiStackInfo::default().with_tag_value(super::preferences::PAGE_SCROLL_GUTTER, padding.right)),
         |ui| {
             let clip = egui::Rect::from_min_max(content.min, egui::pos2(body.right(), content.bottom()));
             ui.set_clip_rect(ui.clip_rect().intersect(clip));

@@ -184,6 +184,8 @@ mod file_load_ui_tests;
 mod fillet_spline_handle_tests;
 pub mod mouse_gesture;
 pub(crate) mod navigation;
+pub mod navigation_bar;
+mod navigation_bar_view;
 pub use navigation::WebWheelGestures;
 pub mod network_prompt;
 pub mod open_elsewhere;
@@ -1853,7 +1855,7 @@ impl SolveApp {
     }
 
     fn resolve_fit(&mut self, ctx: &egui::Context) {
-        viewport::refresh_layout(self, ctx.pixels_per_point());
+        viewport::refresh_layout(self, ctx);
         if self.viewport.layout.is_some()
             && let Some((cam, bounds, animate)) = self.pending_fit.take()
         {
@@ -2299,7 +2301,7 @@ impl SolveApp {
                     .into_iter()
                     .filter(|r| r.is_positive())
                     .collect();
-                    viewport::refresh_layout(self, ui.ctx().pixels_per_point());
+                    viewport::refresh_layout(self, ui.ctx());
                 } else {
                     preview::update(self, ui.ctx());
                     self.show_workspace(ui);

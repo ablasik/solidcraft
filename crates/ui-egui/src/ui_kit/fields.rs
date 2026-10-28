@@ -271,7 +271,7 @@ pub(crate) fn dropdown(ui: &mut Ui, id: &str, selected: &mut usize, options: &[&
     dropdown_menu(ui, id, text, |ui| {
         for (index, option) in options.iter().enumerate() {
             let response = ui.selectable_value(selected, index, crate::i18n::tr_label(option));
-            scenario::publish_handle(&format!("dialog:{row}:{option}"), response.rect.center());
+            scenario::publish_target(&format!("dialog:{row}:{option}"), response.rect);
         }
     })
 }

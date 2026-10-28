@@ -183,6 +183,7 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         );
     });
     origin_plane_names(app, ui);
+    super::navbar::show(app, ui);
     ui_kit::settings_section(ui, "scale", app.tr("prefs.scale_text"), |ui| {
         ui_kit::settings_pair(
             ui,

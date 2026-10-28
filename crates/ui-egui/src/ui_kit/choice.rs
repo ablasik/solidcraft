@@ -35,24 +35,6 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     let Segments { targets, icons, workspace_accent, dense, states, compact, primary, intrinsic, proportional } = config;
     let accent = crate::theme::TabAccent::current(ui.ctx());
     let t = Tokens::get();
-    let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
-    let widest = options
-        .iter()
-        .map(|option| {
-            ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(t.font_label), t.form_ink).size().x
-        })
-        .fold(0.0, f32::max);
-    // Judged on the whole row, which is what a scrollbar narrows, not on one segment.
-    if !intrinsic
-        && !proportional
-        && !compact
-        && !super::fits_steadily(ui, label(ui), (widest + 2.0 * t.space_8) * options.len() as f32, segment_width * options.len() as f32)
-    {
-        let before = *selected;
-        let id = format!("segments_fallback_{}", label(ui));
-        dropdown(ui, &id, selected, options);
-        return *selected != before;
-    }
     let natural: Vec<_> = options
         .iter()
         .enumerate()
@@ -63,6 +45,21 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         })
         .collect();
     let total = natural.iter().sum::<f32>();
+    let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
+    let widest = options
+        .iter()
+        .map(|option| {
+            ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(t.font_label), t.form_ink).size().x
+        })
+        .fold(0.0, f32::max);
+    // Judged on the whole row, which is what a scrollbar narrows, not on one segment.
+    let need = if intrinsic { total } else { (widest + 2.0 * t.space_8) * options.len() as f32 };
+    if !proportional && !compact && !super::fits_steadily(ui, label(ui), need, segment_width * options.len() as f32) {
+        let before = *selected;
+        let id = format!("segments_fallback_{}", label(ui));
+        dropdown(ui, &id, selected, options);
+        return *selected != before;
+    }
     let desired = if intrinsic { total.min(dimension(ui.available_width())) } else { dimension(ui.available_width()) };
     let (rect, _) = ui.allocate_exact_size(vec2(desired, if dense { t.control_height - t.space_2 } else { row_height() }), egui::Sense::hover());
     ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
@@ -133,7 +130,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         );
         t.button_bevel_with_radius(ui, &response, on, rounding);
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, *option));
-        scenario::publish_handle(&format!("dialog:{}:{option}", label(ui)), segment.center());
+        scenario::publish_target(&format!("dialog:{}:{option}", label(ui)), segment);
         if let Some(target) = targets.get(index) {
             let visible = segment.intersect(ui.clip_rect());
             if visible.is_positive() {

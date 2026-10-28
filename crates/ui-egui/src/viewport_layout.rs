@@ -50,14 +50,9 @@ pub(crate) fn free_rect(view: Rect, obstacles: &[Rect]) -> Rect {
 }
 
 impl Layout {
-    /// The whole viewport as content, without the OK and Cancel pair.
-    #[cfg(test)]
-    pub fn new(viewport: Rect, docks: &[Rect], scale: f32, style: crate::prefs::NavigatorStyle, show_navigation_bar: bool) -> Self {
-        Self::with_content(viewport, viewport, docks, scale, style, egui::Vec2::ZERO, show_navigation_bar)
-    }
-
     /// `corner` is the size of the OK and Cancel pair (#6709; zero while it is not shown): it is
     /// held in the top right corner of the content, and the axis view moves down below it.
+    /// `navigation` is the measured rectangle of the navigation bar (nothing while it is hidden).
     pub fn with_content(
         viewport: Rect,
         content: Rect,
@@ -65,9 +60,9 @@ impl Layout {
         scale: f32,
         style: crate::prefs::NavigatorStyle,
         corner: egui::Vec2,
-        show_navigation_bar: bool,
+        navigation: Rect,
     ) -> Self {
-        Self::build(viewport, content, docks, scale, style, corner, show_navigation_bar, false)
+        Self::build(viewport, content, docks, scale, style, corner, navigation, false)
     }
 
     /// Render fits stay between the docked panels, including beneath a short Browser card.
@@ -78,9 +73,9 @@ impl Layout {
         scale: f32,
         style: crate::prefs::NavigatorStyle,
         corner: egui::Vec2,
-        show_navigation_bar: bool,
+        navigation: Rect,
     ) -> Self {
-        Self::build(viewport, content, docks, scale, style, corner, show_navigation_bar, true)
+        Self::build(viewport, content, docks, scale, style, corner, navigation, true)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -91,7 +86,7 @@ impl Layout {
         scale: f32,
         style: crate::prefs::NavigatorStyle,
         corner: egui::Vec2,
-        show_navigation_bar: bool,
+        navigation: Rect,
         fit_in_content: bool,
     ) -> Self {
         let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
@@ -113,14 +108,6 @@ impl Layout {
         let cube_size = if fit_in_content { 110.0 } else { super::viewport::axis_view_size(style) };
         let mut axis_view = if available.width() >= cube_size && available.bottom() - top >= cube_size {
             Rect::from_min_size(pos2(available.right() - cube_size, top), vec2(cube_size, cube_size))
-        } else {
-            Rect::NOTHING
-        };
-        let nav_space = content;
-        let columns = ((nav_space.width() - 10.0) / 30.0).floor().clamp(1.0, 10.0);
-        let nav_height = (10.0 / columns).ceil() * 30.0;
-        let navigation = if show_navigation_bar && nav_space.width() >= columns * 30.0 + 10.0 && nav_space.height() >= nav_height + 7.0 {
-            Rect::from_center_size(pos2(nav_space.center().x, nav_space.bottom() - nav_height * 0.5 - 7.0), vec2(columns * 30.0 + 10.0, nav_height))
         } else {
             Rect::NOTHING
         };
