@@ -17,7 +17,6 @@ macro_rules! waiting {
 pub static COMMANDS: &[CommandSpec] = &[
     waiting!("appearance.paint", "Paint Appearance", "RENDER APPEARANCE", "APPEARANCE", "appearance", "product picking and appearance painting"),
     waiting!("appearance.pick_up", "Pick Up Appearance", "RENDER APPEARANCE", "APPEARANCE", "select", "product picking and appearance sampling"),
-    waiting!("appearance.replace", "Replace Appearance", "RENDER APPEARANCE", "APPEARANCE", "appearance", "replacing all uses of an appearance"),
     waiting!("render.lights.solo", "Solo Light", "RENDER SCENE", "LIGHTS", "render_scene", "light visibility and solo controls"),
     waiting!("render.compare", "Compare Images", "RENDER", "RESULT", "compare", "retained image comparison"),
     waiting!("render.batch", "Render All Shots", "RENDER", "BATCH", "render_image", "the saved-shot render queue"),

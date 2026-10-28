@@ -1403,6 +1403,74 @@ fn appearance_submenu_swatches_apply_to_the_clicked_body_and_keep_library_action
     assert_eq!(app.session.doc.appearances.bodies[&name].color, swatch.swatch.unwrap());
 }
 
+fn appearance_selection_app() -> SolveApp {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    for (name, x) in [("One", 0), ("Two", 20), ("Other", 40)] {
+        app.run("solid.box", json!({"body_name":name,"length":10,"width":10,"height":10,"corner":[x,0,0],"operation":"new"})).unwrap();
+    }
+    app.run("appearance.assign", json!({"bodies":["One","Two","Other"],"color":"#245cb4"})).unwrap();
+    app.run("select.set", json!({"items":[{"type":"body","name":"One"},{"type":"body","name":"Two"}]})).unwrap();
+    app
+}
+
+/// #7935: a selected browser row's swatches and Remove override act on the selected bodies;
+/// a row outside the selection still acts only on that row. Each action is one undo step.
+#[test]
+fn appearance_browser_selection_assigns_and_removes_overrides_together() {
+    for (clicked, expected) in [("One", vec!["One", "Two"]), ("Two", vec!["One", "Two"]), ("Other", vec!["Other"])] {
+        let mut app = appearance_selection_app();
+        let target = Target::Body { name: clicked.into() };
+        let appearance = find(&context_menu::items(&app, &target), "Appearance");
+        let swatch = find(&appearance.children, "Paint - Red");
+        let original = app.session.doc.clone();
+        let undo = app.session.undo.len();
+        context_menu::run_item(&mut app, &swatch, pos2(0.0, 0.0));
+        assert_eq!(app.session.undo.len(), undo + 1);
+        for name in ["One", "Two", "Other"] {
+            let color = if expected.contains(&name) { [196, 40, 36] } else { [36, 92, 180] };
+            assert_eq!(app.session.doc.appearances.bodies[name].color, color, "clicked {clicked}, body {name}");
+        }
+        let assigned = app.session.doc.clone();
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(app.session.doc, original);
+        app.run("edit.redo", json!({})).unwrap();
+        assert_eq!(app.session.doc, assigned);
+
+        let remove = find(&appearance.children, "Remove override");
+        context_menu::run_item(&mut app, &remove, pos2(0.0, 0.0));
+        assert_eq!(app.session.undo.len(), undo + 2);
+        for name in ["One", "Two", "Other"] {
+            assert_eq!(app.session.doc.appearances.bodies.contains_key(name), !expected.contains(&name), "clicked {clicked}, body {name}");
+        }
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(app.session.doc, assigned);
+    }
+}
+
+#[test]
+fn appearance_browser_selection_reaches_the_editor_without_other_bodies() {
+    for (clicked, expected) in [("Two", vec!["One", "Two"]), ("Other", vec!["Other"])] {
+        let mut app = appearance_selection_app();
+        // A face in the selection must not turn its whole body into another appearance target.
+        app.session.selection.push(solidcraft_engine::Sel::Face { body: "Other".into(), index: 0, point: Vec3::ZERO });
+        let appearance = find(&context_menu::items(&app, &Target::Body { name: clicked.into() }), "Appearance");
+        assert_eq!(appearance.children[0].params, appearance.params, "the library entry and parent use the same targets");
+        context_menu::run_item(&mut app, &appearance, pos2(0.0, 0.0));
+        let mut dialog = app.dialog.clone().expect("the Appearance editor opens");
+        let crate::dialogs::Kind::Appearance(state) = &mut dialog.kind else { panic!("Appearance editor expected") };
+        state.color = [196, 40, 36];
+        let targets: Vec<_> = expected.iter().map(|name| solidcraft_engine::Sel::Body { name: (*name).into() }).collect();
+        assert_eq!(dialog.inputs[0].items, targets);
+        for (command, params) in crate::dialogs::apply_commands(&app, &dialog).unwrap() {
+            app.run(&command, params).unwrap();
+        }
+        for name in ["One", "Two", "Other"] {
+            let color = if expected.contains(&name) { [196, 40, 36] } else { [36, 92, 180] };
+            assert_eq!(app.session.doc.appearances.bodies[name].color, color, "clicked {clicked}, body {name}");
+        }
+    }
+}
+
 #[test]
 fn appearance_parent_click_opens_editor_after_hovering_quick_choices() {
     use crate::scenario::{Harness, rect_of};

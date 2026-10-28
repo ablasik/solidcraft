@@ -403,6 +403,38 @@ mod tests {
     }
 
     #[test]
+    fn browser_find_reveals_a_placed_body_whose_row_is_off_screen() {
+        let mut h = Harness::new();
+        let component = h.app.run("component.create", json!({"name":"Part"})).unwrap();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Plate"})).unwrap();
+        h.app.run("component.activate", json!({"component":0})).unwrap();
+        let first = component["occurrence"].as_u64().unwrap();
+        // Enough placements that the last one's row sits below the Browser's visible height.
+        let mut last = first;
+        for i in 1..=80 {
+            last = h.app.run("occurrence.copy", json!({"occurrence":first,"translate":[20.0 * f64::from(i),0,0]})).unwrap()["occurrence"]
+                .as_u64()
+                .unwrap();
+        }
+        h.app.run("browser.collapse_all", json!({})).unwrap();
+        h.frames(2);
+        let world_body = h.app.session.occurrence_bodies(&[last], false).unwrap()[0].clone();
+        // A later placement's body has its own world name; the row's label stays the local one.
+        assert_ne!(world_body, "Plate");
+        let plate_rows = || drawn_rows().into_iter().filter(|(label, ..)| label == "Plate").count();
+        assert_eq!(plate_rows(), 0, "the body starts off screen and collapsed");
+        find_in_browser(&mut h.app, face(&world_body));
+        // The row is off screen, so the reveal only gives it a rect to scroll to; the scroll then
+        // animates over several frames until the row is on screen and drawn.
+        let arrived = (0..240).any(|_| {
+            h.frames(1);
+            plate_rows() == 1
+        });
+        assert!(arrived, "the off-screen placed body row was never scrolled into view");
+        assert_eq!(h.app.session.selection, [Sel::Body { name: world_body }]);
+    }
+
+    #[test]
     fn browser_feature_imported_source_ids_never_reveal_an_unrelated_native_feature() {
         struct Source(std::path::PathBuf);
         impl Drop for Source {

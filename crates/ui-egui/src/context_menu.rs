@@ -440,6 +440,14 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         if item.id != "ui.appearance" {
             continue;
         }
+        // A selected browser body keeps the selection for the editor and its quick choices.
+        // A row outside the selection still targets only the body that was right-clicked.
+        if let Target::Body { name } = target {
+            let bodies = sel_bodies(app);
+            if bodies.contains(name) {
+                item.params = Some(json!({"bodies": bodies}));
+            }
+        }
         let original = item.clone();
         let params = item.params.clone().unwrap_or_else(|| {
             let faces: Vec<_> = app

@@ -2427,7 +2427,8 @@ fn entry_row(
     let pattern_key = e.patterns.as_deref();
     let patterns_open = pattern_key.is_some_and(|key| is_open(app, key, true));
     let rect = row_rect(ui);
-    if !ui.is_rect_visible(rect) && !patterns_open && !(folder == "bodies" && app.tree.reveal.as_deref() == Some(e.key.as_str())) {
+    let revealed = folder == "bodies" && app.tree.reveal.as_ref().is_some_and(|b| e.row_key.strip_prefix("b:") == Some(b.as_str()));
+    if !ui.is_rect_visible(rect) && !patterns_open && !revealed {
         ui.allocate_space(rect.size());
         return;
     }
