@@ -138,7 +138,9 @@ pub(crate) fn body_from_smlib_ordered(brep: &solidcraft_smlib::Brep) -> Result<(
     let _span = solidcraft_profile::span("kernel", "body_from_smlib_ordered");
     let (record, order) = brep.to_native_ordered().map_err(|e| KernelError::Failed(e.to_string()))?;
     let handle = brep.try_clone().map_err(|e| KernelError::Failed(format!("SMLib: {e}")))?;
-    Ok((Body::from_smlib_record(handle, record)?, Some(order)))
+    let body = Body::from_smlib_record(handle, record)?;
+    body.require_meshable()?;
+    Ok((body, Some(order)))
 }
 
 /// `body` in SMLib, with where each of SMLib's faces and edges is in the body's face and edge

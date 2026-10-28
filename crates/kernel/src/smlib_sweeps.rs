@@ -535,7 +535,11 @@ mod imp {
         if runs.len() > 1 {
             return cornered(plane, pieces, path, &runs, translate);
         }
-        let (brep, _) = swept(plane, pieces, path, translate)?;
+        // The motions are not needed here: the profile is at the path's start.
+        let c = curves(plane, pieces)?;
+        let route = path.iter().map(path_curve).collect::<Result<Vec<_>>>()?;
+        let frame = if translate { SweepFrame::Translate } else { SweepFrame::Follow };
+        let brep = Brep::sweep(&c, &route, frame, true).map_err(|e| failed("sweep", e))?;
         let body = body_of(&brep, "sweep")?;
         let roles = roles(&body, plane, None, &seeds(plane, pieces, |q| q), &[], true)?;
         with_history(body, &roles, pieces)
