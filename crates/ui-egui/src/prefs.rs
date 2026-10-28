@@ -611,6 +611,27 @@ impl SpaceMouseDriver {
     }
 }
 
+/// The default largest STEP/import file, in MB (`solidcraft_io::MAX_STEP_BYTES`).
+pub const DEFAULT_STEP_MB: u64 = solidcraft_engine::io::limits::FileLimits::DEFAULT.step / solidcraft_engine::io::limits::MB;
+/// The default largest design file, in MB (`solidcraft_io::MAX_DESIGN_BYTES`).
+pub const DEFAULT_DESIGN_MB: u64 = solidcraft_engine::io::limits::FileLimits::DEFAULT.design / solidcraft_engine::io::limits::MB;
+
+/// The file size limits the preferences ask for (Preferences › General › Largest file to open),
+/// brought into range.
+pub fn file_limits(p: &Prefs) -> solidcraft_engine::io::limits::FileLimits {
+    solidcraft_engine::io::limits::FileLimits::from_mb(p.max_step_file_mb, p.max_design_file_mb).clamped()
+}
+
+/// Every read from now on uses the preferred file size limits (unless `--max-file-size` gave
+/// this run its own). The browser keeps its defaults.
+pub fn apply_file_limits(p: &Prefs) {
+    if solidcraft_engine::io::limits::ADJUSTABLE
+        && let Err(e) = solidcraft_engine::io::limits::set_preferred(file_limits(p))
+    {
+        log::warn!("preferences: file size limits: {e}");
+    }
+}
+
 /// The browser sidebar's first width, and the width [`Prefs::default`] restores; the panel
 /// itself clamps what the user drags to its own range.
 pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
@@ -835,6 +856,11 @@ preference_settings! {
     reopen_designs: bool = true, PAGE_GENERAL;
     /// Those designs' files, in tab order, as the last quit left them.
     open_designs: Vec<String> = Vec::new(), PAGE_GENERAL;
+    /// The largest STEP or import file opened, in MB (#4086): from the default (512) up to 16 GB.
+    /// `--max-file-size` overrides it for one run. The browser keeps the default.
+    max_step_file_mb: u64 = DEFAULT_STEP_MB, PAGE_GENERAL;
+    /// The largest design file opened or saved, in MB (#4086): from the default (256) up to 16 GB.
+    max_design_file_mb: u64 = DEFAULT_DESIGN_MB, PAGE_GENERAL;
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     theme: String = "dark".into(), PAGE_INTERFACE;
@@ -1534,6 +1560,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
 /// the interface scale.
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     apply_network(&app.preferences);
+    apply_file_limits(&app.preferences);
     // The viewport's display quality (an unknown saved value draws at Normal).
     solidcraft_engine::doc::display_quality::set_current(
         solidcraft_engine::doc::display_quality::DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default(),
@@ -2816,6 +2843,11 @@ pub fn migrate(mut p: Prefs) -> Prefs {
 /// so a hand-edited preferences file cannot carry a huge or nonsense list. `set` still refuses
 /// those instead of dropping them.
 fn limit_disabled_plugins(mut p: Prefs) -> Prefs {
+    // The file size limits, likewise, are brought into range (#4086).
+    let limits = file_limits(&p);
+    let mb = solidcraft_engine::io::limits::MB;
+    (p.max_step_file_mb, p.max_design_file_mb) =
+        if solidcraft_engine::io::limits::ADJUSTABLE { (limits.step / mb, limits.design / mb) } else { (DEFAULT_STEP_MB, DEFAULT_DESIGN_MB) };
     p.disabled_plugins.retain(|id| crate::plugins::valid_id(id));
     if p.disabled_plugins.len() > crate::plugins::MAX_DISABLED {
         p.disabled_plugins = p.disabled_plugins.into_iter().take(crate::plugins::MAX_DISABLED).collect();
@@ -2913,6 +2945,22 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if new.disabled_plugins.len() > crate::plugins::MAX_DISABLED || new.disabled_plugins.iter().any(|id| !crate::plugins::valid_id(id)) {
         return Err(format!("`disabled_plugins` must be at most {} ids of lowercase letters, digits and hyphens", crate::plugins::MAX_DISABLED));
     }
+    if new.max_step_file_mb != app.preferences.max_step_file_mb || new.max_design_file_mb != app.preferences.max_design_file_mb {
+        let mb = solidcraft_engine::io::limits::MB;
+        let wanted = solidcraft_engine::io::limits::FileLimits {
+            step: new.max_step_file_mb.saturating_mul(mb),
+            design: new.max_design_file_mb.saturating_mul(mb),
+        };
+        if !solidcraft_engine::io::limits::ADJUSTABLE && wanted != solidcraft_engine::io::limits::FileLimits::DEFAULT {
+            return Err("`max_step_file_mb` and `max_design_file_mb` can't change in the web app: a browser tab can't hold larger files".into());
+        }
+        wanted.validate().map_err(|e| {
+            format!(
+                "`max_step_file_mb` must be {DEFAULT_STEP_MB}…{max} and `max_design_file_mb` {DEFAULT_DESIGN_MB}…{max}: {e}",
+                max = solidcraft_engine::io::limits::ceiling() / mb
+            )
+        })?;
+    }
     if !accepted::ui_scale(&new) || !accepted::look_at_speed(&new) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
     }
@@ -2937,6 +2985,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         app.ui.layout = new.layout;
     }
     app.preferences = new;
+    apply_file_limits(&app.preferences);
     if units_changed {
         default_units_changed(app);
     }
@@ -5004,6 +5053,40 @@ mod tests {
         assert_eq!(out["result"]["window_system"], "wayland", "Cancel takes the change back");
         assert_eq!(saved()["window_system"], "wayland", "and the file with it");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Preferences › General › Largest file to open (#4086): the defaults are the limits there always
+    /// were; `ui.prefs` raises both, up to 16 GB and never below the defaults; a saved value out of
+    /// range reads back in range, and General's Restore Defaults puts them back.
+    #[test]
+    fn the_largest_file_to_open_defaults_raises_and_refuses_out_of_range() {
+        use serde_json::json;
+        use solidcraft_engine::io::limits::{FileLimits, GB};
+        let mut h = crate::scenario::Harness::new();
+        assert_eq!((h.app.preferences.max_step_file_mb, h.app.preferences.max_design_file_mb), (512, 256));
+        assert_eq!(super::file_limits(&h.app.preferences), FileLimits::DEFAULT);
+        let out = h.call("ui.prefs", json!({"max_step_file_mb": 4096, "max_design_file_mb": 2048}));
+        assert_eq!((out["result"]["max_step_file_mb"].as_u64(), out["result"]["max_design_file_mb"].as_u64()), (Some(4096), Some(2048)), "{out}");
+        assert_eq!(super::file_limits(&h.app.preferences), FileLimits { step: 4 * GB, design: 2 * GB });
+        for bad in [
+            json!({"max_step_file_mb": 16385}),
+            json!({"max_design_file_mb": 100}),
+            json!({"max_step_file_mb": -1}),
+            json!({"max_design_file_mb": "2GB"}),
+        ] {
+            assert!(h.call("ui.prefs", bad.clone())["error"].is_string(), "{bad}");
+        }
+        assert_eq!(super::file_limits(&h.app.preferences), FileLimits { step: 4 * GB, design: 2 * GB }, "a refused value changes nothing");
+        let read = super::lenient(&json!({"max_step_file_mb": 999_999, "max_design_file_mb": 3}));
+        assert_eq!((read.max_step_file_mb, read.max_design_file_mb), (16384, 256));
+
+        h.call("ui.prefs", json!({"open": "General"}));
+        h.frames(2);
+        super::reveal_preference(&mut h, "prefs:max_step_file_mb");
+        assert!(crate::scenario::rect_of("prefs:max_design_file_mb").is_some());
+        h.call("ui.prefs", json!({"button": "defaults"}));
+        assert_eq!(super::file_limits(&h.app.preferences), FileLimits::DEFAULT);
+        h.call("ui.prefs", json!({"button": "cancel"}));
     }
 
     #[test]

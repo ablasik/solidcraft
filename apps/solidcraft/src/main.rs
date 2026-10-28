@@ -761,12 +761,15 @@ fn main() -> eframe::Result {
     let mut sample = false;
     // `--theme-file PATH`: follow that theme file for this run without saving it (#7573).
     let mut theme_file: Option<String> = None;
+    let mut max_file_size = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
             "--theme-file" => theme_file = args.next(),
+            "--max-file-size" => max_file_size = Some(args.next()),
+            s if s.starts_with("--max-file-size=") => max_file_size = Some(s.strip_prefix("--max-file-size=").map(str::to_string)),
             "--safe-mode" => safe_mode = true,
             "--version" | "-V" => {
                 println!("solidcraft {}", env!("CARGO_PKG_VERSION"));
@@ -787,11 +790,19 @@ fn main() -> eframe::Result {
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: solidcraft [--control PORT] [--sample] [--theme-file THEME.json] [--crash-log] [--safe-mode] [design.sc | part.step]"
+                    "usage: solidcraft [--control PORT] [--sample] [--theme-file THEME.json] [--crash-log] [--safe-mode] [--max-file-size SIZE] [design.sc | part.step]"
                 );
                 return Ok(());
             }
             _ => files.push(a),
+        }
+    }
+    // `--max-file-size 2GB`: the largest files this run reads, over Preferences, never saved (#4086).
+    if let Some(value) = max_file_size {
+        let applied = startup::max_file_size(value.as_deref()).and_then(|bytes| solidcraft_engine::io::limits::set_override(Some(bytes)));
+        if let Err(error) = applied {
+            eprintln!("SolidCraft: {error}");
+            return Err(eframe::Error::AppCreation(std::io::Error::other(error).into()));
         }
     }
     // Settings that don't read are moved aside; launches that never got a window are counted,

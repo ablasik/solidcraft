@@ -151,6 +151,7 @@ impl PathHost {
 }
 
 /// The samples slider's top end: 2^12 = 4096 samples per pixel.
+#[cfg(test)]
 const MAX_SAMPLES_EXPONENT: u32 = 12;
 
 /// Setup times kept per adapter, at most.
@@ -593,6 +594,7 @@ pub(crate) fn select_stage(app: &mut SolveApp, key: &str) {
         _ => return,
     };
     app.render_workspace.view.stage = stage;
+    app.render_workspace.view.inspector.hidden = false;
     app.render_workspace.view.inspector.page = stage.page();
     let sections: &[&str] = match stage {
         Stage::Look => &["objects"],
@@ -625,6 +627,10 @@ pub(crate) fn output_summary(app: &SolveApp) -> (String, &'static str) {
 
 pub(crate) fn job_ready(app: &SolveApp, id: &str) -> Result<(), String> {
     ribbon::action_ready(app, id)
+}
+
+pub(crate) fn set_inspector_visible(app: &mut SolveApp, visible: bool) {
+    app.render_workspace.view.inspector.hidden = !visible;
 }
 
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -766,18 +772,10 @@ fn method_selector(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
     crate::scenario::publish_handle("render:method", response.rect.center());
     if image_host(app, app.render_workspace.view.method).is_err() {
-        if app.render_workspace.view.inspector.page == inspector::Page::All {
-            ui.small(app.tr("render.setup_offline_help"));
-        } else {
-            crate::ui_kit::text(ui, app.tr("render.setup_offline_help"), crate::ui_kit::Text::Note("render.setup_offline_help"));
-        }
+        crate::ui_kit::text(ui, app.tr("render.setup_offline_help"), crate::ui_kit::Text::Note("render.setup_offline_help"));
     }
     if app.render_workspace.view.method != ImageMethod::Raster {
-        if app.render_workspace.view.inspector.page == inspector::Page::All {
-            ui.small(app.tr("render.preview_image_settings_help"));
-        } else {
-            crate::ui_kit::text(ui, app.tr("render.preview_image_settings_help"), crate::ui_kit::Text::Note("render.preview_image_settings_help"));
-        }
+        crate::ui_kit::text(ui, app.tr("render.preview_image_settings_help"), crate::ui_kit::Text::Note("render.preview_image_settings_help"));
     }
 }
 
@@ -830,6 +828,7 @@ fn cpu_lighting_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::ui_kit::checkbox(ui, &shadows, &mut app.render_workspace.view.raytrace.shadows);
 }
 
+#[cfg(test)]
 fn image_method_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     method_selector(app, ui);
     if app.render_workspace.view.method != ImageMethod::CpuRaytrace {
@@ -843,6 +842,7 @@ fn image_method_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     cpu::controls(app, ui);
 }
 
+#[cfg(test)]
 fn image_edit_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("render.image_title"));
     let preview = app.tr("render.result_preview").to_string();

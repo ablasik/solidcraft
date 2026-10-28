@@ -623,7 +623,7 @@ fn step_staged(running: &mut Running) {
         // Parse and walk the file. The reading keeps the watch: its steps report progress and
         // stop on Cancel.
         let read = solidcraft_engine::io::vfs::scoped(scope, || {
-            let bytes = solidcraft_engine::io::vfs::read(&path, solidcraft_engine::io::MAX_STEP_BYTES).map_err(|e| format!("{path}: {e}"))?;
+            let bytes = solidcraft_engine::io::limits::read(&path, solidcraft_engine::io::limits::Kind::Step).map_err(|e| format!("{path}: {e}"))?;
             // The same text the import command makes of the bytes, so it finds this reading.
             let text = String::from_utf8_lossy(&bytes).into_owned();
             solidcraft_engine::doc::progress::watch(progress.clone(), || solidcraft_engine::kernel::StepReading::new(&text))

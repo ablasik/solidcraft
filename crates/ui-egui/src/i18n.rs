@@ -700,6 +700,10 @@ mod tests {
             // rather than requiring its spelling to differ from English.
             assert!(locale.0.messages().contains_key("toolbar.render_studio"));
             assert_eq!(locale.label("STUDIO"), locale.text("toolbar.render_studio"));
+            let english: Messages = serde_json::from_str(ENGLISH.source).unwrap();
+            for id in english.keys().filter(|id| id.starts_with("render.inspector_")) {
+                assert!(locale.0.messages().contains_key(id), "{language}: {id}");
+            }
             for id in [
                 "render.pick_label",
                 "render.pick_body",

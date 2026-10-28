@@ -902,6 +902,7 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
             bounds: crate::ui_kit::Panel::stack_first_bounds(bounds),
             fill_height: true,
             compact: crate::render_ui::compact(app, bounds.width()),
+            editor: false,
             enabled: true,
             header_actions: None,
         },

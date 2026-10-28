@@ -146,7 +146,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `searchable_dropdown`, `SearchOption` | Filtered choices, custom-value action and pending message | dropdown tokens |
 | `selection_field`, `Selection` | Selection chip with explicit `active` and `filled` state, in three looks: the active input (where the next pick goes) has a `form_primary` border and `selected_bg` tint; a filled inactive one a quiet neutral tint, a stronger neutral border and its count in `form_ink`; an empty inactive one the plain control with a dim prompt | `selected_bg/ink`, `form_primary/ink/dim`, `control_*`, `form_inset`, `space_2/8/24` |
 | `value_pair` | Paired captions/expressions; optional independent field names | row/field tokens, `space_8` |
-| `fraction_field`, `scalar_field` | Locale-aware bounded dimensionless values; scalar fields fill their control column | form control/font tokens |
+| `fraction_field`, `scalar_field`, `mixed_scalar_field` | Locale-aware bounded dimensionless values; scalar fields fill their control column; the mixed variant accepts a translated placeholder | form control/font tokens |
 | `number_field` | Integer/decimal field with caller range, drag speed and suffix | form control/font tokens |
 | `length_field`, `angle_field` | Length in design units, angle in degrees | form control/font tokens |
 | `slider` + `Slider` options | One token-painted track/thumb over native slider/value interaction; optional step, caller formatting, whole-step manipulation and hidden value editor | `control_height`, `space_24/8/4/2`, form control/font tokens |
@@ -160,7 +160,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `list_picker` | Selectable row with caller identity and native checked state | `control_height`, form selection tokens |
 | `thumbnail_choice`, `ThumbnailChoice`, `add_choice` | Shared selection-chip variant with 52 × 30 preview, selected tab accent, modified dot, progress ring and dashed add action for bottom strips; `Panel::strip_contents` reserves right actions and scrolls choices | `control_height`, spacing, radii, `TabAccent`, control/semantic tokens |
 | `popup_list`, `PopupOption` | Focus-neutral suggestions; owner retains keyboard routing | `space_2`, `form_label_width`, `control_height`, form tokens |
-| sphere: `sphere_thumbnail`, `SphereTile`, `sphere_grid` | Deterministic lit material samples; matte/satin/gloss/metal/glass finishes. Catalog tiles centre a 48 pt sphere in a 56 pt rounded cell with a two-line name, active-tab selection ring, user-count badge and shared Container tooltip. The grid owns three columns and token gaps. | `control_height`, `radius_xl`, `space_2/3/4/8/16`, `font_small/badge`, `control_fill`, `dialog_rule`, active-tab accent, `on_accent` |
+| sphere: `sphere_thumbnail`, `SphereTile`, `sphere_grid`, `sphere_preview` | Deterministic lit material samples; matte/satin/gloss/metal/glass finishes. Catalog tiles centre a 48 pt sphere in a 56 pt rounded cell with a two-line name, active-tab selection ring, user-count badge and shared Container tooltip. The grid owns three columns and token gaps. The Inspector preview composes a sphere, name, informational chips and replacement action in the shared list card. | `control_height`, `radius_xl`, `space_2/3/4/8/16`, `font_small/badge`, `control_fill`, `dialog_rule`, active-tab accent, `on_accent` |
 | `color_swatch`, `swatch_grid`, `color_thumbnail` | 30 pt draggable samples, 6 pt grid step gap, selected outer ring and checker pattern under transparent colours; caller payloads retained; local-library thumbnails use 16 pt | `control_height/radius`, `border`, `form_primary`, `control_fill`, `space_2/6/8` |
 | `assistant_entry`, `AssistantEntryState` | Application-bar chat icon with quiet, ready, busy, auth, stopped and approval count marks; caller owns state and target | `app_bar`, `agent_ok/busy`, `warning/error`, `font_badge` |
 | actions: `button`, `Button` | Secondary action: `Normal`, `Small`, or `Enabled(bool)` | native sizing, form font/control tokens |
@@ -724,3 +724,18 @@ icon segments and category chips. `catalog_footer` draws the quiet information h
 Catalog title marks use the active workspace accent; tile captions, usage badges and
 selection outlines share the sphere widgets. Feature code supplies data and commands,
 while the kit owns every dimension, colour and inset.
+
+The Appearance Inspector uses the shared `inspector_header` (selection icon/name,
+workspace chip, Menu and close action) and `Panel::editor_footer` (48 pt pinned
+band). `color_hex_field` pairs the colour popover with a bounded hex editor;
+`mixed_slider` pairs the standard slider with the mixed-aware scalar editor.
+`editor_section` uses a 24 pt heading and 6 pt field gaps.
+`workspace_chip`, `text_button`, `section_heading`, `pending_section`,
+`searchable_icon_dropdown` and `Menu::text` retain
+shared token paint and hit targets. All are exercised in the kit gallery.
+
+| Shared editor component | Behaviour |
+| --- | --- |
+| method_section | Compact, initially collapsed editor section with a method tag; unsupported contents remain inspectable and disabled, with a translated reason visible even when collapsed. Uses editor_section typography and spacing. |
+| vector3_field | Three bounded number fields divide the row's control column evenly, retaining the shared parser, focus and bevels. Used for RGB absorption and world-space origin/repeat vectors. |
+| sphere_preview_with_source | Sample card with an interactive source tag, retaining the sphere, name, usage badge and trailing action. Appearance uses the tag to inspect its inheritance chain. |

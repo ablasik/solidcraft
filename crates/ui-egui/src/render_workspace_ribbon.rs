@@ -173,6 +173,7 @@ pub(super) fn presentation(app: &SolveApp) -> solidcraft_engine::render::job::pr
 }
 
 fn focus(app: &mut SolveApp, page: inspector::Page, category: Option<&str>) {
+    app.render_workspace.view.inspector.hidden = false;
     app.render_workspace.view.inspector.page = page;
     if let Some(category) = category {
         library::open_category(app, category);
@@ -207,7 +208,10 @@ fn navigate(app: &mut SolveApp, id: &str) -> Result<(), String> {
     action_ready(app, id)?;
     use inspector::Page;
     match id {
-        "render.aging.describe" => focus(app, Page::Aging, None),
+        "render.aging.describe" => {
+            focus(app, Page::Appearance, None);
+            inspector::reveal(app, "render:appearance:advanced");
+        }
         "render.effects.describe" => focus(app, Page::Effects, None),
         "render.preset.resolve" | "render.preset.apply" => focus(app, Page::Scene, Some("native_scenes")),
         "render.settings.get" | "render.shot.duplicate" | "render.shot.rename" | "render.shot.remove" => {

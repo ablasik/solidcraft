@@ -20,6 +20,7 @@ pub use design::{
     write_design_container_with_thumbnail, write_drawing_container,
 };
 mod legacy_dir;
+pub mod limits;
 #[cfg(test)]
 mod mutate;
 mod native_cad;
@@ -79,7 +80,7 @@ pub const DRAWING_EXT: &str = "scdwg";
 pub fn is_drawing_path(path: &str) -> bool {
     std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(DRAWING_EXT))
 }
-/// Largest design file we read.
+/// Largest design file read by default; the desktop app may raise it ([`limits`], #4086).
 pub const MAX_DESIGN_BYTES: usize = 256 << 20;
 
 #[derive(Debug, thiserror::Error)]
@@ -98,7 +99,7 @@ pub enum IoError {
 
 pub type Result<T> = std::result::Result<T, IoError>;
 
-/// Largest STEP file we read.
+/// Largest STEP (or import) file read by default; the desktop app may raise it ([`limits`], #4086).
 pub const MAX_STEP_BYTES: usize = 512 << 20;
 
 /// Is this a CAD file read as an Import base feature: STEP (`.step` / `.stp`), IGES
@@ -225,9 +226,7 @@ pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
 
 /// [`step_import_feature`], with the bodies named after `names`.
 pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> Result<StepFeature> {
-    if bytes.len() > MAX_STEP_BYTES {
-        return Err(IoError::Invalid(format!("STEP file too large ({} MB, limit {} MB)", bytes.len() >> 20, MAX_STEP_BYTES >> 20)));
-    }
+    limits::check(limits::Kind::Step, bytes.len() as u64).map_err(IoError::Invalid)?;
     // STEP is 7-bit text with escapes; tolerate stray 8-bit bytes. IGES and the cadmpeg formats
     // are restated as STEP (the feature keeps that STEP text).
     let (text, iges_warnings) = if is_native_cad_path(file) {
@@ -787,9 +786,7 @@ pub fn step_assembly(doc: &Document, local: &ModelState, name: &str) -> Result<V
 
 /// Read a design file's bytes.
 pub fn read_design(bytes: &[u8]) -> Result<Document> {
-    if bytes.len() > MAX_DESIGN_BYTES {
-        return Err(IoError::Invalid("design file too large".into()));
-    }
+    limits::check(limits::Kind::Design, bytes.len() as u64).map_err(|e| IoError::Invalid(format!("design {e}")))?;
     if is_design_container(bytes) {
         return design::read(bytes);
     }

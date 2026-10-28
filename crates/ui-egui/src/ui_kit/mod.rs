@@ -79,8 +79,10 @@ pub(crate) use radial::{RADIAL_RADIUS, radial_menu};
 pub(crate) use reports::*;
 pub(crate) use search::{CommandSearch, SearchBadge, SearchFieldGeometry};
 pub(crate) use shortcuts::*;
+#[cfg(test)]
+pub(crate) use sphere::sphere_preview;
 pub use sphere::{FinishKind, Sphere, sphere_thumbnail};
-pub(crate) use sphere::{SphereTile, sphere_grid};
+pub(crate) use sphere::{SphereTile, sphere_grid, sphere_preview_with_source};
 pub(crate) use stages::{StageAction, StageBar};
 pub(crate) use status::*;
 pub(crate) use table::*;
@@ -110,3 +112,5 @@ pub(crate) fn fits_steadily(ui: &egui::Ui, key: impl std::hash::Hash + std::fmt:
     ui.data_mut(|data| data.insert_temp(id, fits));
     fits
 }
+
+pub(crate) use panel::{InspectorAction, inspector_header};
