@@ -33,14 +33,31 @@ light coordinate frame remains disabled with its reason in this checkout. Frame
 uses the existing explicit camera command for projection; Output shows the current
 size/format and directs edits to the Output Inspector. No completion ticks are inferred.
 
-The Browser and Inspector float in both shell layouts, share top and bottom edges,
-and clear the bar and Shots strip by 8 pt. Their default outer widths are 266 pt and 305 pt, with the shared resize bounds.
-The 48 pt Shots strip has an 8 pt gap from the docks. The 110 pt compass uses the
-free canvas beside the Inspector and the navigation bar keeps its shared navigation handler. Narrow
-rows scroll horizontally; docks shrink together or disappear if no usable space
-remains. The Shots strip's independent `view.shots_strip` preference is unchanged.
-The current model/library Browser can reveal model bodies for Look; scene-specific
-Lights, Shots and Output expansion awaits the scene Browser change.
+The Browser and Inspector float in both shell layouts and share a top edge, 8 pt
+below the bar. Their default outer widths are 266 pt and 305 pt, with shared resize
+bounds. The Browser keeps the upper left card (up to ten compact scene rows); its
+stage panel fills the remaining height below it, ending 8 pt above the 48 pt Shots
+strip. Both cards share width and side preferences. Narrow windows shorten the
+Browser to reserve library space, then omit cards that cannot fit safely.
+
+Look hosts Appearances: search with the actual catalog count, In Design / Library /
+Recent / favorites scopes, horizontally scrolling category chips and a three-column
+sphere grid or list. Resources used in the design or matching a selected look's
+finish family or category appear first. Clicking a look applies through
+`appearance.assign` to selected bodies, faces or components; with no target it
+only inspects. Favorites and recent history live in user preferences. Explicit
+catalog navigation from the Inspector retains the read-only resource browser.
+
+Light hosts the existing native studios and HDR environments in the same tile grid.
+A click runs `render.preset.apply` or `render.library.environment.apply`, preserving
+those commands' validation and undo behavior. Studios require an explicitly selected
+GPU path setup; environments require CPU or GPU ray tracing. Frame and Output show
+faded Frame presets / Size presets placeholders with their Shot editor / Output
+editor reasons. Stage navigation itself never applies a resource.
+
+The 110 pt compass uses the free canvas beside the Inspector; the navigation bar
+keeps its shared handler. The Shots strip's independent `view.shots_strip`
+preference is unchanged.
 
 `view.render_focus {on: true}` hides the Browser, Inspector and Shots strip and
 releases their canvas reservations. Tab toggles focus while Render is active and

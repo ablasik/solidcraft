@@ -432,14 +432,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     form_row(ui, "Body", |ui| {
                         ui.label(v["body"].as_str().unwrap_or(""));
                     });
-                    form_row(ui, "Flat size", |ui| {
-                        ui.label(format!(
-                            "{} × {} × {}",
-                            crate::prefs::show_mm(app, size[0].as_f64().unwrap_or(0.0), 1),
-                            crate::prefs::show_mm(app, size[1].as_f64().unwrap_or(0.0), 1),
-                            crate::prefs::show_mm(app, size[2].as_f64().unwrap_or(0.0), 1)
-                        ));
-                    });
+                    // One number per row, X and Y as in the DXF: on one row the panel's width cut the
+                    // flat size off after its first side, and the second is the one people read most.
+                    for (label, i) in [("Flat size X", 0), ("Flat size Y", 1), ("Thickness", 2)] {
+                        form_row(ui, label, |ui| {
+                            ui.label(crate::prefs::show_mm(app, size[i].as_f64().unwrap_or(0.0), 1));
+                        });
+                    }
                     let bends = v["bends"].as_array().cloned().unwrap_or_default();
                     form_row(ui, "Bends", |ui| {
                         ui.label(format!("{}", bends.len()));

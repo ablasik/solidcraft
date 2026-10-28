@@ -82,16 +82,26 @@ fn shade(key: Key, t: &Tokens) -> Mesh {
             let z = (1.0 - r * r).max(0.0).sqrt();
             let light = (-0.4 * x - 0.5 * y + 0.76 * z).max(0.0);
             let specular = (-0.25 * x - 0.35 * y + 0.902 * z).max(0.0);
-            let (diffuse, shine) = match key.kind {
+            let (diffuse, mut shine) = match key.kind {
                 FinishKind::Matte => (0.3 + 0.7 * light, 0.04 * specular.powi(8)),
                 FinishKind::Satin => (0.25 + 0.75 * light, 0.25 * specular.powi(16)),
                 FinishKind::Gloss => (0.2 + 0.8 * light, 0.85 * specular.powi(64)),
-                FinishKind::Metal => (0.15 + 0.65 * light, 0.8 * specular.powi(24)),
+                FinishKind::Metal => (0.45 + 0.5 * light, 0.65 * specular.powi(16)),
                 FinishKind::Glass => (0.5 + 0.5 * light, (0.85 * specular.powi(64) + 0.4 * (1.0 - z).powi(3)).min(1.0)),
             };
-            let shaded = key.color.lerp_to_gamma(t.tab_on_fill_dark, 1.0 - diffuse);
-            let highlight = if key.kind == FinishKind::Metal { key.color.lerp_to_gamma(t.on_accent, 0.65) } else { t.on_accent };
-            let color = shaded.lerp_to_gamma(highlight, shine).gamma_multiply(f32::from(key.opacity) / 255.0);
+            let mut shaded = key.color.lerp_to_gamma(t.tab_on_fill_dark, 1.0 - diffuse);
+            if key.kind == FinishKind::Metal {
+                // Original studio sample: broad radial illumination, a curved horizon,
+                // a lower reflector and an oval softbox. All are bounded analytic fields.
+                let gradient = ((x + 0.28).hypot(y + 0.44) / 1.64).clamp(0.0, 1.0);
+                shaded = if gradient < 0.42 {
+                    key.color.lerp_to_gamma(t.on_accent, 0.4 * (1.0 - gradient / 0.42))
+                } else {
+                    key.color.lerp_to_gamma(t.tab_on_fill_dark, 0.66 * (gradient - 0.42) / 0.58)
+                };
+                shine = 0.0;
+            }
+            let color = shaded.lerp_to_gamma(t.on_accent, shine).gamma_multiply(f32::from(key.opacity) / 255.0);
             mesh.colored_vertex(pos2(radius + x * radius, radius + y * radius), color);
             if ring < RINGS && sector < SECTORS {
                 let a = ring * (SECTORS + 1) + sector;
@@ -126,6 +136,32 @@ pub(super) fn paint_sphere(ui: &Ui, rect: Rect, sphere: Sphere) {
         vertex.pos = rect.min + vertex.pos.to_vec2() * scale;
     }
     ui.painter().add(egui::Shape::mesh(mesh));
+    if sphere.kind == FinishKind::Metal {
+        let radius = rect.width() / 2.0;
+        let at = |x: f32, y: f32| rect.center() + vec2(x, y) * radius;
+        let opacity = f32::from(key.opacity) / 255.0;
+        // Vector reflections stay smooth at small sizes without increasing cached mesh topology.
+        ui.painter().add(egui::epaint::QuadraticBezierShape::from_points_stroke(
+            [at(-0.965, 0.207), at(0.0, -0.138), at(0.965, 0.207)],
+            false,
+            Color32::TRANSPARENT,
+            egui::Stroke::new(radius * 0.069, t.tab_on_fill_dark.gamma_multiply(0.22 * opacity)),
+        ));
+        let ellipse = |center: egui::Pos2, radii: egui::Vec2, angle: f32, alpha: f32| {
+            let (sin, cos) = angle.sin_cos();
+            let points = (0..48)
+                .map(|index| {
+                    let a = std::f32::consts::TAU * index as f32 / 48.0;
+                    let x = radii.x * a.cos();
+                    let y = radii.y * a.sin();
+                    center + vec2(cos * x - sin * y, sin * x + cos * y)
+                })
+                .collect();
+            ui.painter().add(egui::Shape::convex_polygon(points, t.on_accent.gamma_multiply(alpha * opacity), egui::Stroke::NONE));
+        };
+        ellipse(at(0.0, 0.48), vec2(0.83, 0.21) * radius, 0.0, 0.16);
+        ellipse(at(-0.345, -0.483), vec2(0.38, 0.21) * radius, -32.0_f32.to_radians(), 0.55);
+    }
 }
 
 /// Clamps size to 1–96 logical points. Cache: 64 FIFO entries per egui context.
@@ -137,6 +173,82 @@ pub fn sphere_thumbnail(ui: &mut Ui, id: &str, sphere: Sphere, size: f32) -> Res
     scenario::publish_rect(id, rect);
     scenario::publish_handle(id, rect.center());
     response
+}
+
+/// A catalog sample: 48 pt sphere in a 56 pt cell, two-line caption and optional
+/// usage badge. The surrounding chrome follows the active workspace accent.
+pub(crate) struct SphereTile<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub sphere: Sphere,
+    pub selected: bool,
+    pub users: usize,
+    pub tip: &'a str,
+}
+
+impl SphereTile<'_> {
+    pub(crate) fn show(&self, ui: &mut Ui) -> Response {
+        let t = Tokens::get();
+        let accent = crate::theme::TabAccent::current(ui.ctx());
+        let side = t.control_height * 2.0;
+        let height = side + t.space_3 + t.font_small * 2.5 + t.space_4;
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let response = ui.interact(rect, ui.make_persistent_id(self.id), Sense::click());
+        let cell = Rect::from_min_size(pos2(rect.center().x - side / 2.0, rect.top() + t.space_4), vec2(side, side));
+        ui.painter().rect_filled(cell, t.radius_xl, t.control_fill);
+        ui.painter().rect_stroke(cell, t.radius_xl, t.control_border_stroke(t.dialog_rule), egui::StrokeKind::Inside);
+        if self.selected || response.hovered() || response.has_focus() {
+            ui.painter().rect_stroke(cell.expand(t.space_2), t.radius_xl, egui::Stroke::new(t.space_2, accent.ink), egui::StrokeKind::Outside);
+        }
+        paint_sphere(ui, cell.shrink(t.space_4), self.sphere);
+        if self.users > 0 {
+            let text = if self.users > 99 { "99+".into() } else { self.users.to_string() };
+            let galley = ui.painter().layout_no_wrap(text, crate::fonts::semibold(t.font_badge), t.on_accent);
+            let width = (galley.size().x + t.space_8).max(t.space_16);
+            let badge = Rect::from_min_size(pos2(cell.right() + t.space_2 - width, cell.top() - t.space_2), vec2(width, t.space_16));
+            ui.painter().rect_filled(badge, t.radius_lg, accent.ink);
+            ui.painter().galley(badge.center() - galley.size() / 2.0, galley, t.on_accent);
+        }
+        let label = Rect::from_min_max(pos2(rect.left(), cell.bottom() + t.space_3), rect.max);
+        let font = if self.selected { crate::fonts::semibold(t.font_small) } else { egui::FontId::proportional(t.font_small) };
+        let mut job = egui::text::LayoutJob::simple(self.name.to_owned(), font, t.form_ink, label.width());
+        job.halign = egui::Align::Center;
+        job.wrap.max_rows = 2;
+        job.wrap.break_anywhere = false;
+        let galley = ui.painter().layout_job(job);
+        ui.painter().with_clip_rect(ui.clip_rect().intersect(label)).galley(
+            pos2(label.center().x - galley.rect.center().x, label.top() - galley.rect.top()),
+            galley,
+            t.form_ink,
+        );
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), self.selected, self.name));
+        scenario::publish_target(self.id, rect);
+        let mut tip = egui::Tooltip::for_enabled(&response);
+        tip.popup = tip.popup.frame(super::Container::new(ui.ctx(), super::Surface::Toast).tooltip_frame(ui.ctx()));
+        tip.show(|ui| {
+            ui.label(self.tip);
+        });
+        response
+    }
+}
+
+/// Fixed-column catalog composition. Tile geometry and gaps stay with the kit.
+pub(crate) fn sphere_grid(ui: &mut Ui, tiles: &[SphereTile<'_>]) -> Option<usize> {
+    let t = Tokens::get();
+    let mut clicked = None;
+    ui.spacing_mut().item_spacing = vec2(t.space_2, t.space_8);
+    for (row, chunk) in tiles.chunks(3).enumerate() {
+        ui.columns(3, |columns| {
+            for (column, tile) in chunk.iter().enumerate() {
+                if let Some(ui) = columns.get_mut(column)
+                    && tile.show(ui).clicked()
+                {
+                    clicked = Some(row * 3 + column);
+                }
+            }
+        });
+    }
+    clicked
 }
 
 #[cfg(test)]

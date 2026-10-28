@@ -5,7 +5,7 @@ use crate::{SolveApp, theme::Tokens, ui_kit};
 use serde_json::{Value, json};
 use solidcraft_engine::{doc::Document, geom::Vec3};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::BTreeMap,
     sync::{Arc, Weak},
 };
 
@@ -39,8 +39,10 @@ pub(super) struct View {
     collection: usize,
     collection_query: String,
     navigation: BTreeMap<String, Navigation>,
-    favorites: BTreeSet<(String, String)>,
-    recent: VecDeque<(String, String)>,
+    category: String,
+    layout: usize,
+    revision: Option<u64>,
+    document: Option<Weak<Document>>,
     labels: BTreeMap<(String, String), String>,
     statuses: BTreeMap<(String, String), String>,
     preview: Option<SourcePreview>,
@@ -70,7 +72,7 @@ impl std::fmt::Debug for SourcePreview {
 impl Default for View {
     fn default() -> Self {
         Self {
-            kind: "surfaces".into(),
+            kind: "appearances".into(),
             query: String::new(),
             entries: Vec::new(),
             selected: None,
@@ -98,8 +100,10 @@ impl Default for View {
             collection: 0,
             collection_query: String::new(),
             navigation: Default::default(),
-            favorites: Default::default(),
-            recent: Default::default(),
+            category: String::new(),
+            layout: 0,
+            revision: None,
+            document: None,
             labels: Default::default(),
             statuses: Default::default(),
             preview: None,
@@ -111,10 +115,46 @@ impl Default for View {
 }
 
 fn refresh(app: &mut SolveApp, view: &mut View) -> Result<(), String> {
-    let reply = app.run("render.library.list", json!({"kind":view.kind,"query":view.query,"offset":view.offset,"limit":48,"availability":if view.kind=="physical_profiles" {"all"} else {&view.availability}}))?;
-    view.entries = reply["items"].as_array().cloned().ok_or_else(|| crate::i18n::tr("render.error_library_reply").to_string())?;
-    view.total = reply["total"].as_u64().and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
-    view.next = reply["next_offset"].as_u64().and_then(|n| usize::try_from(n).ok());
+    if matches!(view.collection, 1 | 2) {
+        let keys: Vec<_> = if view.collection == 1 {
+            app.preferences.render_library_favorites.iter().take(256).cloned().collect()
+        } else {
+            app.preferences.render_library_recent.iter().take(32).cloned().collect()
+        };
+        view.entries = keys
+            .into_iter()
+            .filter_map(|(kind, id)| {
+                let detail = describe(app, &kind, &id).ok()?;
+                let mut entry = detail["resource"].clone();
+                entry["resource"] = detail["resource"].clone();
+                entry["projection"] = detail["projection"].clone();
+                entry["library_kind"] = json!(kind);
+                entry["catalog_identity"] = json!(id);
+                Some(entry)
+            })
+            .collect();
+        view.total = view.entries.len();
+        view.next = None;
+    } else if view.collection == 3 || view.kind == "appearances" {
+        let reply = app.run(if view.collection == 3 { "appearance.list" } else { "appearance.library" }, json!({}))?;
+        view.entries = reply[if view.collection == 3 { "in_design" } else { "appearances" }].as_array().cloned().unwrap_or_default();
+        view.total = view.entries.len();
+        view.next = None;
+    } else {
+        let reply = app.run("render.library.list", json!({"kind":view.kind,"query":view.query,"offset":view.offset,"limit":48,"availability":if view.kind=="physical_profiles" {"all"} else {&view.availability}}))?;
+        view.entries = reply["items"].as_array().cloned().ok_or_else(|| crate::i18n::tr("render.error_library_reply").to_string())?;
+        // Capture authored optical parameters once per page; selection remains read-only.
+        for entry in &mut view.entries {
+            if let Some(id) = entry["id"].as_str() {
+                let detail = app.run("render.library.describe", json!({"kind":view.kind,"id":id}))?;
+                entry["resource"] = detail["resource"].clone();
+            }
+        }
+        view.total = reply["total"].as_u64().and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+        view.next = reply["next_offset"].as_u64().and_then(|n| usize::try_from(n).ok());
+    }
+    view.revision = Some(app.session.revision);
+    view.document = Some(Arc::downgrade(&app.session.doc));
     view.loaded = true;
     // Search/page changes preserve the independently inspected resource.
     view.acknowledge_projection = false;
@@ -184,6 +224,7 @@ fn patch(app: &SolveApp) -> Result<Value, String> {
 }
 
 const KINDS: &[(&str, &str)] = &[
+    ("appearances", "render.appearances"),
     ("native_scenes", "render.library_native_scenes"),
     ("surfaces", "render.library_surfaces"),
     ("hdr", "render.library_hdr"),
@@ -228,6 +269,7 @@ fn switch_kind(view: &mut View, kind: &str) {
         view.availability = "all".into();
     }
     view.loaded = false;
+    view.category.clear();
     view.preview = None;
     view.preview_error = None;
     view.physical_plan = None;
@@ -235,15 +277,19 @@ fn switch_kind(view: &mut View, kind: &str) {
     view.physical_ack = false;
 }
 pub(super) fn open_category(app: &mut SolveApp, kind: &str) {
+    // Explicit catalog browsing retains read-only Inspector workflows on the library stage.
+    let page = app.render_workspace.view.inspector.page;
+    let _ = app.run("view.render_stage", json!({"stage":"look"}));
+    app.render_workspace.view.inspector.page = page;
     switch_kind(&mut app.render_workspace.view.library, kind);
     app.render_workspace.view.library.collection = 0;
-    app.render_workspace.view.inspector.library_open = true;
     app.ui.show_browser = true;
+    let _ = app.run("view.render_browser", json!({"open":true}));
     app.tree.panel_collapsed = false;
 }
 fn choose(app: &mut SolveApp, view: &mut View, kind: &str, id: &str) -> Result<(), String> {
     switch_kind(view, kind);
-    let detail = app.run("render.library.describe", json!({"kind":kind,"id":id}))?;
+    let detail = describe(app, kind, id)?;
     let display = detail["resource"]["name"].as_str().or_else(|| detail["resource"]["designation"].as_str()).unwrap_or(id).to_string();
     let status = detail["projection"]["status"].as_str().unwrap_or("reference_only").to_string();
     view.details = Some(detail);
@@ -255,13 +301,16 @@ fn choose(app: &mut SolveApp, view: &mut View, kind: &str, id: &str) -> Result<(
     view.physical_plan = None;
     app.render_workspace.view.inspector.clear_resource_reviews();
     let key = (kind.to_string(), id.to_string());
-    view.recent.retain(|old| old != &key);
-    view.recent.push_front(key.clone());
-    view.recent.truncate(32);
+    app.preferences.render_library_recent.retain(|old| old != &key);
+    app.preferences.render_library_recent.push_front(key.clone());
+    app.preferences.render_library_recent.truncate(32);
+    if matches!(view.collection, 1 | 2) {
+        view.loaded = false;
+    }
     view.statuses.insert(key.clone(), status);
     view.labels.insert(key, display);
-    view.labels.retain(|key, _| view.favorites.contains(key) || view.recent.contains(key));
-    view.statuses.retain(|key, _| view.favorites.contains(key) || view.recent.contains(key));
+    view.labels.retain(|key, _| app.preferences.render_library_favorites.contains(key) || app.preferences.render_library_recent.contains(key));
+    view.statuses.retain(|key, _| app.preferences.render_library_favorites.contains(key) || app.preferences.render_library_recent.contains(key));
     app.render_workspace.view.inspector.page = match kind {
         "native_scenes" | "scenes" | "selene_shots" => super::inspector::Page::Scene,
         "hdr" | "environments" => super::inspector::Page::Environment,
@@ -273,54 +322,561 @@ fn choose(app: &mut SolveApp, view: &mut View, kind: &str, id: &str) -> Result<(
     Ok(())
 }
 
-/// The existing browser card owns layout and occlusion in both shell modes.
-pub(super) fn browse(app: &mut SolveApp, ui: &mut egui::Ui) {
+/// Resolve previews and Inspector metadata through the same public catalog commands.
+fn look_signature(entry: &Value) -> Value {
+    json!([entry["name"], entry["color"], entry["opacity"], entry["pbr"]])
+}
+fn appearance_id(entry: &Value) -> String {
+    entry["id"].as_str().map(str::to_owned).unwrap_or_else(|| look_signature(entry).to_string())
+}
+fn describe(app: &mut SolveApp, kind: &str, id: &str) -> Result<Value, String> {
+    if kind != "appearances" {
+        return app.run("render.library.describe", json!({"kind":kind,"id":id}));
+    }
+    for (command, field) in [("appearance.library", "appearances"), ("appearance.list", "in_design")] {
+        let reply = app.run(command, json!({}))?;
+        if let Some(resource) = reply[field].as_array().and_then(|items| items.iter().find(|item| appearance_id(item) == id)) {
+            return Ok(
+                json!({"resource":resource,"projection":{"status":if resource["available"] == false { "blocked" } else { "native_appearance" }}}),
+            );
+        }
+    }
+    // Custom looks carry their complete scalar definition in their preference key,
+    // so a favourite survives closing its originating design.
+    if let Ok(Value::Array(parts)) = serde_json::from_str::<Value>(id)
+        && parts.len() == 4
+    {
+        return Ok(
+            json!({"resource":{"name":parts.first(),"color":parts.get(1),"opacity":parts.get(2),"pbr":parts.get(3)},"projection":{"status":"native_appearance"}}),
+        );
+    }
+    Err("appearance is no longer available".into())
+}
+
+fn preview_parameters(entry: &Value) -> Value {
+    let source = entry.get("resource").unwrap_or(entry);
+    if let Some(parameters) = source.pointer("/baseline_projection/runtime_parameters") {
+        return parameters.clone();
+    }
+    if let (Some(low), Some(high)) = (source["base_linear_low"].as_array(), source["base_linear_high"].as_array()) {
+        let color: Vec<_> = low
+            .iter()
+            .zip(high)
+            .take(3)
+            .map(|(a, b)| {
+                let linear = ((a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0)) * 0.5).clamp(0.0, 1.0);
+                let encoded = if linear <= 0.0031308 { linear * 12.92 } else { 1.055 * linear.powf(1.0 / 2.4) - 0.055 };
+                (encoded * 255.0).round() as u8
+            })
+            .collect();
+        return json!({"color":color,"opacity":1.0,"pbr":{"metallic":source["metallic"],"roughness":source["roughness"],"dielectric_ior":1.5}});
+    }
+    source.clone()
+}
+fn tile_sphere(entry: &Value) -> ui_kit::Sphere {
+    let p = preview_parameters(entry);
+    let color = crate::dialogs_appearance::parse_color(&p["color"]).map(|[r, g, b]| egui::Color32::from_rgb(r, g, b)).unwrap_or(Tokens::get().body);
+    let scalar = |key: &str, default: f64| p["pbr"][key].as_f64().filter(|v| v.is_finite()).unwrap_or(default).clamp(0.0, 1.0);
+    let opacity = p["opacity"].as_f64().filter(|v| v.is_finite()).unwrap_or(1.0).clamp(0.0, 1.0);
+    let kind = if opacity < 1.0 {
+        ui_kit::FinishKind::Glass
+    } else if scalar("metallic", if category(entry) == "metal" { 1.0 } else { 0.0 }) >= 0.5 {
+        ui_kit::FinishKind::Metal
+    } else if scalar("roughness", 0.5) <= 0.2 {
+        ui_kit::FinishKind::Gloss
+    } else if scalar("roughness", 0.5) >= 0.7 {
+        ui_kit::FinishKind::Matte
+    } else {
+        ui_kit::FinishKind::Satin
+    };
+    ui_kit::Sphere { color, kind, opacity: Some(opacity as f32) }
+}
+fn user_count(entry: &Value) -> usize {
+    ["bodies", "faces", "components"].iter().filter_map(|key| entry[*key].as_array()).map(Vec::len).fold(0, usize::saturating_add)
+}
+fn usage_for<'a>(entry: &Value, used: &'a [Value]) -> Option<&'a Value> {
+    let source = entry.get("resource").unwrap_or(entry);
+    let parameters = preview_parameters(entry);
+    let name = source["name"].as_str()?;
+    let name = if source.get("base_linear_low").is_some() || source.pointer("/baseline_projection/runtime_parameters").is_some() {
+        format!("{} {name}", entry["id"].as_str()?)
+    } else {
+        name.to_string()
+    };
+    let color = crate::dialogs_appearance::parse_color(&parameters["color"])?;
+    used.iter().find(|look| {
+        look["name"].as_str() == Some(&name)
+            && crate::dialogs_appearance::parse_color(&look["color"]) == Some(color)
+            && look["opacity"].as_f64() == parameters["opacity"].as_f64()
+            && ["metallic", "roughness", "dielectric_ior"].iter().all(|key| look["pbr"][*key].as_f64() == parameters["pbr"][*key].as_f64())
+    })
+}
+fn matches_entry(entry: &Value, query: &str, category: &str, availability: &str) -> bool {
+    let state = entry.pointer("/projection/status").and_then(Value::as_str).unwrap_or(if entry["available"] == false {
+        "blocked"
+    } else {
+        "native_appearance"
+    });
+    let admitted = match availability {
+        "usable" => matches!(state, "native_appearance" | "native_composition" | "implemented_pending_batch_validation"),
+        "blocked" => state == "blocked",
+        "specification" => state == "specification_only",
+        _ => true,
+    };
+    let source = entry.get("resource").unwrap_or(entry);
+    let query = query.to_lowercase();
+    admitted
+        && (category.is_empty() || entry["category"].as_str() == Some(category))
+        && ["id", "name", "category", "family", "description", "domains", "process", "intended_use", "tags"]
+            .iter()
+            .filter_map(|field| source.get(*field))
+            .any(|field| field.to_string().to_lowercase().contains(&query))
+}
+
+pub(super) fn card(app: &mut SolveApp, ui: &mut egui::Ui, bounds: egui::Rect) {
+    let mut side = app.preferences.render_browser_side.clone();
+    let mut width = app.preferences.render_browser_width;
+    let stage = app.render_workspace.view.stage;
+    let title = app.tr(stage_title(stage)).to_string();
+    let mut layout = app.render_workspace.view.library.layout;
+    let mut actions = |ui: &mut egui::Ui| {
+        ui_kit::catalog_scope(ui, |ui| {
+            ui_kit::segmented_icons(
+                ui,
+                &mut layout,
+                &[
+                    ui_kit::IconSegment { key: "render:library-grid", icon: "grid", tip: crate::i18n::tr("render.library_grid").into() },
+                    ui_kit::IconSegment { key: "render:library-list", icon: "list", tip: crate::i18n::tr("render.library_list").into() },
+                ],
+                &[],
+            )
+        });
+    };
+    let response = ui_kit::Panel::workspace(
+        ui,
+        ui_kit::WorkspaceOptions {
+            id: "render:appearances",
+            title: &title,
+            icon: "",
+            bounds,
+            fill_height: true,
+            compact: crate::render_ui::compact(app, bounds.width()),
+            enabled: matches!(stage, super::Stage::Look | super::Stage::Light),
+            header_actions: (stage == super::Stage::Look).then_some(&mut actions as &mut dyn FnMut(&mut egui::Ui)),
+        },
+        &mut side,
+        &mut width,
+        |ui| match stage {
+            super::Stage::Look => ui_kit::catalog_scope(ui, |ui| browse_contents(app, ui, true)),
+            super::Stage::Light => light_panel(app, ui),
+            super::Stage::Frame | super::Stage::Output => {
+                let reason = app.tr(if stage == super::Stage::Frame { "render.frame_presets_pending" } else { "render.size_presets_pending" });
+                ui_kit::text(ui, reason, ui_kit::Text::Note("render:stage-presets-pending"));
+            }
+        },
+    );
+    app.render_workspace.view.library.layout = layout;
+    app.preferences.render_browser_width = width;
+    let requested =
+        response.as_ref().and_then(|r| r.inner.1).map(str::to_string).or_else(|| (app.preferences.render_browser_side != side).then(|| side.clone()));
+    if let Some(side) = requested {
+        let _ = app.run("view.render_dock", json!({"panel":"browser","side":side}));
+    }
+    crate::shell::register_panel(
+        app,
+        "render:appearances",
+        response.map(|r| r.response.rect),
+        if bounds.width() < 800.0 { None } else { Some(if side == "left" { ui_kit::Edge::Left } else { ui_kit::Edge::Right }) },
+    );
+}
+
+fn stage_title(stage: super::Stage) -> &'static str {
+    match stage {
+        super::Stage::Look => "render.appearances",
+        super::Stage::Light => "render.studios_environments",
+        super::Stage::Frame => "render.frame_presets",
+        super::Stage::Output => "render.size_presets",
+    }
+}
+
+fn light_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical().id_salt("render_light_resources").auto_shrink([false, false]).show(ui, |ui| {
+        for (kind, heading) in [("native_scenes", "render.library_native_scenes"), ("hdr", "render.library_hdr")] {
+            ui_kit::text(ui, app.tr(heading), ui_kit::Text::Inline);
+            let reply = match app.run("render.library.list", json!({"kind":kind,"limit":128})) {
+                Ok(reply) => reply,
+                Err(error) => {
+                    app.set_status(error, true);
+                    continue;
+                }
+            };
+            let entries = reply["items"].as_array().cloned().unwrap_or_default();
+            let ids: Vec<_> = entries.iter().map(|e| format!("render:light:{}", e["id"].as_str().unwrap_or(""))).collect();
+            let tiles: Vec<_> = entries
+                .iter()
+                .zip(&ids)
+                .map(|(entry, id)| ui_kit::SphereTile {
+                    id,
+                    name: entry["name"].as_str().unwrap_or(""),
+                    sphere: ui_kit::Sphere { color: Tokens::get().body, kind: ui_kit::FinishKind::Metal, opacity: None },
+                    selected: false,
+                    users: 0,
+                    tip: entry["name"].as_str().unwrap_or(""),
+                })
+                .collect();
+            let reason = light_reason(app, kind);
+            let grid = ui.add_enabled_ui(reason.is_none(), |ui| ui_kit::sphere_grid(ui, &tiles));
+            if let Some(reason) = reason {
+                grid.response.on_disabled_hover_text(reason);
+            }
+            if let Some(entry) = grid.inner.and_then(|index| entries.get(index))
+                && let Some(id) = entry["id"].as_str()
+                && let Err(error) = apply_light(app, kind, id)
+            {
+                app.set_status(error, true);
+            }
+        }
+    });
+}
+
+fn light_reason(app: &SolveApp, kind: &str) -> Option<String> {
+    if kind == "native_scenes" && app.render_workspace.view.method != ImageMethod::GpuRaytrace {
+        return Some(app.tr("render.studio_tiles_require_gpu").into());
+    }
+    if app.render_workspace.view.method == ImageMethod::Raster {
+        return Some(app.tr("render.environment_tiles_require_raytrace").into());
+    }
+    patch(app).err()
+}
+
+fn apply_light(app: &mut SolveApp, kind: &str, id: &str) -> Result<(), String> {
+    if let Some(reason) = light_reason(app, kind) {
+        return Err(reason);
+    }
+    let set = patch(app)?;
+    let name = app.render_workspace.view.name.clone();
+    let (command, request) = if kind == "native_scenes" {
+        (
+            "render.preset.apply",
+            json!({"id":id,"name":name,"set":set,"expected_revision":app.session.revision,
+            "replace_lighting_and_environment":true,"replace_stage":true}),
+        )
+    } else {
+        ("render.library.environment.apply", json!({"id":id,"name":name,"set":set,"replace_environment":true}))
+    };
+    app.run(command, request)?;
+    setups::load(app);
+    Ok(())
+}
+
+fn selected_looks(app: &mut SolveApp) -> Vec<Value> {
+    use solidcraft_engine::Sel;
+    let targets: Vec<_> = app
+        .session
+        .selection
+        .iter()
+        .filter_map(|sel| match sel {
+            Sel::Body { name } => Some(json!({"body":name})),
+            Sel::Face { body, index, .. } => Some(json!({"body":body,"face":index})),
+            Sel::Occurrence { path } => {
+                path.last().and_then(|id| app.session.doc.occurrences.iter().find(|o| o.id == *id)).map(|o| json!({"component":o.component}))
+            }
+            _ => None,
+        })
+        .collect();
+    targets
+        .into_iter()
+        .filter_map(|target| {
+            let chain = app.run("appearance.chain", json!({"target":target})).ok()?;
+            chain["steps"].as_array()?.iter().find(|s| s["step"] == chain["active"]).map(|s| s["look"].clone()).filter(|v| !v.is_null())
+        })
+        .collect()
+}
+
+fn category(entry: &Value) -> &'static str {
+    let source = entry.get("resource").unwrap_or(entry);
+    let label = source["category"].as_str().or_else(|| source["name"].as_str()).unwrap_or("").to_lowercase();
+    if label.contains("wood") {
+        "wood"
+    } else if label.contains("paint") || label.contains("coating") {
+        "paint"
+    } else if label.contains("plastic") || label.contains("abs") || label.contains("rubber") || label.contains("polymer") {
+        "plastic"
+    } else if ["metal", "alumin", "steel", "iron", "brass", "copper", "titanium", "chrome"].iter().any(|word| label.contains(word)) {
+        "metal"
+    } else {
+        "other"
+    }
+}
+
+fn applicable(entry: &Value, selected: &[Value], used: &[Value]) -> bool {
+    usage_for(entry, used).is_some()
+        || user_count(entry) > 0
+        || selected.iter().any(|look| {
+            let same_category = category(entry) != "other" && category(entry) == category(look);
+            same_category || tile_sphere(entry).kind == tile_sphere(look).kind
+        })
+}
+
+fn apply_look(app: &mut SolveApp, entry: &Value) -> Result<(), String> {
+    use solidcraft_engine::Sel;
+    let mut bodies = Vec::new();
+    let mut faces = Vec::new();
+    let mut components = Vec::new();
+    for sel in &app.session.selection {
+        match sel {
+            Sel::Body { name } => bodies.push(name.clone()),
+            Sel::Face { body, point, .. } => faces.push(json!({"body":body,"point":point})),
+            Sel::Occurrence { path } => {
+                if let Some(occurrence) = path.last().and_then(|id| app.session.doc.occurrences.iter().find(|o| o.id == *id)) {
+                    components.push(occurrence.component.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    if bodies.is_empty() && faces.is_empty() && components.is_empty() {
+        return Ok(());
+    }
+    let mut params = if let Some(id) = entry["id"].as_str() {
+        json!({"appearance":id})
+    } else {
+        json!({"name":entry["name"],"color":entry["color"],"opacity":entry["opacity"],"pbr":entry["pbr"]})
+    };
+    params["bodies"] = json!(bodies);
+    params["faces"] = json!(faces);
+    params["components"] = json!(components);
+    app.run("appearance.assign", params)?;
+    Ok(())
+}
+
+fn browse_contents(app: &mut SolveApp, ui: &mut egui::Ui, stage_card: bool) {
     let mut view = std::mem::take(&mut app.render_workspace.view.library);
-    let label = KINDS.iter().find(|(kind, _)| *kind == view.kind).map_or("", |(_, key)| app.tr(key)).to_string();
-    let menu = ui_kit::dropdown_menu(ui, "render_library_kind", &label, |ui| {
-        for &(kind, key) in KINDS {
-            let r = ui_kit::list_picker(ui, kind, app.tr(key), view.kind == kind);
-            crate::scenario::publish_handle(&format!("render:library-kind:{kind}"), r.rect.center());
-            if r.clicked() {
-                switch_kind(&mut view, kind);
-                view.collection = 0;
-                ui.close();
-            }
-        }
-    });
-    crate::scenario::publish_target("render:library-category", menu.rect);
-    let collection_labels =
-        [app.tr("render.library_all").to_string(), app.tr("render.library_favorites").to_string(), app.tr("render.library_recent").to_string()];
-    ui_kit::segmented(ui, &mut view.collection, &collection_labels.iter().map(String::as_str).collect::<Vec<_>>(), Default::default());
+    let t = Tokens::get();
+    let document_changed =
+        view.revision != Some(app.session.revision) || view.document.as_ref().is_none_or(|doc| !Weak::ptr_eq(doc, &Arc::downgrade(&app.session.doc)));
+    if (!view.loaded || document_changed)
+        && let Err(error) = refresh(app, &mut view)
+    {
+        view.loaded = true;
+        app.set_status(error, true);
+    }
+    let hint = crate::i18n::format("render.search_appearances", &[("count", &view.total.to_string())]);
     let query = if view.collection == 0 { &mut view.query } else { &mut view.collection_query };
-    let search = ui_kit::bounded_cell_editor(ui, ui.id().with("render_library_search"), query, app.tr("render.library_search"), false, 128);
+    let search = ui_kit::search_field(ui, ui.id().with("render_library_search"), query, &hint);
+    query.truncate(query.char_indices().nth(128).map_or(query.len(), |(at, _)| at));
     crate::scenario::publish_target("render:library-search", search.rect);
-    let enter = search.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-    ui.horizontal(|ui| {
-        if (ui_kit::button(ui, app.tr("render.library_search"), ui_kit::Button::Normal).clicked() || enter) && view.collection == 0 {
-            view.offset = 0;
-            view.loaded = false;
-        }
-        if ui_kit::button(ui, app.tr("render.library_clear_search"), ui_kit::Button::Normal).clicked() {
-            if view.collection == 0 {
-                view.query.clear();
-                view.offset = 0;
-                view.loaded = false;
-            } else {
-                view.collection_query.clear();
-            }
-        }
+    if search.changed() {
+        view.offset = 0;
+        view.loaded = false;
+    }
+    let labels = [
+        app.tr("render.library_in_design").to_string(),
+        app.tr("render.browser_library").to_string(),
+        app.tr("render.library_recent").to_string(),
+        "★".to_string(),
+    ];
+    let mut scope = match view.collection {
+        3 => 0,
+        0 => 1,
+        2 => 2,
+        _ => 3,
+    };
+    if ui_kit::segmented(
+        ui,
+        &mut scope,
+        &labels.iter().map(String::as_str).collect::<Vec<_>>(),
+        ui_kit::Segments {
+            compact: true,
+            proportional: true,
+            workspace_accent: true,
+            targets: &[
+                "render:library-scope:in-design",
+                "render:library-scope:library",
+                "render:library-scope:recent",
+                "render:library-scope:favorites",
+            ],
+            ..Default::default()
+        },
+    ) {
+        view.collection = [3, 0, 2, 1].get(scope).copied().unwrap_or(0);
+        view.loaded = false;
+        view.offset = 0;
+        view.category.clear();
+    }
+    let document_changed =
+        view.revision != Some(app.session.revision) || view.document.as_ref().is_none_or(|doc| !Weak::ptr_eq(doc, &Arc::downgrade(&app.session.doc)));
+    if (!view.loaded || document_changed)
+        && let Err(error) = refresh(app, &mut view)
+    {
+        view.loaded = true;
+        app.set_status(error, true);
+    }
+    let mut entries: Vec<(String, String, Value)> = view
+        .entries
+        .iter()
+        .map(|entry| {
+            let appearance = view.collection == 3 || view.kind == "appearances";
+            (
+                entry["library_kind"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| if appearance { "appearances".into() } else { view.kind.clone() }),
+                entry["catalog_identity"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| if appearance { appearance_id(entry) } else { entry["id"].as_str().unwrap_or("").to_string() }),
+                entry.clone(),
+            )
+        })
+        .collect();
+    egui::ScrollArea::horizontal().id_salt("render_library_chips").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
+        ui,
+        |ui| {
+            ui.horizontal(|ui| {
+                for (id, label) in [
+                    ("", "ui.all"),
+                    ("metal", "render.category_metal"),
+                    ("plastic", "render.category_plastic"),
+                    ("paint", "render.category_paint"),
+                    ("wood", "render.category_wood"),
+                ] {
+                    if ui_kit::choice_chip(ui, &format!("render-library-{id}"), app.tr(label), view.category == id).clicked() {
+                        view.category = id.into();
+                    }
+                }
+            });
+        },
+    );
+    let query = if view.collection == 0 { &view.query } else { &view.collection_query };
+    entries.retain(|(_, _, entry)| {
+        matches_entry(entry, query, "", &view.availability) && (view.category.is_empty() || category(entry) == view.category)
     });
-    if view.collection == 0 && view.kind != "physical_profiles" {
-        let choices = [
-            ("all", "render.library_all_states"),
-            ("usable", "render.library_usable"),
-            ("specification", "render.library_specs"),
-            ("blocked", "render.library_blocked"),
-        ];
-        let label = choices.iter().find(|(id, _)| *id == view.availability).map_or("", |(_, key)| app.tr(key)).to_string();
-        ui_kit::dropdown_menu(ui, "render_library_availability", &label, |ui| {
-            for (id, key) in choices {
+    let used = app.run("appearance.list", json!({})).ok().and_then(|reply| reply["in_design"].as_array().cloned()).unwrap_or_default();
+    let selected_looks = selected_looks(app);
+    entries.sort_by_key(|(_, _, entry)| !applicable(entry, &selected_looks, &used));
+    let applicable_count = entries.iter().take_while(|(_, _, entry)| applicable(entry, &selected_looks, &used)).count();
+    let tips: Vec<_> = entries
+        .iter()
+        .map(|(_, id, entry)| {
+            let p = preview_parameters(entry);
+            let usage = usage_for(entry, &used).unwrap_or(entry);
+            let users = user_count(usage);
+            let names: Vec<_> = ["bodies", "faces", "components"]
+                .iter()
+                .filter_map(|key| usage[*key].as_array())
+                .flatten()
+                .take(128)
+                .filter_map(|user| user.as_str().or_else(|| user["body"].as_str()))
+                .collect();
+            let scalar = |value: &Value| value.as_f64().map(|n| format!("{n:.2}")).unwrap_or_else(|| "—".into());
+            format!(
+                "{}\n{}\n{}: {} · {}: {}\n{}: {} · {}: {}\n{}: {} {}\n{}",
+                entry["name"].as_str().unwrap_or(id),
+                entry["category"].as_str().or_else(|| entry["family"].as_str()).unwrap_or(app.tr("render.library_in_design")),
+                app.tr("render.library_metallic"),
+                scalar(&p["pbr"]["metallic"]),
+                app.tr("render.library_roughness"),
+                scalar(&p["pbr"]["roughness"]),
+                app.tr("render.library_ior"),
+                scalar(&p["pbr"]["dielectric_ior"]),
+                app.tr("render.library_opacity"),
+                scalar(&p["opacity"]),
+                app.tr("render.library_users"),
+                users,
+                names.join(", "),
+                availability_label(
+                    app,
+                    entry.pointer("/projection/status").and_then(Value::as_str).or(Some(if entry["available"] == false {
+                        "blocked"
+                    } else {
+                        "native_appearance"
+                    }))
+                )
+            )
+        })
+        .collect();
+    let identities: Vec<_> = entries.iter().map(|(_, id, _)| format!("render:library:{id}")).collect();
+    let footer = t.control_height * if view.collection == 0 && view.kind != "appearances" { 3.0 } else { 1.0 };
+    let height = (ui.available_height() - footer).max(t.control_height);
+    let mut selected = None;
+    egui::ScrollArea::vertical().id_salt(("render_library_items", &view.kind, view.collection)).max_height(height).auto_shrink([false, false]).show(
+        ui,
+        |ui| {
+            if entries.is_empty() {
+                ui_kit::text(ui, app.tr("render.library_empty"), ui_kit::Text::Note("render.library_empty"));
+            }
+            if view.layout == 0 {
+                let tiles: Vec<_> = entries
+                    .iter()
+                    .zip(&identities)
+                    .zip(&tips)
+                    .map(|(((kind, id, entry), identity), tip)| ui_kit::SphereTile {
+                        id: identity,
+                        name: entry["name"].as_str().unwrap_or(id),
+                        sphere: tile_sphere(entry),
+                        selected: view.kind == *kind && view.selected.as_ref() == Some(id),
+                        users: usage_for(entry, &used).map_or_else(|| user_count(entry), user_count),
+                        tip,
+                    })
+                    .collect();
+                if applicable_count > 0 {
+                    ui_kit::text(ui, app.tr("render.library_applicable"), ui_kit::Text::Inline);
+                    selected = ui_kit::sphere_grid(ui, tiles.get(..applicable_count).unwrap_or_default());
+                }
+                if applicable_count < tiles.len() {
+                    if applicable_count > 0 {
+                        ui_kit::text(ui, app.tr("render.library_other"), ui_kit::Text::Inline);
+                    }
+                    let other = ui_kit::sphere_grid(ui, tiles.get(applicable_count..).unwrap_or_default()).map(|i| i + applicable_count);
+                    selected = selected.or(other);
+                }
+            } else {
+                for (index, ((kind, id, entry), tip)) in entries.iter().zip(&tips).enumerate() {
+                    if index == 0 && applicable_count > 0 {
+                        ui_kit::text(ui, app.tr("render.library_applicable"), ui_kit::Text::Inline);
+                    } else if index == applicable_count && applicable_count > 0 {
+                        ui_kit::text(ui, app.tr("render.library_other"), ui_kit::Text::Inline);
+                    }
+                    let mut item = ui_kit::MenuItem::new(id, entry["name"].as_str().unwrap_or(id), "appearance");
+                    item.highlighted = view.kind == *kind && view.selected.as_ref() == Some(id);
+                    let r = item.search_row(
+                        ui,
+                        query,
+                        &format!(
+                            "{} / {}",
+                            if kind == "appearances" { entry["category"].as_str().unwrap_or(app.tr("render.library_in_design")) } else { id },
+                            short_availability(app, entry.pointer("/projection/status").and_then(Value::as_str))
+                        ),
+                        None,
+                    );
+                    crate::scenario::publish_target(identities.get(index).map(String::as_str).unwrap_or("render:library:item"), r.rect);
+                    if r.on_hover_text(tip).clicked() {
+                        selected = Some(index);
+                    }
+                }
+            }
+        },
+    );
+    if !stage_card || view.kind != "appearances" {
+        let menu = ui_kit::dropdown_menu(ui, "render_library_filters", app.tr("render.library_filters"), |ui| {
+            if view.collection == 0 {
+                for &(kind, key) in KINDS {
+                    let r = ui_kit::list_picker(ui, kind, app.tr(key), view.kind == kind);
+                    crate::scenario::publish_target(&format!("render:library-kind:{kind}"), r.rect);
+                    if r.clicked() {
+                        switch_kind(&mut view, kind);
+                        ui.close();
+                    }
+                }
+                ui_kit::divider(ui, "render-library-availability");
+            }
+            for (id, key) in [
+                ("all", "render.library_all_states"),
+                ("usable", "render.library_usable"),
+                ("specification", "render.library_specs"),
+                ("blocked", "render.library_blocked"),
+            ] {
                 if ui_kit::list_picker(ui, id, app.tr(key), view.availability == id).clicked() {
                     view.availability = id.into();
                     view.offset = 0;
@@ -329,106 +885,32 @@ pub(super) fn browse(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
         });
-    }
-    if !view.loaded
-        && let Err(error) = refresh(app, &mut view)
-    {
-        view.loaded = true;
-        app.set_status(error, true);
-    }
-    let entries: Vec<(String, String, String, Value)> = if view.collection == 0 {
-        view.entries
-            .iter()
-            .filter_map(|entry| {
-                Some((
-                    view.kind.clone(),
-                    entry["id"].as_str()?.to_string(),
-                    entry["name"].as_str().unwrap_or("").to_string(),
-                    entry["projection"].clone(),
-                ))
-            })
-            .collect()
-    } else {
-        let keys: Vec<_> = if view.collection == 1 { view.favorites.iter().cloned().collect() } else { view.recent.iter().cloned().collect() };
-        keys.into_iter()
-            .filter(|key| {
-                format!("{} {} {}", key.0, key.1, view.labels.get(key).map(String::as_str).unwrap_or(""))
-                    .to_lowercase()
-                    .contains(&view.collection_query.to_lowercase())
-            })
-            .map(|key| {
-                let label = view.labels.get(&key).cloned().unwrap_or_else(|| key.1.clone());
-                let projection = json!({"status":view.statuses.get(&key).map(String::as_str).unwrap_or("reference_only")});
-                (key.0, key.1, label, projection)
-            })
-            .collect()
-    };
-    ui.small(format!("{}: {}", app.tr("render.library_results"), if view.collection == 0 { view.total } else { entries.len() }));
-    if entries.is_empty() {
-        ui_kit::text(ui, app.tr("render.library_empty"), ui_kit::Text::Note("render.library_empty"));
-    }
-    let mut selected = None;
-    let t = Tokens::get();
-    let note_height = ui
-        .painter()
-        .layout(app.tr("render.library_inspect_only").to_string(), egui::FontId::proportional(t.font_small), t.form_dim, ui.available_width())
-        .size()
-        .y
-        + t.space_8;
-    let footer_height = note_height + if view.collection == 0 { t.control_height + t.form_gap_y } else { 0.0 };
-    let height = (ui.available_height() - footer_height - t.space_10).max(t.control_height);
-    let row_height = crate::ui_kit::row_height() + Tokens::get().space_10;
-    egui::ScrollArea::vertical()
-        .id_salt(("render_library_items", &view.kind, view.collection))
-        .max_height(height)
-        .auto_shrink([false, false])
-        .show_rows(ui, row_height, entries.len(), |ui, range| {
-            for index in range {
-                let Some((kind, id, name, projection)) = entries.get(index) else { continue };
-                let text = if name.is_empty() { id.as_str() } else { name.as_str() };
-                let identity = format!("{kind}:{id}");
-                // Reuse Nathan's two-line search/menu component, artwork and
-                // accessibility metadata. A blocked resource remains inspectable.
-                let icon = if matches!(kind.as_str(), "surfaces" | "materials" | "selene_appearances" | "physical_profiles") {
-                    "appearance"
-                } else {
-                    "render_scene"
-                };
-                let mut item = ui_kit::MenuItem::new(&identity, text, icon);
-                item.highlighted = view.kind == *kind && view.selected.as_ref() == Some(id);
-                let path = format!("{id} / {}", short_availability(app, projection["status"].as_str()));
-                let query = if view.collection == 0 { &view.query } else { &view.collection_query };
-                let r = item.search_row(ui, query, &path, None);
-                crate::scenario::publish_target(&format!("render:library:{id}"), r.rect);
-                let selected_here = r.clicked();
-                let _ = r.on_hover_text(format!(
-                    "{text}\n{id}\n{}\n{}",
-                    availability_label(app, projection["status"].as_str()),
-                    app.tr("render.library_inspect_only")
-                ));
-                if selected_here {
-                    selected = Some((kind.clone(), id.clone()));
+        crate::scenario::publish_target("render:library-category", menu.rect);
+        if view.collection == 0 && view.kind != "appearances" {
+            ui.horizontal(|ui| {
+                if ui_kit::button(ui, app.tr("render.library_previous"), ui_kit::Button::Enabled(view.offset > 0)).clicked() {
+                    view.offset = view.offset.saturating_sub(48);
+                    view.loaded = false;
                 }
-            }
-        });
-    if view.collection == 0 {
-        ui.horizontal(|ui| {
-            if ui_kit::button(ui, app.tr("render.library_previous"), ui_kit::Button::Enabled(view.offset > 0)).clicked() {
-                view.offset = view.offset.saturating_sub(48);
-                view.loaded = false;
-            }
-            if ui_kit::button(ui, app.tr("render.library_next"), ui_kit::Button::Enabled(view.next.is_some())).clicked() {
-                view.offset = view.next.unwrap_or(view.offset);
-                view.loaded = false;
-            }
-        });
+                if ui_kit::button(ui, app.tr("render.library_next"), ui_kit::Button::Enabled(view.next.is_some())).clicked() {
+                    view.offset = view.next.unwrap_or(view.offset);
+                    view.loaded = false;
+                }
+            });
+        }
     }
-    if let Some((kind, id)) = selected
-        && let Err(error) = choose(app, &mut view, &kind, &id)
-    {
-        app.set_status(error, true);
+    if let Some((kind, id, entry)) = selected.and_then(|index| entries.get(index)) {
+        let result =
+            choose(app, &mut view, kind, id).and_then(|()| if stage_card && kind == "appearances" { apply_look(app, entry) } else { Ok(()) });
+        if let Err(error) = result {
+            app.set_status(error, true);
+        }
     }
-    ui_kit::text(ui, app.tr("render.library_inspect_only"), ui_kit::Text::Note("render.library_inspect_only"));
+    if stage_card {
+        ui_kit::catalog_footer(ui, app.tr("render.library_apply_hint"));
+    } else {
+        ui_kit::text(ui, app.tr("render.library_inspect_only"), ui_kit::Text::Note("render.library_inspect_only"));
+    }
     app.render_workspace.view.library = view;
 }
 
@@ -438,7 +920,9 @@ pub(super) fn selected_kind(app: &SolveApp, kind: &str) -> bool {
 }
 
 pub(super) fn inspect_kinds(app: &mut SolveApp, ui: &mut egui::Ui, kinds: &[&str]) {
-    if kinds.contains(&app.render_workspace.view.library.kind.as_str()) {
+    if kinds.contains(&app.render_workspace.view.library.kind.as_str())
+        || (kinds.contains(&"surfaces") && app.render_workspace.view.library.kind == "appearances")
+    {
         inspect(app, ui);
     } else {
         ui_kit::text(ui, app.tr("render.library_select_hint"), ui_kit::Text::Note("render.library_select_hint"));
@@ -448,7 +932,9 @@ pub(super) fn inspect(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut view = std::mem::take(&mut app.render_workspace.view.library);
     if let Some(id) = view.selected.clone() {
         ui.strong(view.details.as_ref().and_then(|d| d["resource"]["name"].as_str()).unwrap_or(&id));
-        ui.small(&id);
+        if view.kind != "appearances" {
+            ui.small(&id);
+        }
         // Native composition is an actionable review, not a long specification
         // reader: keep Resolve/consent/Apply ahead of ancillary resource metadata.
         let native_composition = view.kind == "native_scenes";
@@ -456,19 +942,20 @@ pub(super) fn inspect(app: &mut SolveApp, ui: &mut egui::Ui) {
             super::inspector::scene_resource(app, ui, &id);
         }
         let key = (view.kind.clone(), id.clone());
-        let favorite = view.favorites.contains(&key);
+        let favorite = app.preferences.render_library_favorites.contains(&key);
         if ui_kit::button(
             ui,
             app.tr(if favorite { "render.library_unfavorite" } else { "render.library_favorite" }),
-            ui_kit::Button::Enabled(favorite || view.favorites.len() < 256),
+            ui_kit::Button::Enabled(favorite || app.preferences.render_library_favorites.len() < 256),
         )
         .clicked()
         {
             if favorite {
-                view.favorites.remove(&key);
+                app.preferences.render_library_favorites.remove(&key);
             } else {
-                view.favorites.insert(key);
+                app.preferences.render_library_favorites.insert(key);
             }
+            view.loaded = false;
         }
         if let Some(detail) = &view.details {
             ui.small(format!("{}: {}", app.tr("render.library_status"), availability_label(app, detail["projection"]["status"].as_str())));
@@ -555,7 +1042,7 @@ pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     saved_surface_controls(app, ui);
     let title = app.tr("render.library_title").to_string();
     ui_kit::section(ui, "render_resource_library", &title, false, |ui| {
-        browse(app, ui);
+        browse_contents(app, ui, false);
         inspect(app, ui);
     });
 }
@@ -601,8 +1088,35 @@ fn resource_controls(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, id:
         // previous surface's detail with the newly selected physical profile.
         return;
     }
-    ui_kit::text(ui, app.tr("render.library_authored_help"), ui_kit::Text::Note("render.library_authored_help"));
+    if view.kind != "appearances" {
+        ui_kit::text(ui, app.tr("render.library_authored_help"), ui_kit::Text::Note("render.library_authored_help"));
+    }
     match view.kind.as_str() {
+        "appearances" => {
+            target_controls(app, ui, view);
+            if ui_kit::button(
+                ui,
+                app.tr("render.library_apply_appearance"),
+                ui_kit::Button::Enabled(current_target(app, view) && source["available"] != false),
+            )
+            .clicked()
+                && let Some(target) = &view.target
+            {
+                let params = if let Some(preset) = source["id"].as_str() {
+                    json!({"bodies":[target.name],"appearance":preset})
+                } else {
+                    json!({"bodies":[target.name],"name":source["name"],"color":source["color"],"opacity":source["opacity"],"pbr":source["pbr"]})
+                };
+                match app.run("appearance.assign", params) {
+                    Ok(_) => {
+                        view.target_revision = None;
+                        view.loaded = false;
+                        app.set_status(app.tr("render.library_applied").to_string(), false);
+                    }
+                    Err(error) => app.set_status(error, true),
+                }
+            }
+        }
         "native_scenes" => super::inspector::scene_resource(app, ui, id),
         "quality" => super::inspector::quality_resource(app, ui, id),
         "physical_profiles" => physical_controls(app, ui, view, id, &detail),
@@ -860,6 +1374,7 @@ fn physical_controls(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, id:
 
 fn short_availability<'a>(app: &'a SolveApp, status: Option<&str>) -> &'a str {
     app.tr(match status {
+        Some("native_appearance") => "render.library_appearance_available",
         Some("native_composition") => "render.library_short_native",
         Some("implemented_pending_batch_validation") => "render.library_short_projection",
         Some("blocked") => "render.library_short_blocked",
@@ -870,6 +1385,7 @@ fn short_availability<'a>(app: &'a SolveApp, status: Option<&str>) -> &'a str {
 
 fn availability_label<'a>(app: &'a SolveApp, status: Option<&str>) -> &'a str {
     app.tr(match status {
+        Some("native_appearance") => "render.library_appearance_available",
         Some("native_composition") => "render.availability_native",
         Some("implemented_pending_batch_validation") => "render.availability_projection",
         Some("blocked") => "render.library_blocked",
@@ -883,19 +1399,321 @@ mod studio_browser_tests {
     use super::*;
     use crate::scenario::Harness;
     #[test]
+    fn appearance_cards_select_inspect_switch_layout_and_keep_explicit_apply() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Sample"})).unwrap();
+        h.app.run("appearance.assign", json!({"bodies":["Sample"],"appearance":"ABS - Red"})).unwrap();
+        super::super::enter(&mut h.app, true).unwrap();
+        h.frames(4);
+        let before = h.app.session.doc.to_json();
+        h.step(&json!({"click":{"handle":"render:library-scope:in-design"}})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.render_workspace.view.library.collection, 3);
+        let id = appearance_id(&h.app.render_workspace.view.library.entries[0]);
+        h.step(&json!({"click":{"handle":format!("render:library:{id}")}})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.render_workspace.view.library.selected.as_deref(), Some(id.as_str()));
+        assert_eq!(h.app.render_workspace.view.inspector.page, super::super::inspector::Page::Appearance);
+        assert_eq!(h.app.session.doc.to_json(), before, "browsing and selection must not apply appearances");
+        h.step(&json!({"widget":h.app.tr("render.library_favorite")})).unwrap();
+        assert!(h.app.preferences.render_library_favorites.contains(&("appearances".into(), id.clone())));
+        h.step(&json!({"click":{"handle":"render:library-list"}})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.render_workspace.view.library.layout, 1);
+        h.step(&json!({"click":{"handle":"render:library-grid"}})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.render_workspace.view.library.layout, 0);
+        assert_eq!(h.app.session.doc.to_json(), before);
+        let catalog = h.app.run("appearance.library", json!({})).unwrap();
+        let blue = catalog["appearances"].as_array().unwrap().iter().find(|entry| entry["name"] == "ABS - Blue").unwrap();
+        let mut view = std::mem::take(&mut h.app.render_workspace.view.library);
+        choose(&mut h.app, &mut view, "appearances", &appearance_id(blue)).unwrap();
+        refresh_targets(&mut h.app, &mut view).unwrap();
+        view.target = view.targets.first().cloned();
+        h.app.render_workspace.view.library = view;
+        h.frames(3);
+        assert_eq!(h.app.session.doc.to_json(), before);
+        h.step(&json!({"widget":h.app.tr("render.library_apply_appearance")})).unwrap();
+        assert_eq!(h.app.session.doc.appearances.bodies.get("Sample").unwrap().name, "ABS - Blue");
+        if let Some(dir) = std::env::var_os("SOLIDCRAFT_LIBRARY_EVIDENCE") {
+            std::fs::create_dir_all(&dir).unwrap();
+            h.app.run("appearance.assign", json!({"bodies":["Sample"],"appearance":"Aluminum - Anodized Blue"})).unwrap();
+            h.app.run("select.set", json!({"items":[solidcraft_engine::Sel::Body {name:"Sample".into()}]})).unwrap();
+            h.app.render_workspace.view.library.collection = 0;
+            h.app.render_workspace.view.library.loaded = false;
+            let aluminum = h.app.run("appearance.library", json!({})).unwrap()["appearances"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["name"] == "Aluminum - Anodized Blue")
+                .unwrap()
+                .clone();
+            let mut view = std::mem::take(&mut h.app.render_workspace.view.library);
+            choose(&mut h.app, &mut view, "appearances", &appearance_id(&aluminum)).unwrap();
+            h.app.render_workspace.view.library = view;
+            for dark in [false, true] {
+                h.app.preferences.theme = if dark { "dark" } else { "light" }.into();
+                h.app.ui.dark = dark;
+                let ctx = egui::Context::default();
+                crate::fonts::setup_bundled_fonts(&ctx);
+                let mut textures = std::collections::HashMap::new();
+                let mut final_frame = None;
+                for frame in 0..10 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1440.0, 900.0))),
+                            time: Some(frame as f64 / 10.0),
+                            focused: true,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            h.app.logic(ui.ctx());
+                            h.app.ui(ui);
+                        },
+                    );
+                    ui_kit::update_test_textures(&mut textures, &output.textures_delta);
+                    output.textures_delta.clear();
+                    final_frame = Some(output);
+                }
+                let output = final_frame.unwrap();
+                let image = ui_kit::raster_ui(&ctx, output.shapes, output.pixels_per_point, ctx.content_rect(), &textures);
+                image.save(std::path::Path::new(&dir).join(if dark { "appearances-dark.png" } else { "appearances-light.png" })).unwrap();
+                let card = h.app.shell.workspace_panels["render:appearances"].0;
+                assert_eq!(card.width(), 266.0);
+                let card_image = image::imageops::crop_imm(
+                    &image,
+                    card.left().round() as u32,
+                    card.top().round() as u32,
+                    card.width().round() as u32,
+                    card.height().round() as u32,
+                )
+                .to_image();
+                card_image.save(std::path::Path::new(&dir).join(if dark { "card-dark.png" } else { "card-light.png" })).unwrap();
+                if let Some(reference) = std::env::var_os("SOLIDCRAFT_LIBRARY_REFERENCE") {
+                    let reference = image::open(reference).unwrap().to_rgba8();
+                    let reference = image::imageops::crop_imm(&reference, 8, 487, 266, 356).to_image();
+                    let mut pair = image::RgbaImage::new(532, card_image.height().max(reference.height()));
+                    image::imageops::overlay(&mut pair, &reference, 0, 0);
+                    image::imageops::overlay(&mut pair, &card_image, 266, 0);
+                    pair.save(std::path::Path::new(&dir).join(if dark {
+                        "reference-left-current-right-dark.png"
+                    } else {
+                        "reference-left-current-right-light.png"
+                    }))
+                    .unwrap();
+                }
+            }
+        }
+    }
+    #[test]
+    fn stage_panel_titles_follow_stage_without_mutating_the_design() {
+        let mut h = Harness::new();
+        super::super::enter(&mut h.app, true).unwrap();
+        let before = h.app.session.doc.to_json();
+        for (stage, key) in [
+            ("look", "render.appearances"),
+            ("light", "render.studios_environments"),
+            ("frame", "render.frame_presets"),
+            ("output", "render.size_presets"),
+        ] {
+            h.app.run("view.render_stage", json!({"stage":stage})).unwrap();
+            h.frames(3);
+            assert_eq!(stage_title(h.app.render_workspace.view.stage), key);
+            let browser = h.app.shell.workspace_panels["render:browser"].0;
+            let panel = h.app.shell.workspace_panels["render:appearances"].0;
+            let strip = h.app.shell.workspace_panels["render:shots_strip"].0;
+            assert_eq!(panel.top() - browser.bottom(), Tokens::get().space_8, "{stage}: {browser:?} {panel:?} {strip:?}");
+            assert_eq!(strip.top() - panel.bottom(), Tokens::get().space_8, "{stage}: {browser:?} {panel:?} {strip:?}");
+        }
+        assert_eq!(h.app.session.doc.to_json(), before);
+    }
+
+    #[test]
+    fn applicable_resources_include_used_looks_and_selected_category_or_finish_before_the_rest() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Sample"})).unwrap();
+        h.app.run("appearance.assign", json!({"bodies":["Sample"],"appearance":"ABS - Red"})).unwrap();
+        h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: "Sample".into() }];
+        let selected = selected_looks(&mut h.app);
+        assert_eq!(selected.len(), 1);
+        let used = h.app.run("appearance.list", json!({})).unwrap()["in_design"].as_array().unwrap().clone();
+        let selected_match = json!({"name":"ABS - Blue","color":"#123456","opacity":1.0});
+        let finish_match = json!({"name":"Unclassified finish","color":"#123456","opacity":1.0});
+        let unrelated = json!({"name":"Wood","color":"#123456","opacity":1.0,"pbr":{"metallic":0.0,"roughness":0.95}});
+        assert!(applicable(&selected_match, &selected, &used));
+        assert!(applicable(&finish_match, &selected, &used));
+        assert!(!applicable(&unrelated, &selected, &used));
+        let mut entries = [unrelated.clone(), selected_match.clone(), used[0].clone(), finish_match.clone()];
+        entries.sort_by_key(|entry| !applicable(entry, &selected, &used));
+        assert_eq!(entries, [selected_match, used[0].clone(), finish_match, unrelated]);
+        assert!(applicable(&used[0], &[], &used), "used looks remain applicable with nothing selected");
+    }
+
+    #[test]
+    fn look_tile_click_applies_to_selection_through_assign_and_undo() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Sample"})).unwrap();
+        h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: "Sample".into() }];
+        super::super::enter(&mut h.app, true).unwrap();
+        h.frames(4);
+        let blue = h.app.render_workspace.view.library.entries.iter().find(|e| e["name"] == "ABS - Blue").unwrap().clone();
+        h.app.render_workspace.view.library.query = "ABS - Blue".into();
+        h.frames(3);
+        let undo = h.app.session.undo.len();
+        h.step(&json!({"click":{"handle":format!("render:library:{}",appearance_id(&blue))}})).unwrap();
+        assert_eq!(h.app.session.doc.appearances.bodies["Sample"].name, "ABS - Blue");
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert!(!h.app.session.doc.appearances.bodies.contains_key("Sample"));
+    }
+
+    #[test]
+    fn light_tiles_apply_existing_studio_and_environment_commands_with_one_undo_each() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":20,"width":15,"height":10,"body_name":"Sample"})).unwrap();
+        super::super::enter(&mut h.app, true).unwrap();
+        let unchanged = h.app.session.doc.to_json();
+        h.app.render_workspace.view.method = ImageMethod::Raster;
+        assert!(apply_light(&mut h.app, "native_scenes", "NATIVE-STUDIO-001").is_err());
+        assert_eq!(h.app.session.doc.to_json(), unchanged);
+        h.app.render_workspace.view.method = ImageMethod::GpuRaytrace;
+        h.app.run("view.render_stage", json!({"stage":"light"})).unwrap();
+        h.frames(4);
+        let undo = h.app.session.undo.len();
+        h.step(&json!({"click":{"handle":"render:light:NATIVE-STUDIO-001"}})).unwrap();
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+        let name = h.app.render_workspace.view.name.clone();
+        assert!(!h.app.session.doc.render.setups[&name].stage.is_empty());
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(h.app.session.doc.to_json(), unchanged);
+        h.app.render_workspace.view = super::super::ViewState::default();
+        super::super::select_image_method(&mut h.app, ImageMethod::GpuRaytrace);
+        h.app.run("view.render_stage", json!({"stage":"light"})).unwrap();
+        h.frames(4);
+        let panel = h.app.shell.workspace_panels["render:appearances"].0;
+        for _ in 0..40 {
+            let tile = crate::scenario::rect_of("render:light:HDR-001").unwrap();
+            if tile.top() >= panel.top() + Tokens::get().form_header_height && tile.bottom() <= panel.bottom() {
+                break;
+            }
+            h.frame_with(vec![
+                egui::Event::PointerMoved(panel.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -80.0),
+                    modifiers: egui::Modifiers::default(),
+                    phase: egui::TouchPhase::Move,
+                },
+            ]);
+            h.frames(4);
+        }
+        h.frame_with(vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::Vec2::ZERO,
+            modifiers: egui::Modifiers::default(),
+            phase: egui::TouchPhase::End,
+        }]);
+        h.frames(30);
+        let tile = crate::scenario::rect_of("render:light:HDR-001").unwrap();
+        assert!(panel.contains_rect(tile), "HDR tile must be reachable through the panel scroll area");
+        assert!(light_reason(&h.app, "hdr").is_none(), "HDR is disabled: {:?}", light_reason(&h.app, "hdr"));
+        h.step(&json!({"click":{"handle":"render:light:HDR-001"}})).unwrap();
+        assert_eq!(h.app.session.undo.len(), undo + 1, "HDR click: {:?}; tile: {tile:?}; panel: {panel:?}", h.app.status);
+        assert!(!h.app.session.doc.render.resources.is_empty());
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(h.app.session.doc.to_json(), unchanged);
+    }
+
+    #[test]
+    fn tile_finishes_follow_pbr_and_opacity_and_authored_surface_color() {
+        for (opacity, metallic, roughness, expected) in [
+            (1.0, 0.0, 0.9, ui_kit::FinishKind::Matte),
+            (1.0, 0.0, 0.5, ui_kit::FinishKind::Satin),
+            (1.0, 0.0, 0.1, ui_kit::FinishKind::Gloss),
+            (1.0, 1.0, 0.1, ui_kit::FinishKind::Metal),
+            (0.4, 1.0, 0.9, ui_kit::FinishKind::Glass),
+        ] {
+            let sphere = tile_sphere(&json!({"color":"#123456","opacity":opacity,"pbr":{"metallic":metallic,"roughness":roughness}}));
+            assert_eq!(sphere.kind, expected);
+            assert_eq!(sphere.color, egui::Color32::from_rgb(0x12, 0x34, 0x56));
+            assert_eq!(sphere.opacity, Some(opacity as f32));
+        }
+        let source = json!({"resource":{"base_linear_low":[0.0,0.5,1.0],"base_linear_high":[0.0,0.5,1.0],"metallic":1.0,"roughness":0.4}});
+        assert_eq!(tile_sphere(&source).color, egui::Color32::from_rgb(0, 188, 255));
+        let selene = json!({"resource":{"baseline_projection":{"runtime_parameters":{"color":[20,40,60],"opacity":1.0,"pbr":{"metallic":1.0,"roughness":0.3}}}}});
+        assert_eq!(tile_sphere(&selene).color, egui::Color32::from_rgb(20, 40, 60));
+        assert_eq!(tile_sphere(&selene).kind, ui_kit::FinishKind::Metal);
+    }
+    #[test]
+    fn scopes_search_categories_and_availability_filter_real_catalog_entries() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Sample"})).unwrap();
+        h.app.run("appearance.assign", json!({"bodies":["Sample"],"appearance":"ABS - Red"})).unwrap();
+        let mut view = View { collection: 3, ..Default::default() };
+        refresh(&mut h.app, &mut view).unwrap();
+        assert_eq!(view.entries.len(), 1);
+        assert_eq!(user_count(&view.entries[0]), 1);
+        assert_eq!(user_count(&json!({"bodies":["A"],"faces":[{"body":"B"}],"components":["C"]})), 3);
+        assert!(matches_entry(&view.entries[0], "rEd", "", "usable"));
+        assert!(!matches_entry(&view.entries[0], "blue", "", "all"));
+        assert!(matches_entry(&json!({"name":"Coating","resource":{"tags":["Enclosure"]}}), "enclosure", "", "all"));
+        let id = appearance_id(&view.entries[0]);
+        choose(&mut h.app, &mut view, "appearances", &id).unwrap();
+        h.app.preferences.render_library_favorites.insert(("appearances".into(), id));
+        for scope in [1, 2] {
+            view.collection = scope;
+            refresh(&mut h.app, &mut view).unwrap();
+            assert_eq!(view.entries.len(), 1);
+            assert_eq!(view.entries[0]["name"], "ABS - Red");
+        }
+        view.collection = 0;
+        refresh(&mut h.app, &mut view).unwrap();
+        assert!(view.entries.len() > 10);
+        assert!(view.entries.iter().any(|entry| matches_entry(entry, "aBs", "ABS", "all")));
+        assert!(!view.entries.iter().any(|entry| matches_entry(entry, "ABS", "missing category", "all")));
+        assert!(view.entries.iter().filter(|entry| matches_entry(entry, "", "", "blocked")).all(|entry| entry["available"] == false));
+        let source = h.app.run("render.library.describe", json!({"kind":"surfaces","id":"SURF-001"})).unwrap();
+        let entry = json!({"id":"SURF-001","name":source["resource"]["name"],"resource":source["resource"]});
+        h.app.run("render.library.appearance.apply", json!({"id":"SURF-001","variant":"uniform_opaque","bodies":["Sample"]})).unwrap();
+        let reply = h.app.run("appearance.list", json!({})).unwrap();
+        assert_eq!(user_count(usage_for(&entry, reply["in_design"].as_array().unwrap()).unwrap()), 1);
+    }
+    #[test]
+    fn preferences_round_trip_favorites_and_recent_without_saving_them_in_design() {
+        let mut h = Harness::new();
+        let mut view = View::default();
+        let before = h.app.session.doc.to_json();
+        choose(&mut h.app, &mut view, "surfaces", "SURF-001").unwrap();
+        h.app.preferences.render_library_favorites.insert(("surfaces".into(), "SURF-001".into()));
+        let saved = serde_json::to_value(&h.app.preferences).unwrap();
+        let prefs = crate::prefs::lenient(&saved);
+        assert_eq!(prefs.render_library_favorites, h.app.preferences.render_library_favorites);
+        assert_eq!(prefs.render_library_recent, h.app.preferences.render_library_recent);
+        assert_eq!(h.app.session.doc.to_json(), before);
+        let custom = json!({"name":"Workshop look","color":"#123456","opacity":0.5});
+        let id = appearance_id(&custom);
+        let detail = describe(&mut h.app, "appearances", &id).unwrap();
+        assert_eq!(detail["resource"]["color"], custom["color"]);
+        assert!(crate::prefs::lenient(&json!({})).render_library_favorites.is_empty());
+        let hostile = json!({"render_library_recent":vec![("surfaces","SURF-001");100],"render_library_favorites":[["surfaces",""]]});
+        let prefs = crate::prefs::lenient(&hostile);
+        assert_eq!(prefs.render_library_recent.len(), 32);
+        assert!(prefs.render_library_favorites.is_empty());
+    }
+    #[test]
     fn favorites_and_recent_keep_exact_status_without_promoting_specs_to_runtime() {
         let mut h = Harness::new();
         let before = h.app.session.doc.to_json();
-        let mut view = View::default();
+        let mut view = View { kind: "surfaces".into(), ..Default::default() };
         choose(&mut h.app, &mut view, "native_scenes", "NATIVE-STUDIO-002").unwrap();
         let native = ("native_scenes".into(), "NATIVE-STUDIO-002".into());
-        view.favorites.insert(native.clone());
+        h.app.preferences.render_library_favorites.insert(native.clone());
         choose(&mut h.app, &mut view, "scenes", "SCENE-001").unwrap();
         assert_eq!(view.statuses.get(&("scenes".into(), "SCENE-001".into())).map(String::as_str), Some("specification_only"));
         for i in 1..=48 {
             choose(&mut h.app, &mut view, "surfaces", &format!("SURF-{i:03}")).unwrap();
         }
-        assert_eq!(view.recent.len(), 32);
+        assert_eq!(h.app.preferences.render_library_recent.len(), 32);
         assert_eq!(view.statuses.len(), 33);
         assert_eq!(view.statuses.get(&native).map(String::as_str), Some("native_composition"));
         assert_eq!(h.app.session.doc.to_json(), before);
@@ -904,7 +1722,7 @@ mod studio_browser_tests {
     #[test]
     fn physical_reference_navigation_uses_the_same_category_history() {
         let mut h = Harness::new();
-        let mut view = View::default();
+        let mut view = View { kind: "surfaces".into(), ..Default::default() };
         choose(&mut h.app, &mut view, "surfaces", "SURF-001").unwrap();
         view.query = "brushed".into();
         view.offset = 48;
@@ -920,6 +1738,7 @@ mod studio_browser_tests {
     #[test]
     fn category_navigation_preserves_queries_pages_selection_and_declared_scope() {
         let mut view = View {
+            kind: "surfaces".into(),
             query: "brushed".into(),
             offset: 48,
             selected: Some("SURF-001".into()),
@@ -949,11 +1768,11 @@ mod studio_browser_tests {
         for n in 1..=48 {
             choose(&mut h.app, &mut view, "surfaces", &format!("SURF-{n:03}")).unwrap();
         }
-        assert_eq!(view.recent.len(), 32);
+        assert_eq!(h.app.preferences.render_library_recent.len(), 32);
         assert_eq!(h.app.session.doc.to_json(), before);
         assert!(h.app.session.undo.is_empty());
         choose(&mut h.app, &mut view, "surfaces", "SURF-048").unwrap();
-        assert_eq!(view.recent.len(), 32);
+        assert_eq!(h.app.preferences.render_library_recent.len(), 32);
         assert_eq!(h.app.render_workspace.view.inspector.page, super::super::inspector::Page::Appearance);
         choose(&mut h.app, &mut view, "native_scenes", "NATIVE-STUDIO-002").unwrap();
         assert_eq!(h.app.render_workspace.view.inspector.page, super::super::inspector::Page::Scene);

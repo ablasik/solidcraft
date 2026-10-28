@@ -45,6 +45,8 @@ pub(crate) use actions::*;
 pub use actions::{Button, button};
 pub(crate) use assistant::*;
 pub(crate) use assistant_entry::*;
+#[cfg(test)]
+pub(crate) use checks::tests::{raster as raster_ui, textures_update as update_test_textures};
 pub(crate) use checks::*;
 pub(crate) use choice::*;
 pub(crate) use color::*;
@@ -76,6 +78,7 @@ pub(crate) use reports::*;
 pub(crate) use search::{CommandSearch, SearchBadge, SearchFieldGeometry};
 pub(crate) use shortcuts::*;
 pub use sphere::{FinishKind, Sphere, sphere_thumbnail};
+pub(crate) use sphere::{SphereTile, sphere_grid};
 pub(crate) use stages::{StageAction, StageBar};
 pub(crate) use status::*;
 pub(crate) use table::*;

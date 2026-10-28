@@ -31,6 +31,18 @@ fn header_impl(
     closeable: bool,
     on_close: impl FnOnce(),
 ) {
+    header_actions(ui, icon, title, collapsed, closeable, on_close, None);
+}
+
+fn header_actions(
+    ui: &mut Ui,
+    icon: (&str, Option<egui::Color32>),
+    title: &str,
+    collapsed: Option<&mut bool>,
+    closeable: bool,
+    on_close: impl FnOnce(),
+    actions: Option<&mut dyn FnMut(&mut Ui)>,
+) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), header_height()), egui::Sense::hover());
     // Shared card chrome: 12 pt left inset, 19 pt icon, 8 pt gap and 26 pt close target.
@@ -38,7 +50,9 @@ fn header_impl(
         egui::pos2(rect.left() + t.space_12 + t.form_icon_size / 2.0, rect.center().y),
         vec2(t.form_icon_size, t.form_icon_size),
     );
-    if let Some(ink) = icon.1 {
+    if icon.0.is_empty() {
+        ui.painter().circle_filled(icon_rect.center(), t.space_3, crate::theme::TabAccent::current(ui.ctx()).ink);
+    } else if let Some(ink) = icon.1 {
         crate::icons::paint_ink(ui.painter(), icon_rect, icon.0, ink);
     } else {
         crate::icons::paint_icon(ui.painter(), icon_rect, icon.0, 1.0);
@@ -54,7 +68,15 @@ fn header_impl(
             on_close();
         }
     }
-    let right = if let Some(collapsed) = collapsed {
+    let right = if let Some(actions) = actions {
+        let action_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - t.space_8 - t.control_height, rect.center().y),
+            vec2(t.control_height * 2.0, t.control_height),
+        );
+        let mut action_ui = ui.new_child(egui::UiBuilder::new().max_rect(action_rect));
+        actions(&mut action_ui);
+        action_rect.left() - t.space_8
+    } else if let Some(collapsed) = collapsed {
         let fold = egui::Rect::from_min_size(egui::pos2(close_rect.left() - t.form_close_size - t.space_4, close_rect.top()), close_rect.size());
         let response = super::disclosure_button_at(ui, fold, !*collapsed, crate::i18n::tr_label(if *collapsed { "Expand" } else { "Collapse" }));
         scenario::publish_handle("dialog:collapse", response.rect.center());
@@ -69,7 +91,7 @@ fn header_impl(
     };
     let left = (icon_rect.right() + t.space_8).min(right);
     let title_rect = egui::Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(right.max(left), rect.bottom()));
-    paint_text(ui, title_rect, title, crate::fonts::semibold(t.font_heading), t.form_ink, false);
+    paint_text(ui, title_rect, title, crate::fonts::semibold(if icon.0.is_empty() { t.font_label } else { t.font_heading }), t.form_ink, false);
     let title_response = ui.interact(title_rect, ui.make_persistent_id("title_text"), egui::Sense::hover());
     title_response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), title));
     scenario::publish_rect("dialog:header", rect);
@@ -219,6 +241,8 @@ pub(crate) struct WorkspaceOptions<'a> {
     pub fill_height: bool,
     /// Use the minimum dock width without overwriting its remembered width.
     pub compact: bool,
+    pub enabled: bool,
+    pub header_actions: Option<&'a mut dyn FnMut(&mut Ui)>,
 }
 
 pub(crate) struct FeatureOptions<'a> {
@@ -245,6 +269,21 @@ pub(crate) enum Part {
 }
 
 impl<'a> Panel<'a> {
+    /// Shared vertical dock policy: reserve room for a second card, then place it
+    /// below the measured first card with the standard container gap.
+    pub(crate) fn stack_first_bounds(mut bounds: egui::Rect) -> egui::Rect {
+        bounds.max.y = bounds.top()
+            + bounds
+                .height()
+                .min(Tokens::get().form_header_height + Tokens::get().control_height * 10.0 + Tokens::get().space_8 * 2.0)
+                .min((bounds.height() * 0.5).floor());
+        bounds
+    }
+
+    pub(crate) fn stack_next_bounds(mut bounds: egui::Rect, previous: egui::Rect) -> egui::Rect {
+        bounds.min.y = (previous.bottom() + Tokens::get().space_8).min(bounds.bottom());
+        bounds
+    }
     /// Pinned inline actions inside an existing feature/card surface. This is not
     /// a second window or painted card: the parent owns the chrome. Tokens:
     /// control_height, space_24/8; bounded row count preserves finite geometry.
@@ -290,11 +329,12 @@ impl<'a> Panel<'a> {
     /// side request, which the caller dispatches through its command. Neither gesture edits the document.
     pub(crate) fn workspace<R>(
         ui: &mut Ui,
-        options: WorkspaceOptions<'_>,
+        mut options: WorkspaceOptions<'_>,
         side: &mut String,
         width: &mut f32,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<(R, Option<&'static str>)>> {
+        let actions = options.header_actions.take();
         Self::workspace_with_header(
             ui,
             options,
@@ -302,7 +342,7 @@ impl<'a> Panel<'a> {
             width,
             false,
             |ui, options| {
-                header_impl(ui, (options.icon, None), options.title, None, false, || {});
+                header_actions(ui, (options.icon, None), options.title, None, false, || {}, actions);
             },
             add,
         )
@@ -353,6 +393,9 @@ impl<'a> Panel<'a> {
                 let (body, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("workspace_body"));
                 let ui = &mut child;
+                if !options.enabled {
+                    ui.disable();
+                }
                 ui.set_clip_rect(ui.clip_rect().intersect(body));
                 ui.set_width(size.x);
                 ui.set_max_height(size.y);
@@ -390,7 +433,11 @@ impl<'a> Panel<'a> {
                     ui.ctx().request_repaint();
                 }
                 egui::Frame::NONE
-                    .inner_margin(if tree { egui::Margin::symmetric(0, t.space_4 as i8) } else { egui::Margin::same(t.space_12 as i8) })
+                    .inner_margin(if tree {
+                        egui::Margin::symmetric(0, t.space_4 as i8)
+                    } else {
+                        egui::Margin::same(if options.icon.is_empty() { t.space_10 } else { t.space_12 } as i8)
+                    })
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = t.form_gap_y;
                         if tree {

@@ -56,7 +56,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          Display only: open/closed rows are not saved in the design and are not an undo step → open, open_by_default, closed_by_default",
     ),
     CommandSpec::new("browser.collapse_all", "Collapse All", collapse_all).icon("folder").noundo().params(
-        "path?: [occurrence ids]; component?: id; omit both for the whole tree (the design row stays open so the first level remains visible). \
+        "path?: [occurrence ids]; component?: id; omit both for the whole tree. The row it starts from (the design row for the whole tree) stays open, so its first level remains visible. \
          Display only; not an undo step → open, open_by_default, closed_by_default",
     ),
 ];
@@ -196,28 +196,60 @@ fn is_construction(k: &FeatureKind) -> bool {
     matches!(k, FeatureKind::ConstructionPlane { .. } | FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. })
 }
 
+/// The item a key names, or `None` when it names none.
+///
+/// The rule, the same for showing and for hiding: an exact name wins over a name that only
+/// matches it by case, so the body called "Back Lid" is not the sketch called "Back lid"
+/// (#6967). Among the exact matches the order is the one there always was: a feature (by id
+/// or by name), then a body, then a joint. With no exact match the name is compared without
+/// regard to case, as it always was: a feature first, then an origin item.
 fn shown_item(s: &Session, key: &str) -> Option<Shown> {
-    if let Some(f) = s.doc.find_feature(key) {
-        if matches!(f.kind, FeatureKind::Sketch { .. }) {
-            // A sketch and a body with exactly the same name, a sketch named after the body it
-            // makes (#7206): the name is the body's. The browser names a sketch by its id and a
-            // body only by its name, so the body could not be reached otherwise.
-            if f.name == key && s.world_state().bodies.iter().any(|b| b.name == key) {
-                return Some(Shown::Body(key.to_string()));
-            }
-            return Some(Shown::Sketch(f.id));
-        }
-        if is_construction(&f.kind) {
-            return Some(Shown::Origin(f.name.clone()));
-        }
+    shown_item_exact(s, key).or_else(|| shown_item_ignore_case(s, key))
+}
+
+/// The item a key names exactly: a feature, a body or a joint whose name is the key itself.
+fn shown_item_exact(s: &Session, key: &str) -> Option<Shown> {
+    // A feature is found by id or by name, as `find_feature` does, but the name must be the
+    // key itself here.
+    let feature = match key.parse::<u64>() {
+        Ok(id) => s.doc.feature(id).or_else(|| s.doc.features.iter().find(|f| f.name == key)),
+        Err(_) => s.doc.features.iter().find(|f| f.name == key),
+    };
+    if let Some(shown) = feature.and_then(|f| shown_feature(s, f, key)) {
+        return Some(shown);
     }
     if s.world_state().bodies.iter().any(|b| b.name == key) {
         return Some(Shown::Body(key.to_string()));
     }
-    if let Some(j) = s.doc.assembly.joints.iter().find(|j| j.name == key) {
-        return Some(Shown::Joint(j.id));
+    s.doc.assembly.joints.iter().find(|j| j.name == key).map(|j| Shown::Joint(j.id))
+}
+
+/// The item a key names when nothing matches it exactly: the name is compared without regard to
+/// case, as it always was.
+fn shown_item_ignore_case(s: &Session, key: &str) -> Option<Shown> {
+    if let Some(shown) = s.doc.find_feature(key).and_then(|f| shown_feature(s, f, key)) {
+        return Some(shown);
     }
     ORIGIN.iter().find(|o| o.eq_ignore_ascii_case(key)).map(|o| Shown::Origin(o.to_string()))
+}
+
+/// The item a feature is: a sketch, or construction geometry by name. A feature that is neither
+/// (an extrude, a fillet) is not an item of its own, and the key goes on to the next kind. A
+/// sketch that shares its name with a body is the body's (#7206).
+fn shown_feature(s: &Session, f: &solidcraft_doc::Feature, key: &str) -> Option<Shown> {
+    if matches!(f.kind, FeatureKind::Sketch { .. }) {
+        // A sketch and a body with exactly the same name, a sketch named after the body it
+        // makes (#7206): the name is the body's. The browser names a sketch by its id and a
+        // body only by its name, so the body could not be reached otherwise.
+        if f.name == key && s.world_state().bodies.iter().any(|b| b.name == key) {
+            return Some(Shown::Body(key.to_string()));
+        }
+        return Some(Shown::Sketch(f.id));
+    }
+    if is_construction(&f.kind) {
+        return Some(Shown::Origin(f.name.clone()));
+    }
+    None
 }
 
 /// A browser folder or group key (`Visibility::hidden_folders`): `c0` or `o:<ids>`, then
@@ -562,8 +594,14 @@ fn fold_tree(s: &mut Session, p: &Value, open: bool, cmd: &str) -> Result<Value>
         FoldScope::Tree => walk_fold(s, &[], true, &mut keys, cmd)?,
         FoldScope::Occurrence(path) => walk_fold(s, path, false, &mut keys, cmd)?,
     }
-    if !open && matches!(scope, FoldScope::Tree) {
-        keys.open.remove("c0");
+    if !open {
+        // Collapse All folds what is under the clicked row; the row itself stays open.
+        let own = match &scope {
+            FoldScope::Tree => "c0".to_string(),
+            FoldScope::Component(id) => format!("c{id}"),
+            FoldScope::Occurrence(path) => occurrence_fold_key(path),
+        };
+        keys.open.remove(&own);
     }
     if keys.open.len().saturating_add(keys.closed.len()) > MAX_FOLD_KEYS {
         return Err(bad(cmd, "expand/collapse exceeds 10000 browser rows"));
@@ -1712,6 +1750,41 @@ mod tests {
         assert_eq!(s.visibility, before);
     }
 
+    /// #6967: a body and a sketch whose names differ only in case. The exact name is the one
+    /// asked for: "Back Lid" is the body, not the sketch called "Back lid". With no exact match
+    /// the case-insensitive one is the only match, and it is the same rule for showing and for
+    /// hiding.
+    #[test]
+    fn an_exact_body_name_wins_over_a_sketch_that_only_matches_by_case() {
+        let mut s = Session::default();
+        let sketch = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.point", json!({"point": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "timeline.rename", json!({"feature": sketch, "name": "Back lid"}));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Back Lid"}));
+        assert_eq!(names(&s), vec!["Back Lid".to_string()]);
+
+        // Hiding "Back Lid" hides the body, not the sketch that only matches by case.
+        let r = run(&mut s, "browser.visibility", json!({"items": ["Back Lid"], "visible": false}));
+        assert_eq!(r["changed"], 1);
+        assert_eq!(s.visibility.hidden_bodies, vec!["Back Lid".to_string()]);
+        assert!(s.visibility.hidden_sketches.is_empty(), "the sketch is not the item that changed");
+
+        // Showing it again shows the body and leaves the sketch alone.
+        run(&mut s, "browser.visibility", json!({"items": ["Back Lid"], "visible": true}));
+        assert!(s.visibility.hidden_bodies.is_empty());
+        assert!(s.visibility.shown_sketches.is_empty(), "the sketch is not the item that changed");
+
+        // With no exact match the case-insensitive one is the only match, and it is the sketch:
+        // the same rule for showing and for hiding.
+        run(&mut s, "browser.visibility", json!({"items": ["BACK LID"], "visible": false}));
+        assert_eq!(s.visibility.hidden_sketches, vec![sketch]);
+        assert!(s.visibility.hidden_bodies.is_empty());
+        run(&mut s, "browser.visibility", json!({"items": ["BACK LID"], "visible": true}));
+        assert!(s.visibility.hidden_sketches.is_empty());
+        assert_eq!(s.visibility.shown_sketches, vec![sketch]);
+    }
+
     /// #2219: hiding is a step of its own, so Ctrl+Z brings the body back instead of undoing the
     /// command before the hide, and Ctrl+Y hides it again.
     #[test]
@@ -1993,7 +2066,7 @@ mod tests {
 
         let below = run(&mut s, "browser.collapse_all", json!({"path": [occ]}));
         let open = strs(&below, "open_by_default");
-        assert!(open.contains(&format!("o:{occ}")), "{open:?}");
+        assert!(!open.contains(&format!("o:{occ}")), "the clicked row stays open: {open:?}");
         assert!(!open.contains(&"c0/bodies".into()), "{open:?}");
         assert!(strs(&below, "closed_by_default").iter().all(|k| !k.starts_with("c0") && k != "origin"), "{below}");
 

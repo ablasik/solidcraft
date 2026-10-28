@@ -966,16 +966,7 @@ fn ribbon_button_galley(painter: &egui::Painter, label: &str, width: f32, color:
 
 /// Ribbon headings use the translated labels, with normal word casing instead of registry caps.
 fn ribbon_label(app: &SolveApp, label: &str) -> String {
-    let label = app
-        .tr_label(crate::workspace::tab_label(label))
-        .split_whitespace()
-        .map(|word| {
-            let lower = word.to_lowercase();
-            let mut chars = lower.chars();
-            chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let label = crate::workspace::word_cased(app.tr_label(crate::workspace::tab_label(label)));
     // Partial catalogs may already translate the word-cased name (for example "Model").
     app.tr_label(&label).to_string()
 }
@@ -984,6 +975,10 @@ fn ribbon_text(ui: &egui::Ui, at: egui::Pos2, text: &str, size: f32, color: Colo
     let text = egui::RichText::new(text).size(size).color(color);
     let text = if bold { text.semibold() } else { text };
     let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
+    ribbon_galley(ui, at, galley, color);
+}
+
+fn ribbon_galley(ui: &egui::Ui, at: egui::Pos2, galley: std::sync::Arc<egui::Galley>, color: Color32) {
     let origin = at - galley.size() / 2.0;
     let ppp = ui.ctx().pixels_per_point().max(0.5);
     let origin = pos2((origin.x * ppp).round() / ppp, (origin.y * ppp).round() / ppp);
@@ -1238,9 +1233,15 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 true,
             );
             let label = app.tr("ui.ribbon_workspace");
-            let label_width =
-                painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;
-            ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + if labels { 89.0 } else { 70.0 }), label, t.font_small, t.text_dim, false);
+            // Long translations share the switcher's width with the arrow and its gap.
+            let galley = egui::WidgetText::from(egui::RichText::new(label).size(t.font_small).color(t.text_dim)).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Truncate),
+                (ws.width() - 2.0 * t.space_8 - t.space_12).max(0.0),
+                egui::TextStyle::Button,
+            );
+            let label_width = galley.size().x;
+            ribbon_galley(ui, pos2(ws.center().x - 6.0, ws.top() + if labels { 89.0 } else { 70.0 }), galley, t.text_dim);
             dropdown_arrow(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + if labels { 89.5 } else { 70.5 }), t.text_dim);
         }
         if wresp.on_hover_text(app.tr("ui.change_workspace")).clicked() {
@@ -3325,6 +3326,38 @@ mod app_bar_tests {
 #[cfg(test)]
 mod ribbon_label_tests {
     use super::*;
+
+    #[test]
+    fn translated_workspace_captions_fit_with_room_for_the_arrow() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        for layout in ["floating", "compact"] {
+            h.call("ui.set", json!({"layout": layout}));
+            for labels in [true, false] {
+                h.app.preferences.ribbon_labels = labels;
+                for language in ["en", "ru", "de", "ja", "ko", "uk"] {
+                    h.call("ui.prefs", json!({"language": language}));
+                    h.frames(3);
+                    let ws = crate::scenario::rect_of("workspace_switcher").unwrap();
+                    let caption = h.app.tr("ui.ribbon_workspace");
+                    let text = h
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.text() == caption => Some(text),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let bounds = Rect::from_min_size(text.pos, text.galley.size());
+                    assert!(bounds.left() >= ws.left() + 4.0, "{language}, {layout}, labels={labels}: {bounds:?} outside {ws:?}");
+                    assert!(bounds.right() + 12.0 <= ws.right() - 4.0, "{language}, {layout}, labels={labels}: no room for the arrow");
+                    if language == "en" {
+                        assert!(!text.galley.elided, "the English caption still fits whole");
+                    }
+                }
+            }
+        }
+    }
 
     fn tab_test_themes() -> Vec<Tokens> {
         let mut themes = Vec::new();

@@ -882,6 +882,7 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     if narrow && !app.shell.render_browser_open {
         app.shell.browser = None;
         crate::shell::register_panel(app, "render:browser", None, None);
+        crate::shell::register_panel(app, "render:appearances", None, None);
         crate::render_ui::dock_chip(app, ui, "render:browser:show", "ui.browser_title", "view.render_browser", json!({"open":true}));
         return;
     }
@@ -898,9 +899,11 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
             id: "render:browser",
             title: &title,
             icon: "list",
-            bounds,
+            bounds: crate::ui_kit::Panel::stack_first_bounds(bounds),
             fill_height: true,
             compact: crate::render_ui::compact(app, bounds.width()),
+            enabled: true,
+            header_actions: None,
         },
         &mut side,
         &mut width,
@@ -944,6 +947,9 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     );
     if let Some(rect) = rect {
         crate::scenario::publish_rect("browser:card", rect);
+        crate::render_workspace::appearances_card(app, ui, crate::ui_kit::Panel::stack_next_bounds(bounds, rect));
+    } else {
+        crate::shell::register_panel(app, "render:appearances", None, None);
     }
 }
 

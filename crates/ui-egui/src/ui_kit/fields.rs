@@ -455,7 +455,23 @@ fn cell_editor_frame(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, 
 
 /// Search input with native accessibility and a stable caller ID. Tokens: cell_editor tokens.
 pub(crate) fn search_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
-    cell_editor(ui, id, value, hint, false)
+    if !super::layout::in_catalog(ui) {
+        return cell_editor(ui, id, value, hint, false);
+    }
+    let t = Tokens::get();
+    let editor = text_input(egui::TextEdit::singleline(value))
+        .id(id)
+        .char_limit(128)
+        .hint_text(hint)
+        .min_size(vec2(0.0, t.space_16 + t.space_2))
+        .margin(egui::Margin { left: t.space_24 as i8, right: t.space_8 as i8, top: 0, bottom: 0 })
+        .font(egui::FontId::proportional(t.font_small))
+        .text_color(t.form_ink);
+    let response = ui.add_sized(vec2(dimension(ui.available_width()), t.space_16 + t.space_2), editor);
+    let icon = egui::Rect::from_center_size(egui::pos2(response.rect.left() + t.space_12, response.rect.center().y), vec2(t.space_12, t.space_12));
+    crate::icons::paint_ink(ui.painter(), icon, "zoom", t.form_dim);
+    super::layout::publish_geometry(ui, &response);
+    response
 }
 
 /// Behaviour of the one kit slider. Appearance is always owned by `slider`.

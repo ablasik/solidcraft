@@ -2074,6 +2074,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
 
     let had_submenu = app.menu.submenu.is_some();
+    let leaving = app.menu.submenu_leave.is_some();
     let enabled: Vec<_> = list.iter().map(|i| i.enabled && !i.is_sep() && !i.is_heading()).collect();
     if app.menu.submenu.is_none() {
         let enter = crate::ui_kit::Menu::navigate(ctx, &enabled, &mut app.menu.key_row);
@@ -2115,7 +2116,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             }
                             other_row |= row.hovered();
                         } else {
-                            let row = kit_item(item, key_row == Some(k) || app.menu.submenu == Some(k)).show(ui);
+                            let row = kit_item(item, key_row == Some(k) || (app.menu.submenu == Some(k) && !leaving)).show(ui);
                             // Appearance keeps its direct editor action as well as hover shortcuts.
                             if item.enabled && row.clicked() && item.id == "ui.appearance" {
                                 picked = Some(item.clone());

@@ -1449,6 +1449,7 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
             edit = true;
             ui.close();
         }
+        crate::timeline::sketch_plane_button(app, ui, id);
         if let Some(sketch) = sketch
             && crate::context_menu::button(ui, "Edit Profile Sketch", "sketch").clicked()
         {

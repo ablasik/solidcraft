@@ -52,8 +52,10 @@ rules. Its compass is 110 pt; the 48 pt Shots strip clears the docks by 8 pt.
   Panel/Window header and padded body, with no second top inset below the ribbon.
   Persistent workspace cards omit the close action. `Panel::workspace_with_header` lets tree cards
   compose the shared `tree_header` (title, compact lens and quiet search action). Its tree policy
-  shares the full dock height and lets rows own their 8 pt side insets; header navigation
-  retains a separate title grip. `Panel::bottom_strip`
+  caps the card at ten 28 pt rows and lets rows own their 8 pt side insets; header navigation
+  retains a separate title grip. Optional header actions share the same title band.
+  `stack_first_bounds` reserves a bounded Browser above its companion;
+  `stack_next_bounds` places that companion with the shared gap. `Panel::bottom_strip`
   uses `Container::bottom_strip_rect`, the same placement as Design History.
   `Container::navigation_card` supplies the shared Navigation surface for anchored HUDs.
   Register measured card rectangles and reserved edges with `shell::register_panel` so
@@ -156,6 +158,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `tool_choices`, `ToolChoice`, `toggle_icon` | Wrapped command modes or independent icon toggles | sketch mode/icon tokens, `accent` |
 | `list_picker` | Selectable row with caller identity and native checked state | `control_height`, form selection tokens |
 | `popup_list`, `PopupOption` | Focus-neutral suggestions; owner retains keyboard routing | `space_2`, `form_label_width`, `control_height`, form tokens |
+| sphere: `sphere_thumbnail`, `SphereTile`, `sphere_grid` | Deterministic lit material samples; matte/satin/gloss/metal/glass finishes. Catalog tiles centre a 48 pt sphere in a 56 pt rounded cell with a two-line name, active-tab selection ring, user-count badge and shared Container tooltip. The grid owns three columns and token gaps. | `control_height`, `radius_xl`, `space_2/3/4/8/16`, `font_small/badge`, `control_fill`, `dialog_rule`, active-tab accent, `on_accent` |
 | `color_swatch`, `swatch_grid`, `color_thumbnail` | 30 pt draggable samples, 6 pt grid step gap, selected outer ring and checker pattern under transparent colours; caller payloads retained; local-library thumbnails use 16 pt | `control_height/radius`, `border`, `form_primary`, `control_fill`, `space_2/6/8` |
 | `assistant_entry`, `AssistantEntryState` | Application-bar chat icon with quiet, ready, busy, auth, stopped and approval count marks; caller owns state and target | `app_bar`, `agent_ok/busy`, `warning/error`, `font_badge` |
 | actions: `button`, `Button` | Secondary action: `Normal`, `Small`, or `Enabled(bool)` | native sizing, form font/control tokens |
@@ -711,3 +714,9 @@ with Body active, and an empty chain with Face active in both themes.
 
 For CPU-rendered review images, run
 `SOLIDCRAFT_MATERIAL_WIDGET_EVIDENCE=/tmp/material-widgets cargo test -p solidcraft-ui-egui ui_kit::gallery::material_widgets_board_in_both_themes`.
+
+`catalog_scope` supplies compact catalog metrics to the shared search field, segments,
+icon segments and category chips. `catalog_footer` draws the quiet information hint.
+Catalog title marks use the active workspace accent; tile captions, usage badges and
+selection outlines share the sphere widgets. Feature code supplies data and commands,
+while the kit owns every dimension, colour and inset.

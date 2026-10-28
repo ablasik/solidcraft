@@ -323,7 +323,7 @@ stop it), each sample from the one before, on a copy: the design is not changed.
 accelerations are finite differences between samples, central inside and one-sided at the ends,
 so they are as smooth as the samples are dense (up to 1000, one per step by default). Angles are
 unwrapped, so a joint that turns on past half a turn keeps counting.
-`motion.interference {study, occurrences?, against?, contact_sets?, samples?}` answers each
+`motion.interference {study, occurrences?, against?, contact_sets?, samples?, budget_s?}` answers each
 colliding pair with its `first_step`, `last_step`, the `steps` ranges where they overlap, how
 far into each other (`depth_mm`, the most at `deepest_step`) and their shared `volume_mm3`
 there (null when it is not cheap to work out). It plays the study as `motion.play` does, but
@@ -332,7 +332,10 @@ through another between two samples is missed. Parts are told apart by occurrenc
 sets tell them apart: an occurrence inside a sub-assembly placed twice is one part, so its two
 copies are not checked against each other. A check takes at most 256 bodies; on a large design,
 list the `occurrences` to check (an arm, with `against` the parts it must miss). When the work
-runs out it says `truncated` and the step it `checked_to`.
+runs out it says `truncated` and the step it `checked_to`, and it is not `clear`, even when nothing
+collided in the steps it checked. A mechanism with detailed parts, such as a gear train, can need
+more than that fixed work budget: give it `budget_s` (seconds, at most 86400) and the check runs
+until that time instead, looked at between samples.
 `joint.sweep {joint, from, to, index?, step?, refine?, occurrences?, against?, contact_sets?,
 report_gaps?, apply?}` drives one joint value from `from` toward `to` and answers how far it gets
 before parts touch: `stopped_at` (the last value clear of contact), `stopped_by` (the two parts
@@ -395,7 +398,7 @@ revision, other tools' data under a reverse-DNS key (the same rules as the desig
 properties), and free text properties such as a material grade or a finish. Every occurrence of
 the component shares them, Paste New copies them, and they are saved with the component.
 `component.metadata {component}` reads them and
-`component.metadata.set {component, part_number?, description?, revision?, values?, properties?}`
+`component.metadata.set {component, part_number?, description?, revision?, bom_type?, values?, properties?}`
 changes them in one undo step (an empty value removes a field). The root component is the
 design itself: its properties are `document.metadata`'s. Standard parts (`parts.insert`) get a
 part number from their standard and size (`ISO 4762 M6x20`, or a bearing's designation) and a
@@ -417,8 +420,23 @@ description; **Change Part Size** renumbers them, keeping a field you changed yo
   rows. `total_occurrences` counts the children too, so it is the same either way.
 - `component` lists one subassembly's parts instead of the design's.
 
+A component's **bill of materials type** (`bom_type`, a part property set with
+`component.metadata.set {component, bom_type}`) decides how it counts in the assemblies it is
+placed in. Without one it is `normal`.
+
+| Type | For | In the assembly it is placed in |
+|---|---|---|
+| `normal` | Something you make | A row of its own; every occurrence adds to its quantity |
+| `phantom` | Something just to group (a fastener set) | No row: what it holds counts as if it were placed there directly, in the same rows as the same parts placed there |
+| `reference` | Something to use as a reference (a fixture shown for context) | Counted nowhere, and nothing inside it is counted either |
+| `purchased` | Something you buy (a gearbox) | One row; nothing inside it is counted or listed |
+| `inseparable` | Something made as one piece: welded, glued, riveted and so on (a welded frame) | One row; in parts only, the purchased parts inside it are listed too, and the rest of what it holds is listed in its own bill of materials |
+
+Two components with the same part number share a row only when their types agree. A
+component's own bill of materials (`component`) lists what it holds whatever its type.
+
 Rows are sorted by part number (rows without one come last) and hold `item`, `part_number`,
-`description`, `revision`, `count`, `definition` (the component names), `components` (their ids)
+`description`, `revision`, `bom_type`, `count`, `definition` (the component names), `components` (their ids)
 and `properties`, with `total_occurrences` beside them. `path` writes them to a `.csv` file
 (the columns item, part_number, description, revision, count and definition, every field
 quoted; children follow their row) or a `.json` file. The window lists the same rows, switches

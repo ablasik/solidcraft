@@ -44,6 +44,37 @@ pub(crate) fn scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     .inner
 }
 
+/// Compact library cards share search, segment, chip and footer metrics.
+pub(crate) fn catalog_scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("sc_catalog")), |ui| {
+        ui.spacing_mut().item_spacing.y = Tokens::get().space_8;
+        add(ui)
+    })
+    .inner
+}
+
+pub(super) fn in_catalog(ui: &Ui) -> bool {
+    ui.stack().iter().any(|node| node.tags().contains("sc_catalog"))
+}
+
+/// Quiet full-width library footer with the shared information glyph.
+pub(crate) fn catalog_footer(ui: &mut Ui, text: &str) {
+    let t = Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.control_height), egui::Sense::hover());
+    t.secondary_hline(ui.painter(), rect.x_range(), rect.top(), t.dialog_rule);
+    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_6, rect.center().y), vec2(t.space_12, t.space_12));
+    ui.painter().circle_stroke(icon.center(), t.space_4, t.control_border_stroke(t.form_dim));
+    ui.painter().text(icon.center(), egui::Align2::CENTER_CENTER, "i", crate::fonts::semibold(t.font_badge), t.form_dim);
+    paint_text(
+        ui,
+        egui::Rect::from_min_max(egui::pos2(icon.right() + t.space_6, rect.top()), rect.max),
+        text,
+        egui::FontId::proportional(t.font_small),
+        t.form_dim,
+        false,
+    );
+}
+
 /// Read the enclosing row accessibility label. Tokens: `none`.
 pub(crate) fn label(ui: &Ui) -> &str {
     ui.stack().iter().find_map(|node| node.tags().get_downcast::<String>(LABEL)).map(String::as_str).unwrap_or("")
@@ -474,10 +505,12 @@ pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
     let fixed = matches!(style, Text::Cell | Text::NameCell(_) | Text::MonoCell | Text::Value(_, _));
     let ink = match style {
         Text::Hint(_) | Text::Note(_) | Text::MonoNote(_) => t.form_dim,
+        Text::Inline if in_catalog(ui) => t.form_dim,
         Text::Report(_, true) | Text::Value(_, true) | Text::Error(_) => t.form_error,
         _ => t.form_ink,
     };
     let font = match style {
+        Text::Inline if in_catalog(ui) => crate::fonts::semibold(t.font_small),
         Text::NameCell(true) => crate::fonts::semibold(t.font_label),
         Text::NameCell(false) => crate::fonts::medium(t.font_label),
         Text::Heading(_) => crate::fonts::semibold(t.font_button),

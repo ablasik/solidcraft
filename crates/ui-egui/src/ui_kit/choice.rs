@@ -36,7 +36,8 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     let Segments { targets, icons, workspace_accent, dense, small, states, compact, primary, intrinsic, proportional } = config;
     let accent = crate::theme::TabAccent::current(ui.ctx());
     let t = Tokens::get();
-    let font_size = if small { t.font_small } else { t.font_label };
+    let catalog = super::layout::in_catalog(ui);
+    let font_size = if small || catalog { t.font_small } else { t.font_label };
     let natural: Vec<_> = options
         .iter()
         .enumerate()
@@ -64,7 +65,9 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     let (rect, _) = ui.allocate_exact_size(
         vec2(
             desired,
-            if small {
+            if catalog {
+                t.space_16
+            } else if small {
                 t.control_height - t.space_4
             } else if dense {
                 t.control_height - t.space_2
@@ -175,8 +178,13 @@ pub(crate) struct IconSegment {
 /// Equal icon choices with mixed state. Tokens: `segmented tokens, space_4/12, icon/fill, accent; icon palette`.
 pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[IconSegment], states: &[bool]) -> bool {
     let t = Tokens::get();
-    let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
-    ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
+    let catalog = super::layout::in_catalog(ui);
+    let accent = crate::theme::TabAccent::current(ui.ctx());
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(dimension(ui.available_width()), if catalog { t.space_24 } else { row_height() }), egui::Sense::hover());
+    if !catalog {
+        ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
+    }
     let width = rect.width() / options.len().max(1) as f32;
     let mut clicked = false;
     for (index, option) in options.iter().enumerate() {
@@ -190,25 +198,41 @@ pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[Icon
             se: if index + 1 == options.len() { t.control_radius } else { 0 },
         };
         if on || response.hovered() {
-            ui.painter().rect_filled(segment, rounding, if on { t.selected_bg } else { t.hover });
+            ui.painter().rect_filled(
+                segment,
+                rounding,
+                if on && catalog {
+                    accent.soft
+                } else if on {
+                    t.selected_bg
+                } else {
+                    t.hover
+                },
+            );
         }
-        if index > 0 {
+        if index > 0 && !catalog {
             ui.painter().vline(segment.left(), segment.y_range(), t.control_border_stroke(t.control_border));
         }
         // A square icon area inside the segment: dash gaps and dots need the room to read apart.
         let side = (segment.width().min(segment.height()) - t.space_4).max(t.space_12);
         let icon_rect = egui::Rect::from_center_size(segment.center(), vec2(side, side));
-        crate::icons::paint_icon(ui.painter(), icon_rect, option.icon, f32::from(t.icon.a()) / 255.0);
+        if catalog {
+            let icon_rect = egui::Rect::from_center_size(segment.center(), vec2(t.space_14, t.space_14));
+            crate::icons::paint_ink(ui.painter(), icon_rect, option.icon, if on { accent.ink } else { t.form_dim });
+        } else {
+            crate::icons::paint_icon(ui.painter(), icon_rect, option.icon, f32::from(t.icon.a()) / 255.0);
+        }
         t.button_bevel_with_radius(ui, &response, on, rounding);
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, option.key));
         scenario::publish_handle(&format!("dialog:{}:{}", label(ui), option.key), segment.center());
+        scenario::publish_target(option.key, segment);
         let response = response.on_hover_text(&option.tip);
         if response.clicked() {
             *selected = index;
             clicked = true;
         }
     }
-    if t.borders.bevel.is_none() {
+    if !catalog && t.borders.bevel.is_none() {
         ui.painter().rect_stroke(rect, t.control_radius, t.control_border_stroke(t.control_border), egui::StrokeKind::Inside);
     }
     scenario::publish_target_as(&format!("dialog:{}", label(ui)), &format!("dialog:segments:{}", label(ui)), rect);
@@ -356,6 +380,23 @@ pub(crate) fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) ->
 /// Intrinsic-width selection chip for horizontal lists, sharing list-picker styling.
 pub(crate) fn choice_chip(ui: &mut Ui, key: &str, text: &str, selected: bool) -> egui::Response {
     let t = Tokens::get();
+    if super::layout::in_catalog(ui) {
+        let accent = crate::theme::TabAccent::current(ui.ctx());
+        let width = ui.painter().layout_no_wrap(text.to_string(), crate::fonts::semibold(t.font_small), t.form_ink).size().x + t.space_16;
+        let (rect, response) = ui.allocate_exact_size(vec2(width, t.space_16 + t.space_4), egui::Sense::click());
+        ui.painter().rect_filled(rect, t.radius_xl, if selected { accent.soft } else { t.control_fill });
+        paint_text(
+            ui,
+            rect.shrink2(vec2(t.space_8, 0.0)),
+            text,
+            if selected { crate::fonts::semibold(t.font_small) } else { egui::FontId::proportional(t.font_small) },
+            if selected { accent.ink } else { t.form_ink },
+            false,
+        );
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, text));
+        crate::scenario::publish_target(&format!("dialog:list:{key}"), rect);
+        return response;
+    }
     let width = (ui.painter().layout_no_wrap(text.to_owned(), crate::fonts::semibold(t.font_label), t.text).size().x + t.space_24)
         .clamp(t.control_height * 2.0, t.form_card_width);
     let response = ui.add_sized(vec2(width, super::row_height()), egui::Button::selectable(selected, text).truncate());

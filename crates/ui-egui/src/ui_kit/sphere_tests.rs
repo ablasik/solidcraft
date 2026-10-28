@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn tiles_keep_three_columns_cell_sphere_badge_and_selection_in_both_themes() {
+    for dark in [false, true] {
+        crate::theme::set_dark(dark);
+        let ctx = crate::fonts::test_context();
+        let t = Tokens::get();
+        let output = crate::test_support::frame(
+            &ctx,
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(320.0, 400.0))), ..Default::default() },
+            |ui| {
+                ui.set_width(240.0);
+                super::super::scope(ui, |ui| {
+                    let tiles = ["a", "b", "c"].map(|id| SphereTile {
+                        id,
+                        name: "Satin",
+                        sphere: Sphere { color: t.render_accent, kind: FinishKind::Satin, opacity: None },
+                        selected: id == "b",
+                        users: usize::from(id == "a"),
+                        tip: "Hover details",
+                    });
+                    assert!(sphere_grid(ui, &tiles).is_none());
+                });
+            },
+        );
+        assert!(
+            !output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text.contains("Hover details"))),
+            "hover cards must stay closed without a pointer"
+        );
+        let a = crate::scenario::rect_of("a").unwrap();
+        let b = crate::scenario::rect_of("b").unwrap();
+        let c = crate::scenario::rect_of("c").unwrap();
+        assert_eq!(a.top(), b.top());
+        assert_eq!(b.top(), c.top());
+        assert!(a.right() < b.left() && b.right() < c.left());
+        fn meshes(shape: &egui::Shape) -> usize {
+            match shape {
+                egui::Shape::Mesh(_) => 1,
+                egui::Shape::Vec(shapes) => shapes.iter().map(meshes).sum(),
+                _ => 0,
+            }
+        }
+        assert_eq!(output.shapes.iter().map(|shape| meshes(&shape.shape)).sum::<usize>(), 3);
+        let accent = crate::theme::TabAccent::current(&ctx);
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Rect(r) if r.stroke.color==accent.ink && r.rect.width()==60.0)));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Rect(r) if r.rect.size()==vec2(56.0,56.0))));
+    }
+}
+
+#[test]
 fn cache_bounds_a_thousand_distinct_inputs_and_evicts_oldest() {
     let t = Tokens::light();
     let mut cache = SphereCache::default();

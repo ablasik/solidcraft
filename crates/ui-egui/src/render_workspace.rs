@@ -625,11 +625,9 @@ pub(crate) fn apply_browser_controls(app: &mut SolveApp, value: &serde_json::Val
     let view = &mut app.render_workspace.view;
     if let Some(by_look) = value.get("by_look").and_then(serde_json::Value::as_bool) {
         view.by_look = by_look;
-        view.inspector.library_open = false;
     }
     if let Some(search) = value.get("search").and_then(serde_json::Value::as_bool) {
         view.search_objects = search;
-        view.inspector.library_open = false;
     }
     if let Some(query) = value.get("query").and_then(serde_json::Value::as_str) {
         view.object_query = query.into();
@@ -649,12 +647,12 @@ pub(crate) fn browser_mode(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
             }
         });
     }
-    if app.render_workspace.view.inspector.library_open {
-        crate::ui_kit::scope(ui, |ui| library::browse(app, ui));
-        true
-    } else {
-        false
-    }
+    false
+}
+
+/// Per-stage companion sharing the Browser's dock policy.
+pub(crate) fn appearances_card(app: &mut SolveApp, ui: &mut egui::Ui, bounds: egui::Rect) {
+    library::card(app, ui, bounds);
 }
 
 fn image_host(app: &SolveApp, method: ImageMethod) -> Result<&ImageHost, String> {

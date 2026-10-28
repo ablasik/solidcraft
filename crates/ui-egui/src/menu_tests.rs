@@ -624,12 +624,14 @@ fn expand_and_collapse_all_open_the_browser_tree_from_the_design_menu() {
 
     let created = app.run("component.create", json!({"name": "Part"})).unwrap();
     let occ = created["occurrence"].as_u64().unwrap();
+    let child = app.run("component.create", json!({"name": "Inner", "parent_path": [occ]})).unwrap()["occurrence"].as_u64().unwrap();
     let path = vec![occ];
     act(&mut app, &Target::Occurrence { path: path.clone() }, "Collapse All");
-    assert!(app.tree.collapsed.contains(&format!("o:{occ}")), "{:?}", app.tree.collapsed);
+    assert!(app.tree.collapsed.contains(&format!("o:{occ}/{child}")), "its children fold: {:?}", app.tree.collapsed);
+    assert!(!app.tree.collapsed.contains(&format!("o:{occ}")), "the clicked row stays open: {:?}", app.tree.collapsed);
     assert!(!app.tree.collapsed.contains("c0/bodies"), "a placement's collapse leaves the rest of the tree: {:?}", app.tree.collapsed);
     act(&mut app, &Target::Occurrence { path }, "Expand All");
-    assert!(!app.tree.collapsed.contains(&format!("o:{occ}")), "{:?}", app.tree.collapsed);
+    assert!(!app.tree.collapsed.contains(&format!("o:{occ}/{child}")), "{:?}", app.tree.collapsed);
 }
 
 #[test]
@@ -1597,6 +1599,46 @@ fn appearance_submenu_closes_when_the_pointer_moves_to_another_row() {
     h.step(&json!({"key":"Escape"})).unwrap();
     assert!(h.app.viewport.context_menu.is_none());
     assert!(h.app.dialog.is_none(), "closing the flyout runs nothing");
+}
+
+#[test]
+fn only_one_row_is_lit_while_a_flyout_is_closing() {
+    use crate::scenario::{Harness, rect_of};
+    fn lit_rows(h: &Harness, rows: &[Item]) -> Vec<String> {
+        fn filled(shape: &egui::Shape, r: egui::Rect, found: &mut bool) {
+            match shape {
+                egui::Shape::Rect(rect) => *found |= rect.rect == r && rect.fill == crate::theme::Tokens::get().accent_soft,
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| filled(s, r, found)),
+                _ => {}
+            }
+        }
+        rows.iter()
+            .filter(|i| {
+                rect_of(&format!("menu:{}", i.id)).is_some_and(|r| {
+                    let mut found = false;
+                    h.shapes.iter().for_each(|s| filled(&s.shape, r, &mut found));
+                    found
+                })
+            })
+            .map(|i| i.label.clone())
+            .collect()
+    }
+    let mut h = Harness::new();
+    h.app = sample_app();
+    h.frames(3);
+    let target = Target::Body { name: body(&h.app) };
+    let rows = context_menu::items(&h.app, &target);
+    context_menu::open_for(&mut h.app, pos2(400.0, 180.0), target);
+    h.frames(2);
+    h.step(&json!({"move":[10, 10]})).unwrap();
+    h.step(&json!({"move":{"handle":"menu:ui.appearance"}})).unwrap();
+    h.frames(2);
+    assert_eq!(lit_rows(&h, &rows), vec!["Appearance".to_string()], "the hovered parent of the open flyout is lit");
+    let other = rows.iter().find(|i| i.enabled && i.children.is_empty()).unwrap();
+    h.step(&json!({"move":{"handle":format!("menu:{}", other.id)}})).unwrap();
+    h.frames(2);
+    assert!(rect_of("menu:appearance.assign:Aluminum - Satin").is_some(), "the flyout is still closing");
+    assert_eq!(lit_rows(&h, &rows), vec![other.label.clone()], "the parent gives up its highlight as soon as the pointer leaves it");
 }
 
 #[test]

@@ -2917,7 +2917,7 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
                     ["render:browser", "render:inspector"].iter().filter_map(|id| h.app.shell.workspace_panels.get(id).map(|(r, _)| *r)).collect();
                 if let [browser, inspector] = docks.as_slice() {
                     assert!((browser.top() - inspector.top()).abs() < 1.0);
-                    assert!((browser.bottom() - inspector.bottom()).abs() < 1.0);
+                    assert!(browser.bottom() < inspector.bottom());
                     assert!(!browser.intersect(*inspector).is_positive());
                     if width >= 800 {
                         let compact = crate::render_ui::compact(&h.app, width as f32);
@@ -2925,7 +2925,9 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
                         assert_eq!(inspector.width(), if compact { crate::frame::DIALOG_MIN_W } else { 305.0 });
                         assert_eq!(browser.top() - bar.bottom(), 8.0);
                         let (strip, _) = h.app.shell.workspace_panels.get("render:shots_strip").unwrap();
-                        assert_eq!(strip.top() - browser.bottom(), 8.0);
+                        let library = h.app.shell.workspace_panels["render:appearances"].0;
+                        assert_eq!(strip.top() - library.bottom(), 8.0);
+                        assert_eq!(library.top() - browser.bottom(), 8.0);
                         assert_eq!(strip.height(), 48.0);
                     }
                 }
@@ -2937,6 +2939,13 @@ fn render_workspace_stage_shell_degrades_without_overlap_at_small_window_sizes()
                     for dock in &docks {
                         assert!(!dock.x_range().contains(h.app.viewport.rect.unwrap().center().x), "{width}: {dock:?}");
                     }
+                }
+                let mut docks = docks;
+                if let Some((panel, _)) = h.app.shell.workspace_panels.get("render:appearances") {
+                    for dock in &docks {
+                        assert!(!panel.intersect(*dock).is_positive());
+                    }
+                    docks.push(*panel);
                 }
                 for dock in docks {
                     assert!(!dock.intersect(bar).is_positive(), "{width}×{height}: {dock:?} {bar:?}");
@@ -2974,7 +2983,7 @@ fn render_workspace_focus_restores_docks_without_design_history_or_camera_change
         assert!(crate::render_ui::focused(&h.app));
         crate::shell::register_panel(&mut h.app, "render:stage_panel", Some(before), Some(crate::ui_kit::Edge::Left));
         assert!(!h.app.shell.workspace_panels.contains_key("render:stage_panel"));
-        for id in ["render:browser", "render:inspector", "render:shots_strip", "render:shots:show"] {
+        for id in ["render:browser", "render:appearances", "render:inspector", "render:shots_strip", "render:shots:show"] {
             assert!(!h.app.shell.workspace_panels.contains_key(id));
             assert!(crate::scenario::rect_of(id).is_none());
         }
@@ -3387,16 +3396,18 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
                 && (shots.bottom() - history.bottom()).abs() < 1.0,
             "Shots must reuse History's floating placement: {shots:?} {history:?}"
         );
-        for key in ["render:inspector", "render:browser", "render:shots_strip"] {
+        for key in ["render:inspector", "render:browser", "render:appearances", "render:shots_strip"] {
             let (card, _) = h.app.shell.workspace_panels.get(key).unwrap();
             assert!(viewport.contains_rect(*card), "{layout:?} {key}: {card:?} outside {viewport:?}");
             assert!(crate::shell::covered(&h.app, card.center()), "{key} must shield the viewport");
         }
         let inspector = h.app.shell.workspace_panels["render:inspector"].0;
         let browser = h.app.shell.workspace_panels["render:browser"].0;
+        let appearances = h.app.shell.workspace_panels["render:appearances"].0;
         let ribbon_bottom = h.app.shell.cards.iter().map(|r| r.bottom()).fold(0.0, f32::max);
         assert!((browser.top() - inspector.top()).abs() < 1.0);
-        assert!((browser.bottom() - inspector.bottom()).abs() < 1.0);
+        assert!((appearances.bottom() - inspector.bottom()).abs() < 1.0);
+        assert!(browser.height() <= 330.0, "Browser must stay within the fixed tree height: {browser:?}");
         for key in ["render:browser", "render:inspector"] {
             let card = h.app.shell.workspace_panels[key].0;
             assert!(
@@ -3405,12 +3416,19 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
                 card.top() - ribbon_bottom
             );
         }
-        for key in ["render:browser", "render:inspector"] {
+        for key in ["render:browser", "render:appearances", "render:inspector"] {
             let card = h.app.shell.workspace_panels[key].0;
             let header = crate::scenario::rect_of(&format!("{key}:header")).unwrap();
             assert!((header.height() - crate::ui_kit::header_height()).abs() < 0.1, "{key}: {header:?}");
             assert!((header.top() - card.top()).abs() <= 1.0, "header must have no outer content padding");
-            let control = crate::scenario::rect_of(if key == "render:browser" { "render:tree:by-look" } else { "render:page:output" }).unwrap();
+            let control = crate::scenario::rect_of(if key == "render:browser" {
+                "render:tree:by-look"
+            } else if key == "render:appearances" {
+                "render:library-search"
+            } else {
+                "render:page:output"
+            })
+            .unwrap();
             if key == "render:browser" {
                 assert!(header.contains_rect(control), "Scene lens belongs in the title band");
             } else {
@@ -3418,6 +3436,9 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
             }
         }
 
+        assert!((browser.width() - appearances.width()).abs() < 1.0);
+        assert!((appearances.top() - browser.bottom() - Tokens::get().space_8).abs() < 1.0);
+        assert!(appearances.bottom() < shots.top());
         assert!(browser.left() > viewport.left() && inspector.right() < viewport.right());
         assert!(inspector.bottom() < shots.top() && browser.bottom() < shots.top());
         let camera = h.app.cam;
@@ -4180,8 +4201,11 @@ fn render_workspace_browser_compact_geometry_search_and_theme_evidence() {
                     let card = crate::scenario::rect_of("browser:card").unwrap();
                     assert!((card.width() - 266.0).abs() < 0.1);
                     let inspector = crate::scenario::rect_of("render:inspector").unwrap();
+                    let stage_panel = h.app.shell.workspace_panels["render:appearances"].0;
                     assert!((card.top() - inspector.top()).abs() < 0.1);
-                    assert!((card.bottom() - inspector.bottom()).abs() < 0.1);
+                    assert!((stage_panel.bottom() - inspector.bottom()).abs() < 0.1);
+                    assert!((stage_panel.top() - card.bottom() - Tokens::get().space_8).abs() < 0.1);
+                    assert!(card.height() <= 330.0, "Browser must stay within the fixed tree height: {card:?}");
                     let header = crate::scenario::rect_of("render:browser:header").unwrap();
                     assert!(header.contains_rect(crate::scenario::rect_of("render:tree:by-look").unwrap()));
                     assert!(crate::scenario::handle_at("render:browser-model").is_none());
