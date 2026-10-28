@@ -958,7 +958,7 @@ impl Dialog {
                     at: None,
                     refs: Default::default(),
                 },
-                vec![],
+                crate::primitive_placement::inputs("solid.sphere"),
             ),
             "solid.torus" => Dialog::new(
                 Kind::Primitive {
@@ -968,7 +968,7 @@ impl Dialog {
                     at: None,
                     refs: Default::default(),
                 },
-                vec![],
+                crate::primitive_placement::inputs("solid.torus"),
             ),
             "solid.cone" => Dialog::new(
                 Kind::Primitive {

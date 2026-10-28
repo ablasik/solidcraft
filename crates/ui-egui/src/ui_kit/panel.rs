@@ -807,23 +807,25 @@ impl<'a> Panel<'a> {
                 return (close, action);
             }
             let corners = self.positioned_frame(ui.ctx()).corner_radius;
-            let action = super::footer(
+            // The spinner sits in the footer's own row, at its side inset and on the buttons' centre
+            // line, in the slot the status text leaves for it.
+            let action = super::actions::footer_with_left(
                 ui,
                 self.ok,
                 self.cancel,
                 valid && !state.applying,
                 super::Footer { apply: heading.apply_label, status: state.text.as_deref(), corners: Some(corners), ..Default::default() },
+                |ui| {
+                    if state.busy {
+                        let (rect, _) = ui.allocate_exact_size(vec2(t.space_16, ui.available_height()), egui::Sense::hover());
+                        egui::Spinner::new().size(t.space_14).paint_at(ui, rect);
+                        scenario::publish_rect("dialog:footer:spinner", rect);
+                        let status = state.text.as_deref().unwrap_or_else(|| crate::i18n::tr_label("Updating the preview"));
+                        ui.interact(rect, ui.id().with("compute_status"), egui::Sense::hover()).on_hover_text(status);
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                },
             );
-            if state.busy {
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(ui.min_rect().left(), ui.min_rect().bottom() - super::row_height()),
-                    vec2(t.space_16, super::row_height()),
-                );
-                egui::Spinner::new().size(t.space_14).paint_at(ui, rect);
-                let status = state.text.as_deref().unwrap_or_else(|| crate::i18n::tr_label("Updating the preview"));
-                ui.interact(rect, ui.id().with("compute_status"), egui::Sense::hover()).on_hover_text(status);
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-            }
             super::Container::finish_content(ui, self.positioned_frame(ui.ctx()));
             (close, action)
         })

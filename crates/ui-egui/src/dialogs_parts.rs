@@ -108,6 +108,18 @@ pub fn insert_params(lib: &[Family], k: &Pt, hole: Option<&Sel>) -> Result<Value
     Ok(p)
 }
 
+/// Where the Length list opens for a size: the index of the length an insert of it gets when
+/// none is asked for, which `parts.library` reports beside the size's table values. The list
+/// carries no item of its own for it, so a size whose default is missing opens on the first.
+fn default_length(f: &Family, size: usize, lengths: &[f64]) -> usize {
+    f.sizes
+        .get(size)
+        .and_then(|(_, row)| row.get("default_length"))
+        .and_then(Value::as_f64)
+        .and_then(|d| lengths.iter().position(|l| (*l - d).abs() < 1e-9))
+        .unwrap_or(0)
+}
+
 /// A picture of the part alone.
 fn picture(p: &Value) -> Option<egui::ColorImage> {
     let mut s = Session::default();
@@ -149,15 +161,19 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     }
     let Some(f) = lib.get(k.family) else { return false };
     let sizes: Vec<&str> = f.sizes.iter().map(|s| s.0.as_str()).collect();
+    let was_size = k.size;
     choice_row(ui, "Size", "pt_size", &mut k.size, &sizes);
+    // Each size has a default length of its own, so a new size resolves the Length list again.
+    if k.size != was_size {
+        k.length = None;
+    }
     if let Some(ls) = &f.lengths {
-        let mut labels = vec!["Default".to_string()];
-        labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
+        let labels: Vec<String> = ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)).collect();
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let mut i = k.length.map_or(0, |x| x + 1);
+        let mut i = k.length.unwrap_or_else(|| default_length(f, k.size, ls));
         form_row(ui, "Length", |ui| {
             combo(ui, "pt_len", &refs, &mut i);
-            k.length = i.checked_sub(1);
+            k.length = Some(i);
         });
     }
     text_row(ui, "Name", &mut k.name, crate::i18n::tr("parts.automatic_name"));
@@ -188,7 +204,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if let Some((_, row)) = f.sizes.get(k.size)
         && let Some(o) = row.as_object()
     {
-        for (key, v) in o.iter().filter(|(key, _)| key.as_str() != "size") {
+        // `default_length` picks the Length list's opening value; it is not a dimension.
+        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "default_length")) {
             let label = dimension_label(key).map_or_else(|| key.replace('_', " "), str::to_string);
             form_row(ui, &label, |ui| {
                 crate::ui_kit::text(
@@ -252,7 +269,8 @@ mod tests {
     fn lib() -> Vec<Family> {
         families(&json!({"families": [
             {"family": "socket_head_cap_screw", "name": "Socket Head Cap Screw", "standard": "ISO 4762",
-             "sizes": [{"size": "M5", "head_diameter": 8.5}, {"size": "M6", "head_diameter": 10}], "lengths": [10, 16, 20]},
+             "sizes": [{"size": "M5", "head_diameter": 8.5, "default_length": 16},
+                       {"size": "M6", "head_diameter": 10, "default_length": 20}], "lengths": [10, 16, 20]},
             {"family": "bearing", "name": "Deep Groove Ball Bearing", "standard": "", "sizes": [{"size": "608", "bore": 8}], "lengths": null},
         ]}))
     }
@@ -280,6 +298,18 @@ mod tests {
         assert_eq!(family_name(&unknown), "Spring");
     }
 
+    /// The Length list is lengths only: it opens on the size's default rather than on an item
+    /// called “Default”, and a size that reports none opens on the first length.
+    #[test]
+    fn the_length_list_opens_on_the_size_s_default() {
+        let l = lib();
+        let ls = l[0].lengths.clone().unwrap_or_default();
+        assert_eq!(default_length(&l[0], 0, &ls), 1, "M5 opens on 16");
+        assert_eq!(default_length(&l[0], 1, &ls), 2, "M6 opens on 20");
+        assert_eq!(default_length(&l[1], 0, &ls), 0, "a size without one opens on the first length");
+        assert_eq!(default_length(&l[0], 99, &ls), 0, "so does a size that is not there");
+    }
+
     /// A hole pick seats the part (`at`); without one it goes to the origin along Z.
     #[test]
     fn insert_params_for_picks() {
@@ -304,7 +334,7 @@ mod tests {
         assert!(l.len() >= 7, "{}", l.len());
         for f in &l {
             for (size, row) in &f.sizes {
-                for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| k.as_str() != "size") {
+                for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| !matches!(k.as_str(), "size" | "default_length")) {
                     let label = dimension_label(key).map(crate::i18n::tr);
                     assert!(
                         label.is_some_and(|l| l.starts_with(char::is_uppercase) && !l.contains('_') && !l.starts_with("parts.")),
