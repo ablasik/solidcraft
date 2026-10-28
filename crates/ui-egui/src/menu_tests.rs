@@ -327,6 +327,36 @@ fn sketch_menu_hides_and_moves_to_another_plane() {
 }
 
 #[test]
+fn a_selected_arc_offers_an_arc_length_dimension() {
+    // #6039: the arc length dimension existed as a command, but nothing in the UI led to it.
+    let mut app = sample_app();
+    app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    app.run("sketch.arc.center_point", json!({"center": [0, 0], "start": [10, 0], "end": [0, 10]})).unwrap();
+    app.run("sketch.circle.center", json!({"center": [40, 0], "radius": 5})).unwrap();
+    let ids: Vec<String> = {
+        let st = app.session.model.state();
+        let ss = st.sketch(app.session.active_sketch.unwrap()).unwrap();
+        ss.sketch.curves.iter().map(|c| c.id.clone()).collect()
+    };
+    let select = |app: &mut SolveApp, id: &str| app.run("select.set", json!({"items": [{"type": "sketch_curve", "id": id}]})).unwrap();
+    select(&mut app, &ids[1]);
+    assert!(!context_menu::items(&app, &Target::Viewport).iter().any(|i| i.label == "Arc Length Dimension"), "a circle has no arc length");
+    select(&mut app, &ids[0]);
+    let item = find(&context_menu::items(&app, &Target::Viewport), "Arc Length Dimension");
+    assert!(item.enabled);
+    context_menu::run_item(&mut app, &item, pos2(0.0, 0.0));
+    let st = app.session.model.state();
+    let ss = st.sketch(app.session.active_sketch.unwrap()).unwrap();
+    let len = ss.sketch.constraints.iter().find_map(|c| match c.kind {
+        solidcraft_engine::sketch::ConstraintKind::ArcLength { value, .. } => Some(value),
+        _ => None,
+    });
+    // A quarter of a circle of radius 10.
+    assert!(len.is_some_and(|l| (l - 5.0 * std::f64::consts::PI).abs() < 1e-5), "{:?}", ss.sketch.constraints);
+    assert!(ss.report.ok());
+}
+
+#[test]
 fn sketch_entities_offer_the_constraints_that_fit() {
     let mut app = sample_app();
     app.run("sketch.create", json!({"plane": "XY"})).unwrap();

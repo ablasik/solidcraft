@@ -868,7 +868,15 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
             let (_, ray) = proj.ray(pos);
             let seen = |name: &str| crate::dialogs::plane_by_name(&app.session, name).is_some_and(|pl| pl.normal().dot(ray).abs() > 0.2 * ray.len());
             let target = hits.iter().find_map(|h| match h {
-                Hit::Face { point, .. } => Some((json!({"face": [point.x, point.y, point.z]}), *point)),
+                // The picked body and face, as Create Sketch sends them: a point alone makes the
+                // engine search every face of every body, which gives up on a large design.
+                Hit::Face { body, index, point } => {
+                    let face = solidcraft_engine::Sel::Face { body: body.clone(), index: *index, point: *point };
+                    Some((
+                        crate::sketch_attachment_ui::face_plane(app, &face).unwrap_or_else(|| json!({"face": [point.x, point.y, point.z]})),
+                        *point,
+                    ))
+                }
                 Hit::Plane { name, point } if !decal && seen(name) => Some((json!(name), *point)),
                 _ => None,
             });
@@ -886,7 +894,7 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
             });
             let Some((plane, at)) = target else { return };
             let p = if decal {
-                json!({"path": path, "face": plane.get("face").cloned().unwrap_or(Value::Null)})
+                json!({"path": path, "face": if plane.get("face").is_some() { plane } else { Value::Null }})
             } else {
                 json!({"path": path, "plane": plane, "at": [at.x, at.y, at.z]})
             };

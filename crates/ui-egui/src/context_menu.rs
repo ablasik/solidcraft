@@ -1122,6 +1122,12 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
     v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
     v.push(act("ui.delete", "Delete", "delete").key("Del"));
     v.push(cmd(app, "sketch.dimension", "Sketch Dimension").with(json!({ "entities": ents })).on(ents.len() <= 2));
+    // One arc alone: Sketch Dimension gives its radius, this its length along the curve (#6039).
+    if let [arc] = ents.as_slice()
+        && ss.sketch.curve_index(arc).and_then(|i| ss.sketch.curves.get(i)).is_some_and(|c| matches!(c.kind, CurveKind::Arc { .. }))
+    {
+        v.push(cmd(app, "sketch.dimension", "Arc Length Dimension").with(json!({ "entities": [arc], "type": "arc_length" })));
+    }
     let mut c = Vec::new();
     let n = ents.len();
     let (l, r, p) = (lines.len(), rounds.len(), points.len());
