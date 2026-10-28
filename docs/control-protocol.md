@@ -355,6 +355,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `sketch_exit_view` (`keep` (default: the view stays where it is when a sketch ends), `previous` (back to the view from before the sketch), `unless_rotated` (back unless the sketch view was turned))
 - `sketch_tab_always` (default false: the SKETCH tab stays in the ribbon right after MODEL while no sketch is open; a tool in its CREATE or REFERENCE section then opens Create Sketch, on the selected plane or planar face or else on the plane picked next, and starts in the new sketch, #7904)
 - `smooth_wheel_zoom` (default true)
+- `status_bar` (default false: a thin bar along the window's bottom edge, below History, handle `status:bar`: what is being edited (`status:editing`), the open sketch's state in its colour (`status:sketch`) and the design's units (`status:units`, a click opens the Units menu, whose rows run `document.units`); the sketch's state then leaves the view's top-left corner, #7243)
 - `step_values` (default false: Up/Down and the wheel step a plain number in a focused value field)
 - `theme` (`dark`, `light`, `system` or a theme file's id: a built-in one such as `gruvbox-dark`, or an imported one; the reply's `theme_ids` lists them)
 - `theme_export: true` (the reply's `theme_file` is the theme on now as a complete file; see [colour themes](book/src/guide/ui-tour.md#colour-themes))

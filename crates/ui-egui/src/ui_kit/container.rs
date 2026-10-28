@@ -16,7 +16,8 @@ pub enum Surface {
     Palette,
     /// Workspace switcher and ribbon cards.
     Chrome,
-    /// Native application/title bar; its presentation is independent of workspace layout.
+    /// Native application/title bar and the optional status bar along the window's bottom edge;
+    /// their presentation is independent of workspace layout.
     ApplicationBar,
     /// Movable system windows and modal dialogs; never become workspace docks.
     Window,

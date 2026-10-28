@@ -965,3 +965,146 @@ fn dialog_place_is_saved_and_survives_cancel_defaults_and_bad_input() {
     assert_eq!(restored.preferences.dialog_place, DialogPlace::Edge);
     assert_eq!(restored.preferences.default_units, "in");
 }
+
+/// Every text the last frame painted.
+fn painted_texts(h: &Harness) -> Vec<String> {
+    fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    h.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+    out
+}
+
+#[test]
+fn status_bar_spans_the_window_below_history_in_both_layouts_and_is_covered() {
+    for mode in [LayoutMode::Docked, LayoutMode::Floating] {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        h.call("ui.set", json!({"layout":mode}));
+        h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
+        h.settle();
+        assert!(rect_of("status:bar").is_none() && h.app.shell.status_bar.is_none(), "off by default");
+        let viewport_without = h.app.viewport.rect.unwrap();
+        let covered_without = covered_rects(&h.app);
+        h.call("ui.prefs", json!({"status_bar": true}));
+        h.settle();
+        let bar = rect_of("status:bar").unwrap();
+        assert_eq!(h.app.shell.status_bar, Some(bar));
+        assert_eq!((bar.left(), bar.right(), bar.bottom()), (0.0, 1400.0, 900.0), "{mode:?}: full width at the window's bottom: {bar:?}");
+        assert_eq!(bar.height(), crate::status_bar::HEIGHT);
+        let viewport = h.app.viewport.rect.unwrap();
+        assert!(viewport.bottom() <= bar.top() + 0.5, "{mode:?}: the view ends above the bar: {viewport:?} {bar:?}");
+        assert_eq!(viewport.bottom(), viewport_without.bottom() - bar.height(), "{mode:?}: the view gives up only the bar's height");
+        let history = h.app.shell.history.unwrap();
+        assert!(history.bottom() <= bar.top() + 0.5, "{mode:?}: History sits above the bar: {history:?} {bar:?}");
+        let rects = covered_rects(&h.app);
+        assert!(rects.contains(&bar), "{mode:?}: the bar is covered: {rects:?}");
+        assert_eq!(rects.len(), covered_without.len() + 1, "{mode:?}: {rects:?} {covered_without:?}");
+        assert!(covered(&h.app, bar.center()));
+        h.call("ui.prefs", json!({"status_bar": false}));
+        h.settle();
+        assert!(rect_of("status:bar").is_none() && h.app.shell.status_bar.is_none());
+        assert_eq!(h.app.viewport.rect.unwrap(), viewport_without);
+    }
+}
+
+#[test]
+fn status_bar_names_what_is_edited_and_the_sketch_state_and_replaces_the_views_corner_text() {
+    use crate::status_bar::SketchState;
+    let mut h = Harness::new();
+    let corner = |h: &Harness| painted_texts(h).into_iter().filter(|t| t.starts_with("Sketch1 — ")).collect::<Vec<_>>();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.settle();
+    assert_eq!(corner(&h), ["Sketch1 — fully constrained"], "without the bar the state stays in the view's corner");
+    h.call("ui.prefs", json!({"status_bar": true}));
+    h.settle();
+    let contents = crate::status_bar::contents(&h.app);
+    assert_eq!(contents.editing.as_deref(), Some("Editing Sketch1"));
+    assert_eq!(contents.sketch, Some(SketchState::Empty), "a blank sketch is not called fully constrained");
+    let rectangle = h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[40,30]})).unwrap();
+    h.settle();
+    let contents = crate::status_bar::contents(&h.app);
+    let Some(SketchState::Under(dof)) = contents.sketch else { panic!("{contents:?}") };
+    assert!(dof > 0);
+    let texts = painted_texts(&h);
+    assert!(corner(&h).is_empty(), "with the bar on, the view's corner shows no state: {texts:?}");
+    assert!(texts.contains(&format!("Under constrained ({dof} degrees of freedom)")), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Editing Sketch1") && texts.iter().any(|t| t == "mm"), "{texts:?}");
+    assert!(crate::scenario::handle_at("status:editing").unwrap().x < crate::scenario::handle_at("status:sketch").unwrap().x);
+    assert!(crate::scenario::handle_at("status:sketch").unwrap().x < crate::scenario::handle_at("status:units").unwrap().x);
+    // Fully constrained: the rectangle fixed in place.
+    h.app.run("sketch.constraint.fix", json!({"entities": rectangle["curves"]})).unwrap();
+    h.settle();
+    assert_eq!(crate::status_bar::contents(&h.app).sketch, Some(SketchState::Full));
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.run("solid.extrude", json!({"distance":10})).unwrap();
+    h.settle();
+    let idle = crate::status_bar::contents(&h.app);
+    assert_eq!((idle.editing, idle.sketch, idle.units.as_str()), (None, None, "mm"), "idle: only the units");
+    assert!(crate::scenario::handle_at("status:editing").is_none() && crate::scenario::handle_at("status:sketch").is_none());
+    // A feature's dialog, editing it.
+    let extrude = h.app.session.doc.features.iter().find(|f| f.name == "Extrude1").map(|f| f.id).unwrap();
+    h.app.edit_feature(extrude);
+    h.settle();
+    assert!(h.app.dialog.as_ref().is_some_and(|d| d.editing.is_some()));
+    assert_eq!(crate::status_bar::contents(&h.app).editing.as_deref(), Some("Editing Extrude1"));
+    // In another language the text is translated, and so is a default feature name.
+    let _ja = crate::i18n::scope("ja");
+    assert_eq!(crate::status_bar::contents(&h.app).editing, Some(format!("編集中: {}", crate::i18n::tr_name("Extrude1"))));
+    assert_eq!(crate::i18n::tr_name("Sketch1"), "スケッチ1");
+}
+
+#[test]
+fn status_bar_units_open_the_units_menu_above_the_bar_and_change_units_in_one_undo_step() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1400,"height":900}));
+    h.call("ui.prefs", json!({"status_bar": true}));
+    h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
+    h.settle();
+    let undo = h.app.session.undo.len();
+    let button = rect_of("status:units").unwrap();
+    assert!(rect_of("status:bar").unwrap().contains_rect(button));
+    h.step(&json!({"click":{"handle":"status:units"}})).unwrap();
+    h.settle();
+    assert_eq!(h.app.menu.target, crate::context_menu::Target::Units);
+    let at = h.app.viewport.context_menu.unwrap();
+    assert_eq!(at, button.right_top());
+    let menu = crate::context_menu::describe(&h.app);
+    let labels: Vec<_> = menu["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap().to_string()).collect();
+    assert_eq!(labels, crate::prefs::UNITS);
+    // The list opens above the bar, inside the window.
+    let list = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_context_menu"))).unwrap();
+    assert!(list.bottom() <= button.top() + 0.5 && list.top() >= 0.0, "{list:?} {button:?}");
+    assert_eq!(h.app.session.undo.len(), undo, "opening the menu changes nothing");
+    h.call("ui.menuPick", json!({"item":"in"}));
+    h.settle();
+    assert_eq!(h.app.session.doc.units, "in");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    assert!(h.app.viewport.context_menu.is_none());
+    assert_eq!(crate::status_bar::contents(&h.app).units, "in");
+    h.app.run("edit.undo", json!({})).unwrap();
+    h.settle();
+    assert_eq!(h.app.session.doc.units, "mm");
+    // A second click on the button closes the menu it opened.
+    h.step(&json!({"click":{"handle":"status:units"}})).unwrap();
+    h.settle();
+    assert!(h.app.viewport.context_menu.is_some());
+    h.step(&json!({"click":{"handle":"status:units"}})).unwrap();
+    h.settle();
+    assert!(h.app.viewport.context_menu.is_none());
+}
+
+#[test]
+fn status_bar_stays_out_of_the_embed() {
+    let mut h = Harness::new();
+    h.app.embedded = true;
+    h.app.preferences.status_bar = true;
+    h.settle();
+    assert!(!crate::status_bar::shown(&h.app));
+    assert!(rect_of("status:bar").is_none() && h.app.shell.status_bar.is_none());
+}

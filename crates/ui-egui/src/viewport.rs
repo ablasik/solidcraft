@@ -5398,8 +5398,8 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
         }
     }
     loose_end_markers(sk, &ss.ends, &ss.plane, painter, proj, &v);
-    // Sketch status.
-    if let Some(r) = app.viewport.layout.as_ref().map(|l| l.content) {
+    // Sketch status, unless the status bar shows it (#7243).
+    if let Some(r) = app.viewport.layout.as_ref().map(|l| l.content).filter(|_| !crate::status_bar::shown(app)) {
         let status = if !ss.report.ok() {
             crate::i18n::tr("sketch.status_conflict").to_string()
         } else if ss.report.dof == 0 {

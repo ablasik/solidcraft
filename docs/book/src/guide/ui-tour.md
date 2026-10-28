@@ -115,6 +115,12 @@
   selects it, and while the marker sits between a sketch and its feature, or the two are in
   different folders, the sketch keeps a row of its own. The timeline along the bottom always lists
   features in creation order.
+- **Status bar** (off by default: Preferences › Interface › **Status bar**). A thin bar along
+  the window's bottom edge, below the timeline. From the right: the design's units (click them
+  to change the design's units, one undo step), the open sketch's state in its colour (under
+  constrained with its degrees of freedom, fully constrained, constraints conflict) and what is
+  being edited (Editing Sketch1, or Editing Extrude1 while that feature's dialog is open). While
+  it is on, the sketch's state no longer shows in the view's top-left corner.
 - **Command search (S).** Click the ribbon search field or press S to open the search popup
   below it. Results group commands by their ribbon path and show matching features and user
   parameters from this design. With an empty query, recent commands appear first, followed by

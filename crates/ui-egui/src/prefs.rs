@@ -870,6 +870,9 @@ preference_settings! {
     /// While a dialog or a sketch is open, OK and Cancel in the view's top right corner, with the
     /// axis view moved down below them (#6709). Off by default.
     view_confirm_corner: bool = false, PAGE_INTERFACE => check_id("prefs.view_confirm_corner");
+    /// A thin bar along the window's bottom edge: what is being edited, the open sketch's state
+    /// and the design's units (#7243). Off by default.
+    status_bar: bool = false, PAGE_INTERFACE => check_id("prefs.status_bar");
     /// Put the feature history to the left of the browser instead of below the viewport.
     timeline_left: bool = false, PAGE_INTERFACE;
     /// Measured outer width; the contents react to this width without a names mode.
@@ -4372,6 +4375,7 @@ mod tests {
             ("color_vision", json!("protan"), PAGE_INTERFACE),
             ("viewport_theme", json!("light"), PAGE_INTERFACE),
             ("view_confirm_corner", json!(true), PAGE_INTERFACE),
+            ("status_bar", json!(true), PAGE_INTERFACE),
             ("nav", json!("blender"), PAGE_NAVIGATION),
             ("look_at_anim", json!(false), PAGE_NAVIGATION),
             ("selection_shift_add_only", json!(true), PAGE_SKETCH),

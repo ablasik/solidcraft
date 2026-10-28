@@ -183,6 +183,11 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             app.preferences.browser_bodies_folders = *mode;
                         }
                     });
+                    // What is being edited, the sketch's state and the units, along the bottom (#7243).
+                    ui_kit::row(ui, "", |ui| {
+                        let check = setting::status_bar(app, ui).on_hover_text(app.tr("prefs.status_bar_note"));
+                        crate::scenario::publish_target("prefs:status_bar", check.rect);
+                    });
                     ui_kit::text(ui, app.tr("prefs.layout_note"), ui_kit::Text::Hint("layout"));
                     ui_kit::text(ui, app.tr("prefs.history_sketches_note"), ui_kit::Text::Hint("history_sketches"));
                     ui_kit::LayoutPreview {

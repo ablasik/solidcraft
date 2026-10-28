@@ -624,13 +624,14 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String], quality
 }
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = path_arg(p, "file.export")?;
+    let cmd = "file.export";
+    let path = path_arg(p, cmd)?;
     let format = Format::from_name(str_(p, "format").unwrap_or(path))?;
     if format == Format::Urdf {
         return export_urdf(s, path, p);
     }
-    let quality = mesh_quality(p, "file.export")?;
-    export_to(s, path, format, &string_list(p, "bodies"), quality)
+    let quality = mesh_quality(p, cmd)?;
+    export_to(s, path, format, &string_list(cmd, p, "bodies")?, quality)
 }
 
 /// The OBJ export: the mesh file and the material library beside it, with the colours of the
@@ -663,7 +664,7 @@ fn export_obj(s: &Session, path: &str, bodies: &[String], quality: solidcraft_io
 /// anything is written; the meshes go first and the `.urdf` last.
 fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     let cmd = "file.export";
-    if !string_list(p, "bodies").is_empty() {
+    if !string_list(cmd, p, "bodies")?.is_empty() {
         return Err(bad(cmd, "urdf exports the whole assembly; omit bodies"));
     }
     let positive = |k: &str| match p.get(k) {
@@ -749,7 +750,7 @@ fn save_mesh(s: &mut Session, p: &Value) -> Result<Value> {
                 cmd,
                 kind: crate::slicers::TargetKind::Slicer,
                 spec,
-                bodies: string_list(p, "bodies"),
+                bodies: string_list(cmd, p, "bodies")?,
                 format,
                 quality,
                 dest: send::Dest::Path(path),
@@ -758,7 +759,7 @@ fn save_mesh(s: &mut Session, p: &Value) -> Result<Value> {
             },
         );
     }
-    export_to(s, path, format, &string_list(p, "bodies"), quality)
+    export_to(s, path, format, &string_list(cmd, p, "bodies")?, quality)
 }
 
 /// The browser build can't start a program.
@@ -791,7 +792,7 @@ fn send_to_slicer(s: &mut Session, p: &Value) -> Result<Value> {
                 cmd,
                 kind: crate::slicers::TargetKind::Slicer,
                 spec,
-                bodies: string_list(p, "bodies"),
+                bodies: string_list(cmd, p, "bodies")?,
                 format,
                 quality: Default::default(),
                 dest: send::Dest::Folder,
