@@ -3452,3 +3452,79 @@ fn navigation_bar_render_canvases_filter_slots_and_keep_product_fit() {
         assert!(crate::scenario::handle_at(&format!("nav:slot:{slot}")).is_some(), "{slot}");
     }
 }
+
+#[test]
+fn render_workspace_dock_command_swaps_sides_without_design_edits() {
+    for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = layout;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        enter(&mut h.app, true).unwrap();
+        h.frames(4);
+        let document = h.app.session.doc.clone();
+        let history = (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision);
+        let camera = h.app.cam;
+        let product_camera = h.app.render_workspace.view.draft.camera;
+        let widths = (h.app.preferences.render_browser_width, h.app.preferences.render_inspector_width);
+        assert!(crate::shortcut_box::search(&h.app, "view.render_dock").iter().any(|row| row.0 == "view.render_dock"));
+        for (panel, side, inspector, browser) in [
+            ("inspector", "left", "left", "right"),
+            ("browser", "left", "right", "left"),
+            ("inspector", "right", "right", "left"),
+            ("browser", "right", "left", "right"),
+        ] {
+            h.app.run("view.render_dock", json!({"panel":panel,"side":side})).unwrap();
+            h.frames(3);
+            assert_eq!(h.app.preferences.render_inspector_side, inspector);
+            assert_eq!(h.app.preferences.render_browser_side, browser);
+            let a = h.app.shell.workspace_panels["render:inspector"].0;
+            let b = h.app.shell.workspace_panels["render:browser"].0;
+            assert_eq!(a.center().x < b.center().x, inspector == "left");
+            let view = h.app.viewport.layout.as_ref().unwrap();
+            assert!(view.content.contains_rect(view.axis_view));
+            let edge = if inspector == "left" { view.axis_view.left() - view.content.left() } else { view.content.right() - view.axis_view.right() };
+            assert!(edge.abs() < 0.1);
+            assert!(!view.navigation.intersects(a));
+            assert!(!view.navigation.intersects(b));
+            assert_eq!(h.app.cam, camera);
+            assert_eq!(h.app.render_workspace.view.draft.camera, product_camera);
+            assert_eq!(h.app.session.doc, document);
+            assert_eq!((h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision), history);
+            assert_eq!((h.app.preferences.render_browser_width, h.app.preferences.render_inspector_width), widths);
+        }
+    }
+}
+
+#[test]
+fn render_workspace_dock_grip_menus_dispatch_the_other_side() {
+    for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.ui.layout = layout;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        enter(&mut h.app, true).unwrap();
+        h.frames(4);
+        let document = h.app.session.doc.clone();
+        let history = (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision);
+        let camera = h.app.cam;
+        for panel in ["inspector", "inspector", "browser", "browser"] {
+            let before = h.app.preferences.render_inspector_side.clone();
+            let at = crate::scenario::handle_at(&format!("render:{panel}:grip")).unwrap();
+            for pressed in [true, false] {
+                h.frame_with(vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE },
+                ]);
+            }
+            h.frames(2);
+            // Opening the menu must not move either panel.
+            assert_eq!(h.app.preferences.render_inspector_side, before);
+            h.step(&json!({"click":{"handle":format!("render:{panel}:move_side")}})).unwrap();
+            h.frames(3);
+            assert_ne!(h.app.preferences.render_inspector_side, before);
+            assert_ne!(h.app.preferences.render_inspector_side, h.app.preferences.render_browser_side);
+            assert_eq!(h.app.cam, camera);
+            assert_eq!(h.app.session.doc, document);
+            assert_eq!((h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision), history);
+        }
+    }
+}

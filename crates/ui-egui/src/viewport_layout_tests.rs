@@ -8,6 +8,28 @@ fn bar_rect(canvas: Rect) -> Rect {
     crate::navigation_bar_view::measure(canvas, &Default::default(), crate::navigation::NavCaps::MODEL, |_| 0.0).rect
 }
 
+#[test]
+fn render_compass_avoids_the_navigation_bar_on_either_inspector_side() {
+    let viewport = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 140.0));
+    for style in [crate::prefs::NavigatorStyle::Axes, crate::prefs::NavigatorStyle::Cube] {
+        for inspector_left in [false, true] {
+            for bar_left in [false, true] {
+                let navigation = Rect::from_min_size(pos2(if bar_left { 8.0 } else { 312.0 }, 100.0), vec2(80.0, 32.0));
+                let make = if inspector_left { Layout::product_left } else { Layout::product };
+                let layout = make(viewport, viewport, &[], 1.0, style, egui::Vec2::ZERO, navigation);
+                assert!(!layout.axis_view.intersect(navigation).is_positive());
+                if inspector_left != bar_left {
+                    assert!(layout.axis_view.is_positive(), "a bar on the opposite side must leave the compass visible");
+                }
+                if layout.axis_view.is_positive() {
+                    let edge = if inspector_left { layout.axis_view.left() - viewport.left() } else { viewport.right() - layout.axis_view.right() };
+                    assert!(edge.abs() < 0.1, "a compact compass must stay on the Inspector's side");
+                }
+            }
+        }
+    }
+}
+
 fn layout(viewport: Rect, docks: &[Rect], scale: f32, style: crate::prefs::NavigatorStyle, visible: bool) -> Layout {
     let navigation = if visible {
         crate::navigation_bar_view::measure(viewport, &Default::default(), crate::navigation::NavCaps::MODEL, |_| 0.0).rect

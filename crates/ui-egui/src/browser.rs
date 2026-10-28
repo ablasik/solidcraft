@@ -1080,10 +1080,11 @@ fn render_card(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
         },
     );
     app.preferences.render_browser_width = width;
-    if app.preferences.render_browser_side != side {
-        app.preferences.render_inspector_side = if side == "left" { "right" } else { "left" }.into();
+    let requested =
+        content.as_ref().and_then(|c| c.inner.1).map(str::to_string).or_else(|| (app.preferences.render_browser_side != side).then(|| side.clone()));
+    if let Some(side) = requested {
+        let _ = app.run("view.render_dock", serde_json::json!({"panel":"browser","side":side}));
     }
-    app.preferences.render_browser_side = side.clone();
     let rect = content.map(|c| c.response.rect);
     app.shell.browser = rect;
     crate::shell::register_panel(

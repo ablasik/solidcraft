@@ -5428,7 +5428,11 @@ pub(crate) fn refresh_layout(app: &mut SolveApp, ctx: &egui::Context) {
         let style = app.preferences.navigator_style;
         app.viewport.layout = Some(if crate::render_workspace::active(app) {
             let navigation = if app.ui.show_navigation_bar { crate::navigation_bar_view::measured(app, ctx, content).rect } else { Rect::NOTHING };
-            crate::viewport_layout::Layout::product(rect, content, &docks, ctx.pixels_per_point(), style, corner, navigation)
+            if app.preferences.render_inspector_side == "left" {
+                crate::viewport_layout::Layout::product_left(rect, content, &docks, ctx.pixels_per_point(), style, corner, navigation)
+            } else {
+                crate::viewport_layout::Layout::product(rect, content, &docks, ctx.pixels_per_point(), style, corner, navigation)
+            }
         } else {
             let content = if app.ui.layout == crate::shell::LayoutMode::Docked { rect } else { content };
             let navigation = if app.ui.show_navigation_bar { crate::navigation_bar_view::measured(app, ctx, content).rect } else { Rect::NOTHING };

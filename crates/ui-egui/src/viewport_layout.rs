@@ -62,7 +62,7 @@ impl Layout {
         corner: egui::Vec2,
         navigation: Rect,
     ) -> Self {
-        Self::build(viewport, content, docks, scale, style, corner, navigation, false)
+        Self::build(viewport, content, docks, scale, style, corner, navigation, None)
     }
 
     /// Render fits stay between the docked panels, including beneath a short Browser card.
@@ -75,7 +75,20 @@ impl Layout {
         corner: egui::Vec2,
         navigation: Rect,
     ) -> Self {
-        Self::build(viewport, content, docks, scale, style, corner, navigation, true)
+        Self::build(viewport, content, docks, scale, style, corner, navigation, Some(crate::frame::Side::Right))
+    }
+
+    /// Render compass at the free canvas edge beside a left-hand Inspector.
+    pub fn product_left(
+        viewport: Rect,
+        content: Rect,
+        docks: &[Rect],
+        scale: f32,
+        style: crate::prefs::NavigatorStyle,
+        corner: egui::Vec2,
+        navigation: Rect,
+    ) -> Self {
+        Self::build(viewport, content, docks, scale, style, corner, navigation, Some(crate::frame::Side::Left))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -87,8 +100,9 @@ impl Layout {
         style: crate::prefs::NavigatorStyle,
         corner: egui::Vec2,
         navigation: Rect,
-        fit_in_content: bool,
+        inspector_side: Option<crate::frame::Side>,
     ) -> Self {
+        let fit_in_content = inspector_side.is_some();
         let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
         let mut obstacles: Vec<_> = docks.iter().take(14).copied().filter(|r| r.is_finite()).map(|r| r.expand(4.0)).collect();
         // Navigation is anchored to the viewport, never to transient dialog space.
@@ -106,8 +120,11 @@ impl Layout {
         // The axis view starts below the pair while it is shown.
         let top = if confirm.is_positive() { confirm.bottom() + CORNER_GAP } else { available.top() };
         let cube_size = if fit_in_content { 110.0 } else { super::viewport::axis_view_size(style) };
+        let axis_left = |size| {
+            if inspector_side == Some(crate::frame::Side::Left) { available.left() } else { available.right() - size }
+        };
         let mut axis_view = if available.width() >= cube_size && available.bottom() - top >= cube_size {
-            Rect::from_min_size(pos2(available.right() - cube_size, top), vec2(cube_size, cube_size))
+            Rect::from_min_size(pos2(axis_left(cube_size), top), vec2(cube_size, cube_size))
         } else {
             Rect::NOTHING
         };
@@ -116,7 +133,7 @@ impl Layout {
         if axis_view.intersect(navigation).is_positive() {
             let compact = (navigation.top() - top - 4.0).min(cube_size);
             axis_view = if style == crate::prefs::NavigatorStyle::Cube && compact >= 96.0 {
-                Rect::from_min_size(pos2(content.right() - compact, top), vec2(compact, compact))
+                Rect::from_min_size(pos2(axis_left(compact), top), vec2(compact, compact))
             } else {
                 Rect::NOTHING
             };

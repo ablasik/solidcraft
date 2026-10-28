@@ -1050,6 +1050,18 @@ impl SolveApp {
                 self.ui.pick_components = mode == Some("component");
                 self.ui.pick_off.retain(|kind| kind != "faces");
             }
+            if id == "view.render_dock"
+                && let (Some(panel), Some(side)) = (v.get("panel").and_then(Value::as_str), v.get("side").and_then(Value::as_str))
+            {
+                let other = if side == "left" { "right" } else { "left" };
+                if panel == "inspector" {
+                    self.preferences.render_inspector_side = side.into();
+                    self.preferences.render_browser_side = other.into();
+                } else {
+                    self.preferences.render_browser_side = side.into();
+                    self.preferences.render_inspector_side = other.into();
+                }
+            }
             if id == "view.shots_strip"
                 && let Some(visible) = v.get("visible").and_then(Value::as_bool)
             {

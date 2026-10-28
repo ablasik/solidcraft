@@ -29,6 +29,11 @@ CommandSpec::new("view.render_stage", "Render Stage", render_stage)
 CommandSpec::new("view.shots_strip", "Shots Strip", shots_strip)
     .at("RENDER CAMERA", "SHOTS").icon("camera").noundo().doc_only()
     .params("visible: bool → {visible}; Render Shots strip UI preference. Headless echo only, no document edits or undo"),
+CommandSpec::new("view.render_dock", "Move Render Dock", crate::checked!("view.render_dock", render_dock))
+    .at("RENDER", "SCENE").icon("settings").noundo().doc_only()
+    .contract(&RENDER_DOCK_CONTRACT)
+    .output(crate::schema::output_schema_for::<crate::schema::view_navigation::RenderDock>)
+    .params("panel: inspector|browser; side: left|right → {panel, side}; Render dock UI preference; headless echo only, no document edits or undo"),
 CommandSpec::new("view.layout", "Workspace layout", layout)
     .icon("settings").noundo().doc_only().params("mode: floating|compact → validated workspace layout; display only, never opens a dialog"),
 CommandSpec::new("view.history_layout", "History layout", history_layout)
@@ -221,6 +226,14 @@ fn render_stage(_s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("stage", "expected look, light, frame or output"));
     }
     Ok(json!({"stage":request.stage}))
+}
+
+const RENDER_DOCK_CONTRACT: crate::schema::TypedContract<crate::schema::view_navigation::RenderDock> = crate::schema::TypedContract::new();
+
+fn render_dock(_s: &mut Session, p: &Value) -> Result<Value> {
+    let request: crate::schema::view_navigation::RenderDock =
+        serde_json::from_value(p.clone()).map_err(|e| bad("view.render_dock", e.to_string()))?;
+    serde_json::to_value(request).map_err(|e| bad("view.render_dock", e.to_string()))
 }
 
 fn shots_strip(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -918,4 +931,37 @@ fn render_workspace_stage_validates_without_document_changes_or_evaluation() {
     }
     assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
     assert_eq!(before, (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty()));
+}
+
+#[cfg(test)]
+#[test]
+fn render_workspace_dock_validates_without_mutation() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+    session.execute("edit.undo", &json!({})).unwrap();
+    let document = session.doc.clone();
+    let before = (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty(), session.camera);
+    for panel in ["inspector", "browser"] {
+        for side in ["left", "right"] {
+            let params = json!({"panel":panel,"side":side});
+            assert_eq!(session.execute("view.render_dock", &params).unwrap(), params);
+        }
+    }
+    for params in [
+        Value::Null,
+        json!([]),
+        json!({}),
+        json!({"panel":"inspector"}),
+        json!({"side":"left"}),
+        json!({"panel":true,"side":"left"}),
+        json!({"panel":"inspector","side":null}),
+        json!({"panel":"inspector","side":1e300}),
+        json!({"panel":"other","side":"left"}),
+        json!({"panel":"inspector","side":"top"}),
+        json!({"panel":"browser","side":"left","unknown":true}),
+    ] {
+        assert!(session.execute("view.render_dock", &params).is_err(), "{params}");
+    }
+    assert!(std::sync::Arc::ptr_eq(&document, &session.doc));
+    assert_eq!(before, (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty(), session.camera));
 }

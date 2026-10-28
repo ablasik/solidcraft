@@ -276,10 +276,14 @@ pub(super) fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         },
     );
     app.preferences.render_inspector_width = width;
-    if app.preferences.render_inspector_side != side {
-        app.preferences.render_browser_side = if side == "left" { "right" } else { "left" }.into();
+    let requested = content
+        .as_ref()
+        .and_then(|c| c.inner.1)
+        .map(str::to_string)
+        .or_else(|| (app.preferences.render_inspector_side != side).then(|| side.clone()));
+    if let Some(side) = requested {
+        let _ = app.run("view.render_dock", serde_json::json!({"panel":"inspector","side":side}));
     }
-    app.preferences.render_inspector_side = side.clone();
     let rect = content.map(|c| c.response.rect);
     crate::shell::register_panel(app, "render:inspector", rect, Some(if side == "left" { ui_kit::Edge::Left } else { ui_kit::Edge::Right }));
     if let Some(rect) = rect {

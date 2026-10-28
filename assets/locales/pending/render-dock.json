@@ -1,0 +1,42 @@
+{
+  "en": {
+    "cmd.view.render_dock": "Move Render Dock",
+    "label.move_to_left_side": "Move to left side",
+    "label.move_to_right_side": "Move to right side"
+  },
+  "de": {
+    "cmd.view.render_dock": "Render-Panel verschieben",
+    "label.move_to_left_side": "Auf die linke Seite verschieben",
+    "label.move_to_right_side": "Auf die rechte Seite verschieben"
+  },
+  "ja": {
+    "cmd.view.render_dock": "レンダードックを移動",
+    "label.move_to_left_side": "左側へ移動",
+    "label.move_to_right_side": "右側へ移動"
+  },
+  "zh": {
+    "cmd.view.render_dock": "移动渲染停靠面板",
+    "label.move_to_left_side": "移到左侧",
+    "label.move_to_right_side": "移到右侧"
+  },
+  "ko": {
+    "cmd.view.render_dock": "렌더 도크 이동",
+    "label.move_to_left_side": "왼쪽으로 이동",
+    "label.move_to_right_side": "오른쪽으로 이동"
+  },
+  "ar": {
+    "cmd.view.render_dock": "نقل لوحة التصيير",
+    "label.move_to_left_side": "نقل إلى الجانب الأيسر",
+    "label.move_to_right_side": "نقل إلى الجانب الأيمن"
+  },
+  "he": {
+    "cmd.view.render_dock": "הזז את עגינת הרינדור",
+    "label.move_to_left_side": "העבר לצד שמאל",
+    "label.move_to_right_side": "העבר לצד ימין"
+  },
+  "vi": {
+    "cmd.view.render_dock": "Di chuyển neo kết xuất",
+    "label.move_to_left_side": "Chuyển sang bên trái",
+    "label.move_to_right_side": "Chuyển sang bên phải"
+  }
+}
