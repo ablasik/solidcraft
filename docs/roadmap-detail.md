@@ -114,7 +114,10 @@ completed drawings publish atomically. The browser still exports synchronously.
 - New Body extrusion and face-offset previews show completed intermediate geometry while a
   drag continues, then catch up to the exact final value. Changes to the selected geometry,
   operation or feature still discard obsolete results. Distance arrows and their value boxes
-  follow the current frame's input.
+  follow the current frame's input. When the selection changes while a preview computes (the
+  next edge picked for a fillet or chamfer), the new selection's preview starts at once: the
+  obsolete one is asked to stop and its result is dropped, with at most two left running
+  (#7167).
 - Large fine modelled threads use pitch-based helix resolution and tighter faceted
   reconstruction fallbacks, preserving thin crests and closed shells on large shafts.
 
