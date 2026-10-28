@@ -323,7 +323,7 @@ fn edges(k: &Kernel, flat: &View, n_edges: usize, n_vertices: usize) -> R<Edges>
             return bad();
         }
         let (lo, hi) = (a.min(z), a.max(z));
-        let form = kind == CURVE_CIRCLE_I && forms.get(e) == Some(&1);
+        let form = matches!(kind, CURVE_CIRCLE_I | CURVE_ELLIPSE_I) && forms.get(e) == Some(&1);
         let mut nurbs = |nj: &mut usize| -> R<Curve> {
             let n = count(at(flat.i(EDGE_NURBS_VERTEX_COUNT), *nj)?)?;
             let o = count(at(flat.i(EDGE_NURBS_ORDER), *nj)?)?;
@@ -378,6 +378,10 @@ fn edges(k: &Kernel, flat: &View, n_edges: usize, n_vertices: usize) -> R<Edges>
             }
             CURVE_CIRCLE_I if form => {
                 circles += 1;
+                (nurbs(&mut nj)?, true)
+            }
+            CURVE_ELLIPSE_I if form => {
+                ellipses += 1;
                 (nurbs(&mut nj)?, true)
             }
             CURVE_CIRCLE_I => {

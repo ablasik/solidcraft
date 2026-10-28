@@ -162,7 +162,7 @@ pub fn draft(
         // The face's outward normal: the plane's, turned with the outer faceuse.
         let mut n = plane.evaluate_normal();
         if eu::faceuse_orientation(&b, fu).map_err(|e| solid_status(&e))? != OrientType::Same {
-            n = n * -1.0;
+            n *= -1.0;
         }
         if n.dot(pull).abs() > 1e-6 {
             return Err(plain(ERR_UNSUPPORTED));

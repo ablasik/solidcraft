@@ -124,10 +124,10 @@ fn chamfer_chord(k: &Kernel, b: &Brep, edge: EdgeId, distance: f64) -> Result<f6
     let mid = curve.evaluate_point(k, 0.5 * (e.interval.min() + e.interval.max()))?;
     let mut faces: Vec<FaceId> = Vec::new();
     for &eu in &e.edgeuses {
-        if let Some(f) = edgeuse_face(b, eu)? {
-            if !faces.contains(&f) {
-                faces.push(f);
-            }
+        if let Some(f) = edgeuse_face(b, eu)?
+            && !faces.contains(&f)
+        {
+            faces.push(f);
         }
     }
     let [fa, fb] = faces[..] else { return Ok(distance * std::f64::consts::SQRT_2) };

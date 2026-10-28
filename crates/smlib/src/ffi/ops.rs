@@ -507,7 +507,7 @@ pub fn pick_op(_: Pick, _: &Handle, _: &[[f64; 3]], _: f64, _: f64) -> Result<Ha
 }
 
 #[cfg(feature = "solidcore")]
-pub use super::rs_ops::{boolean, boolean2d, boolean_union_all, solid_count};
+pub use super::rs_ops::{boolean, boolean_union_all, boolean2d, solid_count};
 
 #[cfg(feature = "solidcore")]
 pub use super::rs_blend::{blend, fillet_variable, pick_op};

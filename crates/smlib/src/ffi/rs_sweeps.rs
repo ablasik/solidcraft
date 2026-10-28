@@ -94,8 +94,9 @@ fn nurbs(degree: usize, count: usize, r: &[f64]) -> Result<Curve, i32> {
         return Err(ERR_ARG);
     }
     let (pts, knots) = r.split_at(4 * count);
-    let points: Vec<Point3> = pts.chunks_exact(4).map(|p| Point3::new(p[0], p[1], p[2])).collect();
-    let weights: Vec<f64> = pts.chunks_exact(4).map(|p| p[3]).collect();
+    let (quads, _) = pts.as_chunks::<4>();
+    let points: Vec<Point3> = quads.iter().map(|p| Point3::new(p[0], p[1], p[2])).collect();
+    let weights: Vec<f64> = quads.iter().map(|p| p[3]).collect();
     if weights.iter().any(|w| !(*w > 1e-12 && *w < 1e12)) || knots.windows(2).any(|w| w[1] < w[0]) {
         return Err(ERR_ARG);
     }

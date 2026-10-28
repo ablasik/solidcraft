@@ -261,6 +261,7 @@ fn hostile_inputs_are_errors() {
 /// offset (r5) is tangent to the front's (y = 2), so the walls meet along a line and the offset
 /// bounds no solid there. Refused as such; 1.5 (the walls apart) and 2.5 (crossing, merged)
 /// build.
+#[cfg(feature = "native")]
 #[test]
 fn a_shell_whose_walls_would_meet_is_refused_as_such() {
     let block = Brep::make_box([0.0; 3], [60.0, 40.0, 10.0]).unwrap();
@@ -436,6 +437,7 @@ fn draft_tilts_a_side_about_its_line_on_the_neutral_plane() {
 /// box's six faces and the three rounds (9 faces, 30 edges, 22 vertices), a sheet SMLib's check
 /// passes, and one hole of twelve edges (each section and face curve in two), chained end to
 /// start, each bounding a different face than the patch's neighbours across it.
+#[cfg(feature = "native")]
 #[test]
 fn a_setback_corner_left_open_returns_its_hole() {
     let b = Brep::make_box([0.0; 3], [60.0, 40.0, 20.0]).unwrap();

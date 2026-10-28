@@ -191,6 +191,7 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
         let (t0, t1) = (edge.interval.min(), edge.interval.max());
         // The range is in the curve's STEP parameter, which may run against the NURBS's: then
         // it comes out reversed, as the arrays carry "against the curve".
+        let mut form = false;
         let (mut a, mut z) = (curve.convert_t_from_nurbs_to_step(k, t0).map_err(s)?, curve.convert_t_from_nurbs_to_step(k, t1).map_err(s)?);
         match curve.kind() {
             CurveKind::Line(l) => {
@@ -201,9 +202,12 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
             }
             CurveKind::Ellipse(el) => {
                 let c = el.canonical();
-                (a, z) = (a.to_radians(), z.to_radians());
                 let f = frame(&c.position);
                 if el.is_circle() {
+                    // A circle goes with its NURBS form, its range and trims on that: SMLib's UV trims of the
+                    // uses are on the NURBS parameter, not the angle.
+                    (a, z) = (t0, t1);
+                    form = true;
                     o.i(EDGE_CURVE_TYPE, i64::from(CURVE_CIRCLE));
                     o.frame([EDGE_CIRCLE_CENTER, EDGE_CIRCLE_AXIS, EDGE_CIRCLE_REF_DIRECTION], f);
                     o.r(EDGE_CIRCLE_RADIUS, c.radius_x);
@@ -212,12 +216,26 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
                     o.frame([EDGE_ELLIPSE_CENTER, EDGE_ELLIPSE_AXIS, EDGE_ELLIPSE_REF_DIRECTION], f);
                     o.r(EDGE_ELLIPSE_X_RADIUS, c.radius_x);
                     o.r(EDGE_ELLIPSE_Y_RADIUS, c.radius_y);
+                    (a, z) = (t0, t1);
+                    form = true;
                 }
             }
-            CurveKind::BSpline(c) => nurbs_edge(&mut o, c)?,
+            CurveKind::BSpline(c) => match straight(k, curve, t0, t1) {
+                Some((p, d, length)) => {
+                    o.i(EDGE_CURVE_TYPE, i64::from(CURVE_LINE));
+                    o.r3(EDGE_LINE_ORIGIN, xyz(p));
+                    o.r3(EDGE_LINE_DIRECTION, [d.x, d.y, d.z]);
+                    (a, z) = (0.0, length);
+                }
+                None => nurbs_edge(&mut o, c)?,
+            },
             CurveKind::Hyperbola(c) => nurbs_edge(&mut o, c.base())?,
             CurveKind::Parabola(c) => nurbs_edge(&mut o, c.base())?,
             _ => return Err(REFUSED),
+        }
+        o.i(EDGE_NURBS_FORM, i64::from(form));
+        if form && let CurveKind::Ellipse(el) = curve.kind() {
+            nurbs_block(&mut o, el.base())?;
         }
         o.r(EDGE_RANGE, a);
         o.r(EDGE_RANGE, z);
@@ -271,6 +289,8 @@ impl Kinds {
     ) -> Result<(), i32> {
         // Plane distances, angles in radians: the STEP parameters, as the arrays carry them.
         let (mut scale, mut angles) = ([1.0, 1.0], [false, false]);
+        // An analytic face goes with the NURBS SMLib holds it as: its range and trims are on that.
+        let mut form: Option<&solidcore::nurbs::b_spline_surface::BSplineSurface> = None;
         match surface.kind() {
             SurfaceKind::Plane(p) => {
                 o.i(FACE_SURFACE_TYPE, i64::from(SURFACE_PLANE));
@@ -280,6 +300,7 @@ impl Kinds {
             }
             SurfaceKind::Cone(c) => {
                 let cn = c.canonical();
+                form = Some(c.rev().base());
                 let f = frame(&cn.origin);
                 angles = [true, false];
                 if c.is_cylinder() || cn.semi_angle_deg == 0.0 {
@@ -296,12 +317,14 @@ impl Kinds {
                 }
             }
             SurfaceKind::Sphere(sp) => {
+                form = Some(sp.base().base());
                 o.i(FACE_SURFACE_TYPE, i64::from(SURFACE_SPHERE));
                 o.frame([FACE_SPHERE_CENTER, FACE_SPHERE_AXIS, FACE_SPHERE_REF_DIRECTION], frame(sp.base().position()));
                 o.r(FACE_SPHERE_RADIUS, sp.radius());
                 angles = [true, true];
             }
             SurfaceKind::Torus(t) => {
+                form = Some(t.base().base());
                 o.i(FACE_SURFACE_TYPE, i64::from(SURFACE_TORUS));
                 o.frame([FACE_TORUS_ORIGIN, FACE_TORUS_AXIS, FACE_TORUS_REF_DIRECTION], frame(t.base().position()));
                 o.r(FACE_TORUS_MAJOR_RADIUS, t.major_radius());
@@ -312,6 +335,18 @@ impl Kinds {
             SurfaceKind::SurfOfRevolution(b) => nurbs_face(o, b.base())?,
             SurfaceKind::SurfOfExtrusion(b) => nurbs_face(o, b.base())?,
             _ => return Err(REFUSED),
+        }
+        o.i(FACE_NURBS_FORM, i64::from(form.is_some()));
+        if let Some(n) = form {
+            nurbs_face_block(o, n)?;
+            // The domain as the trims cover it, but never past the NURBS's own knots.
+            let nurb = n.gw_nurb().ok_or(REFUSED)?;
+            let span = |knots: &[f64]| (knots.first().copied().unwrap_or(f64::MIN), knots.last().copied().unwrap_or(f64::MAX));
+            let ((u0, u1), (v0, v1)) = (span(nurb.u_knots()), span(nurb.v_knots()));
+            for x in [uv.u_min().max(u0), uv.v_min().max(v0), uv.u_max().min(u1), uv.v_max().min(v1)] {
+                o.r(FACE_RANGE, x);
+            }
+            return Ok(());
         }
         if matches!(surface.kind(), SurfaceKind::BSpline(_) | SurfaceKind::SurfOfRevolution(_) | SurfaceKind::SurfOfExtrusion(_)) {
             // A NURBS face keeps the NURBS's own parameters: its domain as it is.
@@ -353,12 +388,35 @@ fn edge_vertices(b: &Brep, e: EdgeId) -> Result<[VertexId; 2], i32> {
 /// A B-spline edge curve: its NURBS block (control points, full knots, weights; always given, 1
 /// for a polynomial curve, since the consumer reads them together for every NURBS edge).
 fn nurbs_edge(o: &mut Out, c: &solidcore::nurbs::b_spline_curve::BSplineCurve) -> Result<(), i32> {
+    o.i(EDGE_CURVE_TYPE, i64::from(CURVE_NURBS));
+    nurbs_block(o, c)
+}
+
+/// A B-spline edge that is a straight segment at a steady pace (a cylinder's seam): its start, unit
+/// direction and length. SMLib's own seam is a line, which the arrays carry as one.
+fn straight(k: &Kernel, curve: &solidcore::curve::curve::Curve, t0: f64, t1: f64) -> Option<(Point3, Vec3, f64)> {
+    let at = |f: f64| curve.evaluate_point(k, t0 + (t1 - t0) * f).ok();
+    let (p0, p1) = (at(0.0)?, at(1.0)?);
+    let d = p1 - p0;
+    let length = d.length();
+    if !(length > 1e-9) {
+        return None;
+    }
+    let unit = d / length;
+    let slack = 1e-9 * length.max(1.0);
+    [0.125, 0.25, 0.5, 0.75, 0.875]
+        .iter()
+        .all(|&f| at(f).is_some_and(|p| ((p - p0).dot(unit) - f * length).abs() <= slack && (p - p0 - unit * ((p - p0).dot(unit))).length() <= slack))
+        .then_some((p0, unit, length))
+}
+
+/// The NURBS block of an edge: a NURBS edge's curve, or a circle's form.
+fn nurbs_block(o: &mut Out, c: &solidcore::nurbs::b_spline_curve::BSplineCurve) -> Result<(), i32> {
     let nurb = c.gw_nurb().ok_or(REFUSED)?;
     let (points, mut weights) = c.control_polygon().map_err(s)?;
     if weights.is_empty() {
         weights = vec![1.0; points.len()];
     }
-    o.i(EDGE_CURVE_TYPE, i64::from(CURVE_NURBS));
     o.i(EDGE_NURBS_VERTEX_COUNT, int(points.len())?);
     o.i(EDGE_NURBS_ORDER, int(nurb.degree() + 1)?);
     for p in points {
@@ -375,10 +433,15 @@ fn nurbs_edge(o: &mut Out, c: &solidcore::nurbs::b_spline_curve::BSplineCurve) -
 
 /// A B-spline face: its NURBS block, control points u-major (point (i, j) at `i * v_count + j`).
 fn nurbs_face(o: &mut Out, b: &solidcore::nurbs::b_spline_surface::BSplineSurface) -> Result<(), i32> {
+    o.i(FACE_SURFACE_TYPE, i64::from(SURFACE_NURBS));
+    nurbs_face_block(o, b)
+}
+
+/// The NURBS block of a face: a B-spline face's surface, or an analytic face's form.
+fn nurbs_face_block(o: &mut Out, b: &solidcore::nurbs::b_spline_surface::BSplineSurface) -> Result<(), i32> {
     let nurb = b.gw_nurb().ok_or(REFUSED)?;
     let net = b.control_point_net().map_err(s)?;
     let n = net.points.len();
-    o.i(FACE_SURFACE_TYPE, i64::from(SURFACE_NURBS));
     o.i(FACE_NURBS_U_VERTEX_COUNT, int(net.u_count)?);
     o.i(FACE_NURBS_V_VERTEX_COUNT, int(net.v_count)?);
     o.i(FACE_NURBS_U_ORDER, int(nurb.p() + 1)?);
@@ -465,26 +528,53 @@ fn write_trim(
     eu: solidcore::topology::EdgeuseId,
     surface: &solidcore::surface::surface::Surface,
 ) -> Result<(), i32> {
-    let none = |o: &mut Out| {
+    let none = |o: &mut Out| -> Result<(), i32> {
         o.i(EDGEUSE_NURBS_VERTEX_COUNT, 0);
         o.i(EDGEUSE_NURBS_ORDER, 0);
+        Ok(())
     };
     let record = b.edgeuse(eu).map_err(s)?;
-    let Some(edge) = record.edge.and_then(|e| b.edge(e).ok()) else { return Ok(none(o)) };
-    let (Some(curve), true) = (edge.curve.as_ref(), matches!(surface.kind(), SurfaceKind::BSpline(_))) else { return Ok(none(o)) };
-    let (Some(trim), _) = uv_trim_curve(b, eu).map_err(s)? else { return Ok(none(o)) };
-    let (CurveKind::BSpline(edge_spline), CurveKind::BSpline(c)) = (curve.kind(), trim.kind()) else { return Ok(none(o)) };
-    let (Some(nurb), Some(_)) = (c.gw_nurb(), edge_spline.gw_nurb()) else { return Ok(none(o)) };
+    let Some(edge) = record.edge.and_then(|e| b.edge(e).ok()) else { return none(o) };
+    let (Some(curve), true) = (
+        edge.curve.as_ref(),
+        matches!(
+            surface.kind(),
+            SurfaceKind::BSpline(_)
+                | SurfaceKind::SurfOfRevolution(_)
+                | SurfaceKind::SurfOfExtrusion(_)
+                | SurfaceKind::Plane(_)
+                | SurfaceKind::Cone(_)
+                | SurfaceKind::Sphere(_)
+                | SurfaceKind::Torus(_)
+        ),
+    ) else {
+        return none(o);
+    };
+    let (Some(trim), _) = uv_trim_curve(b, eu).map_err(s)? else { return none(o) };
+    let CurveKind::BSpline(c) = trim.kind() else { return none(o) };
+    let Some(nurb) = c.gw_nurb() else { return none(o) };
+    // The edge's range as the arrays carry it, which the trim's knots are moved onto: the NURBS
+    // interval for a spline and a circle (on its form), the STEP parameter for a line. Other
+    // curves have no trim here.
+    let (t0, t1) = (edge.interval.min(), edge.interval.max());
+    let (w0, w1) = match curve.kind() {
+        CurveKind::BSpline(_) => match straight(k, curve, t0, t1) {
+            Some((_, _, length)) => (0.0, length),
+            None => (t0, t1),
+        },
+        CurveKind::Ellipse(_) => (t0, t1),
+        CurveKind::Line(_) => (curve.convert_t_from_nurbs_to_step(k, t0).map_err(s)?, curve.convert_t_from_nurbs_to_step(k, t1).map_err(s)?),
+        _ => return none(o),
+    };
     let (points, mut weights) = c.control_polygon().map_err(s)?;
     if weights.is_empty() {
         weights = vec![1.0; points.len()];
     }
     let knots = nurb.knots();
-    let (Some(&c0), Some(&c1)) = (knots.first(), knots.last()) else { return Ok(none(o)) };
-    let (t0, t1) = (edge.interval.min(), edge.interval.max());
+    let (Some(&c0), Some(&c1)) = (knots.first(), knots.last()) else { return none(o) };
     let (same, tol) = (record.orientation == OrientType::Same, edge.tolerance.max(b.tolerance()));
     if !(t1 > t0 && c1 > c0) {
-        return Ok(none(o));
+        return none(o);
     }
     for reversed in [false, true] {
         let lifts = (0..=8).all(|i| {
@@ -500,13 +590,23 @@ fn write_trim(
         if !lifts {
             continue;
         }
-        let onto = |t: f64| t0 + (t - c0) / (c1 - c0) * (t1 - t0);
+        let onto = |t: f64| w0 + (t - c0) / (c1 - c0) * (w1 - w0);
         o.i(EDGEUSE_NURBS_VERTEX_COUNT, int(points.len())?);
         o.i(EDGEUSE_NURBS_ORDER, int(nurb.degree() + 1)?);
         let order: Vec<usize> = if reversed { (0..points.len()).rev().collect() } else { (0..points.len()).collect() };
         for &i in &order {
-            o.r(EDGEUSE_NURBS_CVS, points[i].x);
-            o.r(EDGEUSE_NURBS_CVS, points[i].y);
+            // A plane's trims are written in its own (u, v), the STEP parameters; the surface's NURBS
+            // ones are another affine map of them.
+            let p = match surface.kind() {
+                SurfaceKind::Plane(pl) => {
+                    let q = surface.convert_uv_from_nurbs_to_step(k, Point2::new(points[i].x, points[i].y)).map_err(s)?;
+                    let scale = pl.uv_scale();
+                    Point2::new(q.x * scale.x, q.y * scale.y)
+                }
+                _ => Point2::new(points[i].x, points[i].y),
+            };
+            o.r(EDGEUSE_NURBS_CVS, p.x);
+            o.r(EDGEUSE_NURBS_CVS, p.y);
         }
         if reversed {
             knots.iter().rev().for_each(|&t| o.r(EDGEUSE_NURBS_KNOTS, onto(c0 + c1 - t)));
@@ -518,5 +618,5 @@ fn write_trim(
         }
         return Ok(());
     }
-    Ok(none(o))
+    none(o)
 }

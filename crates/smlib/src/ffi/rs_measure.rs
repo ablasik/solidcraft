@@ -5,11 +5,12 @@ use std::fmt::Write;
 use solidcore::geom::assert_array::AssertArray;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::Kernel;
-use solidcore::mass::integrator::properties::{face_centroid, MassPropertyBehavior, PropertyAttributes, brep_properties};
+use solidcore::mass::integrator::properties::{MassPropertyBehavior, PropertyAttributes, brep_properties, face_centroid};
 use solidcore::math::{Point3, Vec3};
 use solidcore::query::brep::{BoundingBoxOptions, calculate_bounding_box};
 use solidcore::topology::Brep;
 use solidcore::topology::brep::validation::validate_pointers;
+use solidcore::topology::edge::max_up_dim_gap_3d;
 
 use super::rs::{body, keys, status, with_reader};
 use super::{ERR_ARG, ERR_BUFFER};
@@ -126,5 +127,21 @@ pub fn check(h: &super::Handle, level: i32, buf: &mut [u8]) -> Result<(usize, i6
         }
         buf[..text.len()].copy_from_slice(text.as_bytes());
         Ok((text.len(), failures))
+    })
+}
+
+/// How far edge `edge` (an index in the body's edge order) lies from the faces it bounds, over their
+/// own domains: the largest edge/face gap of its uses (`GetMaxUpDimGap3d`), SMLib's own. `face` is
+/// the face asked about; the caller's sheets hold one.
+pub fn edge_face_distance(h: &super::Handle, edge: i64, face: i64) -> Result<f64, i32> {
+    let (Ok(edge), Ok(face)) = (usize::try_from(edge), usize::try_from(face)) else { return Err(ERR_ARG) };
+    with_reader(|k| {
+        let mut b = body(h);
+        if face >= b.face_list().len() {
+            return Err(ERR_ARG);
+        }
+        let e = *b.edge_list().get(edge).ok_or(ERR_ARG)?;
+        let gap = max_up_dim_gap_3d(k, &mut b, e, false, None).map_err(|e| status(&e))?;
+        Ok(gap.max.map_or(0.0, |g| g.length()))
     })
 }
