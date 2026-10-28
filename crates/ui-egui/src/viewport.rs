@@ -189,8 +189,8 @@ pub struct ViewportState {
     /// Unsnapped camera while Shift-orbit previews a standard or diagonal view.
     pub orbit_free: Option<Camera>,
     pub build_ms: f64,
-    /// Adaptive supersampling (#1288): the view drawn last (its view-projection and pixels) and
-    /// since when it has held still (app time, s).
+    /// Adaptive supersampling (#1288) and ambient occlusion while moving (#7165): the view drawn
+    /// last (its view-projection and pixels) and since when it has held still (app time, s).
     pub(crate) ss_view: (u64, f64),
     /// The right-click menu, open at this screen position.
     pub context_menu: Option<Pos2>,
@@ -539,6 +539,30 @@ fn supersampling(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 
     if !app.preferences.supersampling_adaptive {
         return factor;
     }
+    if view_settled(app, ctx, view_proj, size_px) { factor } else { 1.0 }
+}
+
+/// Ambient occlusion samples per pixel this frame (#7165): the full count once the view has held
+/// still for a moment, fewer while it moves, so orbiting with AO on stays quick.
+fn ao_samples(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 4], size_px: [f32; 2]) -> u32 {
+    // Without AO (off, or wireframe) the count is unused: no repaint is asked for it.
+    if !app.preferences.ambient_occlusion || app.ui.visual_style == 2 || view_settled(app, ctx, view_proj, size_px) {
+        solidcraft_gpu::view::AO_SAMPLES
+    } else {
+        solidcraft_gpu::view::AO_SAMPLES_MOVING
+    }
+}
+
+/// Whether the frame on screen is the full-quality one a screenshot should wait for: with
+/// ambient occlusion drawn, the view has held still for [`SS_SETTLE`], so the picture has all
+/// its samples (#7165). Reads the state the last painted frame left.
+pub(crate) fn ao_settled(app: &SolveApp, ctx: &egui::Context) -> bool {
+    !app.preferences.ambient_occlusion || app.ui.visual_style == 2 || ctx.input(|i| i.time) - app.viewport.ss_view.1 >= SS_SETTLE
+}
+
+/// Whether the view (its view-projection and pixels) has held still for [`SS_SETTLE`]. Until it
+/// has, a repaint is asked for when it will have, so the full-quality frame follows by itself.
+fn view_settled(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 4], size_px: [f32; 2]) -> bool {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     view_proj.iter().flatten().chain(&size_px).for_each(|x| x.to_bits().hash(&mut h));
     let view = h.finish();
@@ -547,16 +571,14 @@ fn supersampling(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 
         app.viewport.ss_view = (view, now);
     }
     let still = now - app.viewport.ss_view.1;
-    if still >= SS_SETTLE {
-        factor
-    } else {
-        // Draw it supersampled once the view settles.
+    if still < SS_SETTLE {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(SS_SETTLE - still + 0.01));
-        1.0
     }
+    still >= SS_SETTLE
 }
 
-/// How long the view holds still before adaptive supersampling draws it at full quality (s).
+/// How long the view holds still before adaptive supersampling and ambient occlusion draw it at
+/// full quality (s).
 const SS_SETTLE: f64 = 0.25;
 
 /// How far (screen points) a press must be dragged for its release to draw a rectangle, circle
@@ -3938,8 +3960,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let ppp = ui.ctx().pixels_per_point();
         let size_px = [rect.width() * ppp, rect.height() * ppp];
         let ssaa = supersampling(app, ui.ctx(), proj.vp.to_f32(), size_px);
+        let ao_samples = ao_samples(app, ui.ctx(), proj.vp.to_f32(), size_px);
         let cb = ViewportCallback(Frame {
             ssaa,
+            ao_samples,
             product: false,
             key: app.viewport.key,
             slot: app.viewport.slot.clone(),
@@ -4493,6 +4517,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::sketch_dims::show(app, ui, &proj);
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
+    crate::view_angles::show(app, ui, rect);
     crate::navigation_bar_view::show(app, ui, rect);
     // The notices and the agent chip first, so the 3D mouse picture can keep clear of them.
     let toasts = transient_messages(app, ui, rect);
@@ -5959,6 +5984,43 @@ mod tests {
         assert!(drawn > n / 20, "the model is drawn: {drawn} pixels");
     }
 
+    /// Ambient occlusion while the view moves (#7165): fewer samples for a moving view, the full
+    /// count once it has held still for `SS_SETTLE`, and the full count whenever AO is off.
+    #[test]
+    fn ambient_occlusion_takes_fewer_samples_while_the_view_moves() {
+        use solidcraft_gpu::view::{AO_SAMPLES, AO_SAMPLES_MOVING};
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let size = [800.0, 600.0];
+        let view = |x: f32| {
+            let mut m = [[0.0; 4]; 4];
+            (0..4).for_each(|i| m[i][i] = 1.0);
+            m[3][0] = x;
+            m
+        };
+        // The samples drawn, and whether the frame asks to be drawn again by the time the view
+        // will have settled (with no input to wake the window, the full count must follow).
+        let at = |app: &mut SolveApp, time: f64, x: f32| {
+            let mut n = 0;
+            let out = ctx.run_ui(egui::RawInput { time: Some(time), ..Default::default() }, |ui| n = ao_samples(app, ui.ctx(), view(x), size));
+            let delay = out.viewport_output.get(&egui::ViewportId::ROOT).map_or(std::time::Duration::MAX, |v| v.repaint_delay);
+            (n, delay <= std::time::Duration::from_secs_f64(SS_SETTLE + 0.02))
+        };
+        // A new context asks for its own first repaints: let it settle.
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput { time: Some(0.0), ..Default::default() }, |_| {});
+        }
+        app.preferences.ambient_occlusion = false;
+        assert_eq!(at(&mut app, 0.0, 0.0), (AO_SAMPLES, false), "AO off");
+        app.preferences.ambient_occlusion = true;
+        assert_eq!(at(&mut app, 1.0, 1.0), (AO_SAMPLES_MOVING, true), "the view just moved");
+        assert_eq!(at(&mut app, 1.1, 1.0), (AO_SAMPLES_MOVING, true), "still for less than the settling time");
+        assert_eq!(at(&mut app, 1.0 + SS_SETTLE + 0.01, 1.0), (AO_SAMPLES, false), "settled");
+        assert_eq!(at(&mut app, 1.4, 2.0), (AO_SAMPLES_MOVING, true), "moved again");
+        app.ui.visual_style = 2;
+        assert_eq!(at(&mut app, 1.45, 3.0), (AO_SAMPLES, false), "wireframe draws no AO");
+    }
+
     /// Supersampling (#1288): the sample design drawn at 2× and filtered down shows the same
     /// model (the same pixels covered, give or take its outline) with smoothed edges: pixels part
     /// model, part background, which a single-sampled frame does not have. Skipped without a GPU
@@ -6022,6 +6084,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn ambient_occlusion_draws_no_copies_of_a_part() {
+        use solidcraft_gpu::view::{AO_SAMPLES, AO_SAMPLES_MOVING};
         let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 300, "width": 300, "height": 4, "corner": [-150, -150, -4], "body_name": "plate"})).unwrap();
         s.execute("solid.box", &json!({"length": 30, "width": 160, "height": 16, "corner": [0, -80, 0], "operation": "new", "body_name": "block"}))
@@ -6040,9 +6103,10 @@ mod tests {
         let proj = projection(&app, rect);
         let e = proj.cam.eye().to_f32();
         let eye = [e[0], e[1], e[2], 0.0];
-        let render =
-            |radius: f32| crate::gpu::render_offscreen_ao(build_scene(&app).merged(), proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, radius);
-        let (Some(off), Some(on)) = (render(0.0), render(RADIUS)) else {
+        let render = |radius: f32, samples: u32| {
+            crate::gpu::render_offscreen_ao(build_scene(&app).merged(), proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, radius, samples)
+        };
+        let Some(off) = render(0.0, AO_SAMPLES) else {
             eprintln!("skipping: no GPU adapter");
             return;
         };
@@ -6056,24 +6120,37 @@ mod tests {
         let (y0, y1) = (a.min(b), a.max(b));
         assert!(reach > 100.0 && y1 > y0 + 20, "{reach} px, rows {y0}..{y1}");
         let lum = |img: &[u8], x: usize, y: usize| img[(y * SIZE as usize + x) * 4..][..3].iter().map(|&c| f64::from(c)).sum::<f64>();
-        // The plate's visibility in each column: its brightness with AO over its brightness
-        // without, averaged over the rows.
-        let column = |x: usize| (y0..y1).map(|y| lum(&on, x, y) / lum(&off, x, y).max(1.0)).sum::<f64>() / (y1 - y0) as f64;
-        // From 30 px beyond the radius up to 4 px from the block (its outline).
-        let from = (edge - reach - 30.0) as usize;
-        let profile: Vec<f64> = (from..=(edge - 4.0) as usize).map(column).collect();
-        let (clear, shaded) = (&profile[..20], &profile[30..]);
-        let step = shaded.windows(2).map(|p| (p[1] - p[0]).abs()).fold(0.0, f64::max);
-        eprintln!(
-            "plate {} without AO; edge {edge:.1} px, radius {reach:.1} px, rows {y0}..{y1}; clear {:.4}..{:.4}; next to the block {:.4}; largest step {step:.4}",
-            lum(&off, from, y0) / 3.0,
-            clear.iter().copied().fold(f64::INFINITY, f64::min),
-            clear.iter().copied().fold(0.0, f64::max),
-            profile[profile.len() - 1],
-        );
-        assert!(profile[profile.len() - 1] < 0.98, "the plate darkens beside the block: {:.4}", profile[profile.len() - 1]);
-        assert!(clear.iter().all(|v| (v - 1.0).abs() < 0.004), "the plate is clear beyond the radius: {clear:?}");
-        assert!(step < 0.005, "no copies of the block's outline: a step of {step:.4} between neighbouring columns");
+        // The still picture's samples, and the fewer drawn while the view moves (#7165).
+        let mut beside = Vec::new();
+        let mut pictures = Vec::new();
+        for samples in [AO_SAMPLES, AO_SAMPLES_MOVING] {
+            let Some(on) = render(RADIUS, samples) else { return };
+            let on = &on;
+            // The plate's visibility in each column: its brightness with AO over its brightness
+            // without, averaged over the rows.
+            let column = |x: usize| (y0..y1).map(|y| lum(on, x, y) / lum(&off, x, y).max(1.0)).sum::<f64>() / (y1 - y0) as f64;
+            // From 30 px beyond the radius up to 4 px from the block (its outline).
+            let from = (edge - reach - 30.0) as usize;
+            let profile: Vec<f64> = (from..=(edge - 4.0) as usize).map(column).collect();
+            let (clear, shaded) = (&profile[..20], &profile[30..]);
+            let step = shaded.windows(2).map(|p| (p[1] - p[0]).abs()).fold(0.0, f64::max);
+            eprintln!(
+                "{samples} samples: plate {} without AO; edge {edge:.1} px, radius {reach:.1} px, rows {y0}..{y1}; clear {:.4}..{:.4}; next to the block {:.4}; largest step {step:.4}",
+                lum(&off, from, y0) / 3.0,
+                clear.iter().copied().fold(f64::INFINITY, f64::min),
+                clear.iter().copied().fold(0.0, f64::max),
+                profile[profile.len() - 1],
+            );
+            assert!(profile[profile.len() - 1] < 0.98, "{samples} samples: the plate darkens beside the block: {:.4}", profile[profile.len() - 1]);
+            assert!(clear.iter().all(|v| (v - 1.0).abs() < 0.004), "{samples} samples: the plate is clear beyond the radius: {clear:?}");
+            assert!(step < 0.005, "{samples} samples: no copies of the block's outline: a step of {step:.4} between neighbouring columns");
+            beside.push(profile[profile.len() - 1]);
+            pictures.push(on.clone());
+        }
+        // The shader takes the count it is given (the moving frame is a different picture), and
+        // spreads it over the same hemisphere: both darken the contact alike.
+        assert_ne!(pictures[0], pictures[1], "8 samples draw another grain than 32");
+        assert!((beside[0] - beside[1]).abs() < 0.02, "the same darkening beside the block at 32 and 8 samples: {beside:?}");
     }
 
     /// Faded and see-through bodies are drawn from their plans where the renderer blends them
@@ -6999,6 +7076,7 @@ mod tests {
                     outline: true,
                     eye: [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }],
                     ao_radius: 0.0,
+                    ao_samples: solidcraft_gpu::view::AO_SAMPLES,
                     ssaa: 1.0,
                     hover_tint: [0.0; 3],
                     selection_tint: [0.0; 3],

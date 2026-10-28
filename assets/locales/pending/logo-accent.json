@@ -1,0 +1,32 @@
+{
+  "en": {
+    "prefs.logo": "Logo",
+    "prefs.logo_theme": "Theme's colors",
+    "prefs.logo_accent": "Accent"
+  },
+  "ar": {
+    "prefs.logo": "الشعار",
+    "prefs.logo_theme": "ألوان السمة",
+    "prefs.logo_accent": "لون التمييز"
+  },
+  "he": {
+    "prefs.logo": "לוגו",
+    "prefs.logo_theme": "צבעי ערכת הנושא",
+    "prefs.logo_accent": "צבע הדגשה"
+  },
+  "ja": {
+    "prefs.logo": "ロゴ",
+    "prefs.logo_theme": "テーマの色",
+    "prefs.logo_accent": "アクセント"
+  },
+  "vi": {
+    "prefs.logo": "Logo",
+    "prefs.logo_theme": "Màu của chủ đề",
+    "prefs.logo_accent": "Màu nhấn"
+  },
+  "zh": {
+    "prefs.logo": "标志",
+    "prefs.logo_theme": "主题颜色",
+    "prefs.logo_accent": "强调色"
+  }
+}

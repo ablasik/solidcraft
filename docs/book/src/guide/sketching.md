@@ -244,6 +244,20 @@ nothing picked yet, click it once: its value box opens with the value selected, 
 and the tool stays on for the next dimension. The dimension's text always takes the click; its
 lines take it only away from sketch points and curves, which still start a new dimension.
 
+To have shapes dimensioned as you draw them, turn on **Dimension new shapes** in Preferences ›
+Sketch (it is off by default). Each line, rectangle, circle, arc, slot or polygon you draw then
+gets all its dimensions at the sizes you drew: a line its length and angle, a rectangle its width
+and height, a circle its diameter, and so on. Values you type in the drawing boxes win, and a size
+the sketch already sets (the angle of a line that snapped horizontal) is left out. The shape and
+its dimensions are one undo step. In scripts, `sketch.draw.dimensioned` takes `"as_drawn": true`.
+
+Tick **Also place them from the origin (fully constrained)** as well, and each new shape is also
+dimensioned from the sketch origin until nothing of it is left free: a horizontal and a vertical
+distance to its centre or first point, and one more where the shape could still turn (a polygon,
+a rectangle drawn at an angle). A shape already attached to the origin or to geometry that is
+placed gets none, and a point on an axis is put on that axis rather than given a 0 distance.
+In scripts: `"locate": true`.
+
 Between two points, or on a line, that don't line up with an axis, where you place the
 dimension picks what it measures: across from them, the distance between them; above or below
 them, the horizontal distance; beside them, the vertical distance.

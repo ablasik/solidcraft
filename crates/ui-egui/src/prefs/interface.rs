@@ -45,6 +45,15 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     app.preferences.viewport_theme = *view;
                 }
             });
+            // The logo in the theme's own logo colours or in its accent.
+            let label = app.tr("prefs.logo");
+            ui_kit::row(ui, label, |ui| {
+                let labels = [crate::i18n::tr("prefs.logo_theme"), crate::i18n::tr("prefs.logo_accent")];
+                let mut selected = usize::from(app.preferences.logo_accent);
+                if ui_kit::settings_segments(ui, label, &mut selected, &labels) {
+                    app.preferences.logo_accent = selected == 1;
+                }
+            });
             // A theme file another tool writes, reloaded when it changes (#7573).
             if FOLLOW_AVAILABLE {
                 follow_row(app, ui);

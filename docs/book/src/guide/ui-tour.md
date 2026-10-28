@@ -80,6 +80,13 @@
   top right while a dialog or a sketch is open, and moves the axis view or cube down below them.
   With a dialog open they do what its OK and Cancel do (the check is grey whenever OK is); in a
   sketch without a dialog they are Finish Sketch and Cancel Sketch.
+  **View angles** in the navigation bar's View menu (or Preferences › Graphics, or the
+  `view.angle_readout` command) shows the view's pitch, yaw and roll in degrees under the axis
+  view, with **Ortho** or **Persp** for the projection; it is off by default and updates as the
+  view turns. The angles turn about the up axis: yaw 0° is the Front view, 90° Left, −90° Right
+  and 180° Back; pitch 90° is the Top view and −90° the Bottom; a positive roll turns the model
+  clockwise on screen. Click the readout to type exact angles; **Apply** turns the view there
+  (it keeps the view's centre and zoom). Scripts set the same angles in radians with `view.apply`.
   Right-click for the marking menu: eight commands around the cursor, plus a
   menu for whatever is under it. Near the window's bottom or right edge a menu opens above or
   to the left of the cursor, so it stays in view.
@@ -150,7 +157,7 @@ History at the bottom is unchanged.
 ### Colour themes
 
 Interface › **Theme** lists Dark, Light and System (follows the operating system), the built-in
-themes and any themes you have imported. A choice applies at once. Under the themes, **Viewport** draws the 3D view in the Light or Dark theme's colours whatever the window uses, for example the model on a light view in a dark window (**Follow theme**, the default, keeps the theme's own). The built-in themes are Gruvbox
+themes and any themes you have imported. A choice applies at once. Under the themes, **Viewport** draws the 3D view in the Light or Dark theme's colours whatever the window uses, for example the model on a light view in a dark window (**Follow theme**, the default, keeps the theme's own). **Logo** draws the SolidCraft logo at the top left in shades of the theme's accent instead of the theme's logo colours. The built-in themes are Gruvbox
 (dark and light, each in hard, normal and soft contrast), SolidCraft 95, Platinum 9, Cupertino,
 Green Phosphor, Amber Phosphor, Blueprint, One Dark, Tokyo Night, Solarized Light, Nord, High
 Contrast, Graphite, Nosferatu, Catppuccin Mocha, Okibi and Akari (dark and light, from the

@@ -25,6 +25,9 @@ thread_local! {
     /// The palette of a theme file (`theme_files`) in place of the built-in one of its base
     /// (dark or light), per thread like the rest. `None`: the built-in palettes.
     static CUSTOM: Cell<Option<Custom>> = const { Cell::new(None) };
+    /// The application bar's logo in the theme's accent instead of its own logo colours
+    /// (Preferences › Interface › Logo), per thread like the rest.
+    static LOGO_ACCENT: Cell<bool> = const { Cell::new(false) };
     /// The 3D view's own dark or light when Preferences give it one ([`ViewportTheme`], #4146),
     /// per thread like the rest. `None`: the view is as dark as the window.
     static VIEWPORT_DARK: Cell<Option<bool>> = const { Cell::new(None) };
@@ -228,6 +231,12 @@ pub struct Custom {
 /// that changed anything (the visuals follow on the next [`apply`]).
 pub fn set_custom(custom: Option<Custom>) -> bool {
     CUSTOM.with(|c| c.replace(custom) != custom)
+}
+
+/// Draw the logo in the theme's accent (`true`) or its own logo colours. Returns whether that
+/// changed anything (the visuals follow on the next [`apply`]).
+pub fn set_logo_accent(on: bool) -> bool {
+    LOGO_ACCENT.with(|c| c.replace(on) != on)
 }
 
 /// Isolated widget tests restore the thread's theme even when an assertion fails.
@@ -944,7 +953,17 @@ impl Tokens {
     /// that base ([`set_custom`]), else the built-in one; the colour vision mode on top.
     pub fn themed(dark: bool, mode: ColorVision) -> Tokens {
         let custom = CUSTOM.get().filter(|c| c.dark == dark).map(|c| c.tokens);
-        custom.unwrap_or(if dark { Tokens::dark() } else { Tokens::light() }).with_vision(dark, mode)
+        let t = custom.unwrap_or(if dark { Tokens::dark() } else { Tokens::light() });
+        let t = if LOGO_ACCENT.get() { t.with_accent_logo() } else { t };
+        t.with_vision(dark, mode)
+    }
+
+    /// These tokens with the logo's three faces in shades of the accent: lighter, the accent
+    /// itself, darker (as the built-in logo's blues are).
+    pub fn with_accent_logo(mut self) -> Tokens {
+        let accent = self.accent.to_opaque();
+        self.logo = [accent.lerp_to_gamma(Color32::WHITE, 0.22), accent, accent.lerp_to_gamma(Color32::BLACK, 0.2)];
+        self
     }
 
     /// These tokens with a colour vision mode's values on top (the tables in `palettes.rs`); Off

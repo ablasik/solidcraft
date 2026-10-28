@@ -812,6 +812,9 @@ preference_settings! {
     frame_rate_details: bool = false, PAGE_GRAPHICS;
     /// Draw a wider rim under finished sketch curves to improve contrast on shaded faces.
     sketch_halo: bool = false, PAGE_GRAPHICS => check("Halo under sketch curves");
+    /// Show the view's pitch, yaw and roll and its projection under the orientation gizmo (#6032).
+    /// Off by default; View ▸ View angles and `view.angle_readout` turn it on.
+    show_view_angles: bool = false, PAGE_GRAPHICS;
     /// Show world X/Y/Z component dimensions beside the total distance in Measure.
     measure_axis_distances: bool = true, PAGE_GRAPHICS => check_id("settings.measure_axis_distances");
     /// Decimals shown for lengths and angles.
@@ -830,6 +833,8 @@ preference_settings! {
     /// The 3D view's colours: the theme's own, or the Light or Dark theme's whatever the window
     /// uses (#4146).
     viewport_theme: crate::theme::ViewportTheme = crate::theme::ViewportTheme::Theme, PAGE_INTERFACE;
+    /// The application bar's logo in the theme's accent instead of the theme's logo colours.
+    logo_accent: bool = false, PAGE_INTERFACE;
     /// Imported theme files (`theme_files`), kept here so they also work in the browser.
     custom_themes: Vec<crate::theme_files::ThemeFile> = Vec::new();
     /// Desktop: a `solidcraft-theme/1` file another tool writes, followed as the theme and
@@ -1027,6 +1032,20 @@ preference_settings! {
     shortcut_cycles_modes: bool = false, PAGE_SKETCH;
     /// Where the view goes when a sketch ends (#7038). Keep (the default) leaves it as it is.
     sketch_exit_view: SketchExitView = SketchExitView::default(), PAGE_SKETCH;
+    /// A shape drawn in a sketch gets all its dimensions at once: the typed values, and every
+    /// other size the shape has at its size as drawn (`sketch.draw.dimensioned` with `as_drawn`).
+    /// Shapes `solidcraft_engine::dimension_roles` doesn't list are drawn as before.
+    sketch_auto_dimensions: bool = false, PAGE_SKETCH => check(
+        "Dimension new shapes",
+        "Each shape you draw gets all its dimensions, at the sizes you drew (typed values win). A size the sketch already sets is left out."
+    );
+    /// With `sketch_auto_dimensions`: new shapes are also placed from the sketch origin until they
+    /// are fully constrained (`sketch.draw.dimensioned` with `locate`). A shape already anchored to
+    /// the origin or to placed geometry gets nothing more.
+    sketch_auto_locate: bool = false, PAGE_SKETCH => check(
+        "Also place them from the origin (fully constrained)",
+        "Each new shape is also dimensioned from the sketch origin until nothing of it is left free. A shape already attached to the origin or to placed geometry gets none."
+    );
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;
@@ -1506,6 +1525,9 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let custom = file.map(|f| crate::theme::Custom { dark: f.base.is_dark(), tokens: crate::theme_files::resolve(f) });
     if crate::theme::set_custom(custom) {
+        app.styled = false;
+    }
+    if crate::theme::set_logo_accent(app.preferences.logo_accent) {
         app.styled = false;
     }
     // egui's end-of-frame shortcuts only change its context; the saved preference would
@@ -5806,6 +5828,16 @@ mod ui_scale_regression_tests {
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert_eq!(h.app.preferences.ui_scale, 1.0, "Cancel restores the original scale");
         assert_eq!(h.ctx.zoom_factor(), 1.0);
+    }
+}
+
+/// View ▸ View angles and Preferences ▸ Graphics run the same command (#6032).
+pub(crate) fn view_angles_checkbox(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let mut enabled = app.preferences.show_view_angles;
+    let response = ui_kit::checkbox(ui, crate::i18n::tr("ui.view_angles"), &mut enabled).on_hover_text(crate::i18n::tr("ui.view_angles_help"));
+    crate::scenario::publish_handle("view:view_angles", response.rect.center());
+    if response.changed() {
+        let _ = app.run("view.angle_readout", json!({"enabled": enabled}));
     }
 }
 

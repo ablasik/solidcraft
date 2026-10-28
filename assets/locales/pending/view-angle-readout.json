@@ -1,0 +1,98 @@
+{
+  "en": {
+    "cmd.view_angle_readout": "View Angles",
+    "ui.view_angles": "View angles",
+    "ui.view_angles_convention": "Degrees about the up axis. Yaw 0° is the Front view, 90° Left, −90° Right, 180° Back; pitch 90° is the Top view; a positive roll turns the model clockwise.",
+    "ui.view_angles_help": "Shows the view's pitch, yaw and roll in degrees and its projection under the orientation gizmo. Click the readout to type exact angles.",
+    "ui.view_angles_ortho": "Ortho",
+    "ui.view_angles_persp": "Persp",
+    "ui.view_angles_pitch": "Pitch",
+    "ui.view_angles_readout": "Pitch {pitch} · Yaw {yaw} · Roll {roll}",
+    "ui.view_angles_roll": "Roll",
+    "ui.view_angles_yaw": "Yaw"
+  },
+  "ar": {
+    "cmd.view_angle_readout": "زوايا العرض",
+    "ui.view_angles": "زوايا العرض",
+    "ui.view_angles_convention": "درجات حول المحور العلوي. الانعراج 0° هو العرض الأمامي، و90° الأيسر، و−90° الأيمن، و180° الخلفي؛ الانحدار 90° هو العرض العلوي؛ والدوران الموجب يدير النموذج على الشاشة باتجاه عقارب الساعة.",
+    "ui.view_angles_help": "يعرض زوايا الانحدار والانعراج والدوران للعرض بالدرجات ونوع الإسقاط أسفل أداة الاتجاه. انقر على القراءة لكتابة زوايا دقيقة.",
+    "ui.view_angles_ortho": "متعامد",
+    "ui.view_angles_persp": "منظور",
+    "ui.view_angles_pitch": "الانحدار",
+    "ui.view_angles_readout": "الانحدار {pitch} · الانعراج {yaw} · الدوران {roll}",
+    "ui.view_angles_roll": "الدوران",
+    "ui.view_angles_yaw": "الانعراج"
+  },
+  "de": {
+    "cmd.view_angle_readout": "Ansichtswinkel",
+    "ui.view_angles": "Ansichtswinkel",
+    "ui.view_angles_convention": "Grad um die Hochachse. Gieren 0° ist die Vorderansicht, 90° links, −90° rechts, 180° die Rückansicht; Nicken 90° ist die Draufsicht; ein positives Rollen dreht das Modell im Uhrzeigersinn.",
+    "ui.view_angles_help": "Zeigt Nick-, Gier- und Rollwinkel der Ansicht in Grad sowie die Projektion unter dem Orientierungs-Gizmo. Klicken Sie auf die Anzeige, um genaue Winkel einzugeben.",
+    "ui.view_angles_ortho": "Ortho",
+    "ui.view_angles_persp": "Persp",
+    "ui.view_angles_pitch": "Nicken",
+    "ui.view_angles_readout": "Nicken {pitch} · Gieren {yaw} · Rollen {roll}",
+    "ui.view_angles_roll": "Rollen",
+    "ui.view_angles_yaw": "Gieren"
+  },
+  "he": {
+    "cmd.view_angle_readout": "זוויות תצוגה",
+    "ui.view_angles": "זוויות תצוגה",
+    "ui.view_angles_convention": "מעלות סביב הציר העליון. סבסוב 0° הוא התצוגה הקדמית, 90° שמאלית, −90° ימנית, 180° אחורית; עלרוד 90° הוא התצוגה העליונה; גלגול חיובי מסובב את המודל על המסך עם כיוון השעון.",
+    "ui.view_angles_help": "מציג מתחת לגיזמו הכיוון את זוויות העלרוד, הסבסוב והגלגול של התצוגה במעלות ואת סוג ההטלה. לחצו על התצוגה כדי להקליד זוויות מדויקות.",
+    "ui.view_angles_ortho": "אורתוגרפי",
+    "ui.view_angles_persp": "פרספקטיבה",
+    "ui.view_angles_pitch": "עלרוד",
+    "ui.view_angles_readout": "עלרוד {pitch} · סבסוב {yaw} · גלגול {roll}",
+    "ui.view_angles_roll": "גלגול",
+    "ui.view_angles_yaw": "סבסוב"
+  },
+  "ja": {
+    "cmd.view_angle_readout": "ビュー角度",
+    "ui.view_angles": "ビュー角度",
+    "ui.view_angles_convention": "上方向の軸まわりの角度（度）。ヨー 0° が正面ビュー、90° が左、−90° が右、180° が背面です。ピッチ 90° が上面ビューです。ロールが正のとき、モデルは画面上で時計回りに回ります。",
+    "ui.view_angles_help": "方向ギズモの下に、ビューのピッチ、ヨー、ロール（度）と投影法を表示します。表示をクリックすると正確な角度を入力できます。",
+    "ui.view_angles_ortho": "平行投影",
+    "ui.view_angles_persp": "透視投影",
+    "ui.view_angles_pitch": "ピッチ",
+    "ui.view_angles_readout": "ピッチ {pitch} · ヨー {yaw} · ロール {roll}",
+    "ui.view_angles_roll": "ロール",
+    "ui.view_angles_yaw": "ヨー"
+  },
+  "ko": {
+    "cmd.view_angle_readout": "뷰 각도",
+    "ui.view_angles": "뷰 각도",
+    "ui.view_angles_convention": "위쪽 축을 기준으로 한 각도(도)입니다. 요 0°는 정면 뷰, 90°는 왼쪽, −90°는 오른쪽, 180°는 뒷면이고, 피치 90°는 평면 뷰입니다. 롤이 양수이면 모델이 화면에서 시계 방향으로 회전합니다.",
+    "ui.view_angles_help": "방향 기즈모 아래에 뷰의 피치, 요, 롤(도)과 투영 방식을 표시합니다. 표시를 클릭하면 정확한 각도를 입력할 수 있습니다.",
+    "ui.view_angles_ortho": "직교",
+    "ui.view_angles_persp": "원근",
+    "ui.view_angles_pitch": "피치",
+    "ui.view_angles_readout": "피치 {pitch} · 요 {yaw} · 롤 {roll}",
+    "ui.view_angles_roll": "롤",
+    "ui.view_angles_yaw": "요"
+  },
+  "vi": {
+    "cmd.view_angle_readout": "Góc hướng nhìn",
+    "ui.view_angles": "Góc hướng nhìn",
+    "ui.view_angles_convention": "Độ quanh trục hướng lên. Lệch 0° là góc nhìn phía trước, 90° bên trái, −90° bên phải, 180° phía sau; chúc 90° là góc nhìn từ trên; nghiêng dương xoay mô hình trên màn hình theo chiều kim đồng hồ.",
+    "ui.view_angles_help": "Hiển thị góc chúc, góc lệch và góc nghiêng của góc nhìn theo độ cùng kiểu chiếu, bên dưới gizmo định hướng. Bấm vào phần hiển thị để nhập góc chính xác.",
+    "ui.view_angles_ortho": "Trực giao",
+    "ui.view_angles_persp": "Phối cảnh",
+    "ui.view_angles_pitch": "Chúc",
+    "ui.view_angles_readout": "Chúc {pitch} · Lệch {yaw} · Nghiêng {roll}",
+    "ui.view_angles_roll": "Nghiêng",
+    "ui.view_angles_yaw": "Lệch"
+  },
+  "zh": {
+    "cmd.view_angle_readout": "视图角度",
+    "ui.view_angles": "视图角度",
+    "ui.view_angles_convention": "绕向上轴的角度（度）。偏航 0° 为前视图，90° 为左视图，−90° 为右视图，180° 为后视图；俯仰 90° 为俯视图；滚转为正时，模型在屏幕上顺时针旋转。",
+    "ui.view_angles_help": "在方向小部件下方显示视图的俯仰、偏航和滚转角（度）以及投影方式。单击读数可输入精确角度。",
+    "ui.view_angles_ortho": "正交",
+    "ui.view_angles_persp": "透视",
+    "ui.view_angles_pitch": "俯仰",
+    "ui.view_angles_readout": "俯仰 {pitch} · 偏航 {yaw} · 滚转 {roll}",
+    "ui.view_angles_roll": "滚转",
+    "ui.view_angles_yaw": "偏航"
+  }
+}

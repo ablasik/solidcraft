@@ -39,6 +39,7 @@ pub(crate) use face::{FaceRefForm, face_ref_form};
 pub(crate) use features::profiles as feature_profiles;
 pub(crate) use features::{EdgeRefForm, axis_dir_form, edge_ref_form, sketch_key};
 pub use features::{auto_operation, extrude_reach};
+pub use sketch::dimension_roles;
 pub use sketch_import::drawing_import_command;
 pub use sketch_modify::{extend_arc_preview, extend_preview, trim_piece};
 pub use view_dxf::sketch::exportable as view_dxf_exportable;
