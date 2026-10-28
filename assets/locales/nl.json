@@ -1697,6 +1697,8 @@
   "prefs.sketch_selection": "Schets en selectie",
   "prefs.sketch_selection_heading": "Schets en selectie",
   "prefs.sketch_selection_note": "Hoe schetsen snappen en hoe klikken selecteren.",
+  "prefs.sketch_tab_always": "Schets-tab altijd tonen",
+  "prefs.sketch_tab_always_note": "De Schets-tab blijft in het lint staan, direct na Model, ook als er geen schets open is. Zijn tekentools beginnen dan een schets op het geselecteerde vlak, of op het vlak dat je daarna kiest, met de tool daarin klaar voor gebruik.",
   "prefs.sketching": "Schetsen",
   "prefs.snap_drawing_note": "Tijdens het tekenen of slepen van een schetspunt.",
   "prefs.source": "Bron",
