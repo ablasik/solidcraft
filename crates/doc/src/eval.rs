@@ -2982,9 +2982,11 @@ fn apply_traced_with(
         v
     };
     // Bodies that take part besides the feature's own targets: the body a Join extrude runs to
-    // joins with the tool (#6424).
+    // joins with the tool (#6424), when it is in the feature's own component. A body of another
+    // component (the shell a connector's boss runs up to) joins only when the feature names it:
+    // an extent's end face never pulls a part across a component boundary.
     for name in extra {
-        if let Some(i) = state.bodies.iter().position(|b| &b.name == name)
+        if let Some(i) = state.bodies.iter().position(|b| &b.name == name && b.component == f.component)
             && !target_idx.contains(&i)
         {
             target_idx.push(i);

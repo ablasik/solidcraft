@@ -1447,3 +1447,37 @@ fn occurrence_bodies_cache_retires_one_answer_when_full() {
     drop(guard);
     assert_eq!(s.occurrence_bodies(&root, true).unwrap().len(), 131);
 }
+
+/// A connector's boss extruded To Object up to the shell of another component joins the
+/// connector only: the shell it runs to stays its own body in its own component, and the PCB
+/// sketched on the shell afterwards is still made (a Join extrude to an object joined the body
+/// it ran to across components, 0.24.1).
+#[test]
+fn join_extrude_to_a_body_of_another_component_leaves_that_body_alone() {
+    let mut s = Session::default();
+    let (shell, _) = created(&mut s, "Shell");
+    run(&mut s, "solid.box", json!({"corner":[-20,-20,20],"length":40,"width":40,"height":5,"body_name":"Shell"}));
+    let (connector, _) = created(&mut s, "Connector");
+    run(&mut s, "solid.cylinder", json!({"radius":6,"height":10,"body_name":"Connector"}));
+    let sketch = run(&mut s, "sketch.create", json!({"plane":{"face":[0,0,10]},"project_edges":false}))["sketch"].as_u64().unwrap();
+    let plane = s.model.state().sketch(sketch).unwrap().plane;
+    let centre = plane.to_local(solidcraft_geom::Vec3::new(0.0, 0.0, 10.0));
+    run(&mut s, "sketch.circle.center", json!({"center":[centre.x, centre.y],"radius":4}));
+    run(&mut s, "sketch.finish", json!({}));
+    // The boss runs up to the shell's underside and joins the connector it was sketched on.
+    run(&mut s, "solid.extrude", json!({"sketch":sketch,"to":[0,0,20],"operation":"join","targets":["Connector"]}));
+    let (pcb, _) = created(&mut s, "PCB");
+    run(&mut s, "solid.box", json!({"corner":[-15,-15,25],"length":30,"width":30,"height":1.6,"body_name":"PCB"}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let st = s.model.state();
+    let mut names: Vec<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Connector", "PCB", "Shell"], "three bodies, none merged into another");
+    for (name, component) in [("Shell", shell), ("Connector", connector), ("PCB", pcb)] {
+        assert_eq!(s.doc.model_body_component(st.body(name).unwrap()), component, "{name} stays in its component");
+    }
+    let volume = |name: &str| solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume;
+    let pi = std::f64::consts::PI;
+    assert!((volume("Shell") - 8000.0).abs() < 1e-3, "the shell is unchanged: {}", volume("Shell"));
+    assert!((volume("Connector") - (pi * 36.0 * 10.0 + pi * 16.0 * 10.0)).abs() < 1.0, "the connector took the boss: {}", volume("Connector"));
+}
