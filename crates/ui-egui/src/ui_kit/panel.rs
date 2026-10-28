@@ -298,6 +298,22 @@ impl<'a> Panel<'a> {
             .show(ui, add)
     }
 
+    /// Shared strip composition reserves actions at the right and scrolls choices at the left.
+    pub(crate) fn strip_contents(ui: &mut egui::Ui, right: impl FnOnce(&mut egui::Ui), choices: impl FnOnce(&mut egui::Ui)) {
+        ui.spacing_mut().item_spacing.x = Tokens::get().space_8;
+        ui.horizontal_centered(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right(ui);
+                egui::ScrollArea::horizontal()
+                    .id_salt("strip_choices")
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), choices);
+                    });
+            });
+        });
+    }
+
     /// Floating workspace strip using the same bottom rectangle and chrome as History.
     pub(crate) fn bottom_strip<R>(
         ui: &mut Ui,

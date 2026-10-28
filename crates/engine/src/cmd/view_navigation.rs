@@ -62,7 +62,7 @@ CommandSpec::new("view.render_stage", "Render Stage", render_stage)
     .icon("render_scene").noundo().doc_only()
     .params("stage: look|light|frame|output → {stage}; per-document UI state, never edits or evaluates the design; headless validation only"),
 CommandSpec::new("view.shots_strip", "Shots Strip", shots_strip)
-    .at("RENDER CAMERA", "SHOTS").icon("camera").noundo().doc_only()
+    .icon("camera").noundo().doc_only()
     .params("visible: bool → {visible}; Render Shots strip UI preference. Headless echo only, no document edits or undo"),
 CommandSpec::new("view.render_dock", "Move Render Dock", crate::checked!("view.render_dock", render_dock))
     .at("RENDER", "SCENE").icon("settings").noundo().doc_only()

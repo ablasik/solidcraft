@@ -131,6 +131,13 @@ const ELEMENTS: &[Element] = &[
             assert_eq!(tree_row(ui, ui.id().with(("tree_geometry", index)), row).rect, Some(rect));
         }
     }),
+    element!("icon_label_action", |ui, _| {
+        icon_label_action(ui, "Render Image", Some("play"), true, true);
+    }),
+    element!("completion_text", |ui, _| {
+        completion_text(ui, "Render 1 · 1920 × 1080", true);
+        completion_text(ui, "No completed image", false);
+    }),
     element!("tree_row", |ui, _| {
         let actions = [TreeAction { icon: "plus", hover_only: false, label: "Add", reason: None, target: "gallery:tree:add" }];
         tree_row(ui, ui.id().with("tree_plain"), &Row { label: "Objects", fold: Some(true), actions: &actions, ..Default::default() });
@@ -204,6 +211,33 @@ const ELEMENTS: &[Element] = &[
             tip: "Satin metal",
         }
         .show(ui);
+    }),
+    element!("strip_toggle", |ui, _| {
+        ui.horizontal(|ui| {
+            strip_toggle(ui, true, "Hide Shots strip");
+            strip_toggle(ui, false, "Shots");
+        });
+    }),
+    element!("strip_heading", |ui, _| {
+        StripHeading::new(ui.painter(), "History").show(ui);
+    }),
+    element!("choice_chip_selected", |ui, _| {
+        choice_chip(ui, "saved", "Hero", true);
+    }),
+    element!("add_choice", |ui, _| {
+        add_choice(ui, "Save Shot");
+    }),
+    element!("compact_dropdown_menu", |ui, _| {
+        compact_dropdown_menu(ui, "gallery_strip_size", "1920 × 1080", |ui| {
+            list_picker(ui, "full_hd", "Full HD", true);
+        });
+    }),
+    element!("thumbnail_choice", |ui, _| {
+        ui.horizontal(|ui| {
+            thumbnail_choice(ui, "hero", "Hero", ThumbnailChoice { selected: true, modified: true, ..Default::default() });
+            thumbnail_choice(ui, "front", "Front", ThumbnailChoice { progress: Some(0.6), ..Default::default() });
+            add_choice(ui, "Save Shot");
+        });
     }),
     element!("settings_form", |ui, state| {
         settings_form(ui, Tokens::get().form_label_width, |ui| {

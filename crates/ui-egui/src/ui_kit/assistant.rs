@@ -319,6 +319,11 @@ pub(crate) fn assistant_empty<R>(ui: &mut Ui, title: &str, body: &str, add: impl
 /// Semantic warning/error/information band with caller-owned text and actions.
 #[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn assistant_banner<R>(ui: &mut Ui, tone: AssistantTone, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+    banner(ui, tone, add)
+}
+
+/// Shared semantic notice band, also available to workspace inspectors on wasm.
+pub(crate) fn banner<R>(ui: &mut Ui, tone: AssistantTone, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     let t = Tokens::get();
     let (_, fill) = tone.colors(&t);
     egui::Frame::NONE.fill(fill).stroke(t.container_border(t.dialog_rule)).corner_radius(t.radius_lg).inner_margin(t.space_10).show(ui, |ui| {

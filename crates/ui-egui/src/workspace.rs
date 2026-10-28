@@ -349,7 +349,7 @@ const LEGACY_RENDER_SECTIONS: &[Section] = &[
         tab: "RENDER CAMERA",
         panel: "SHOTS",
         promoted: 3,
-        ids: &["render.settings.get", "render.settings.set", "view.shots_strip", "render.shot.duplicate", "render.shot.rename", "render.shot.remove"],
+        ids: &["render.settings.get", "render.settings.set", "render.shot.duplicate", "render.shot.rename", "render.shot.remove"],
     },
     Section { tab: "RENDER CAMERA", panel: "VIEW", promoted: 2, ids: &["render.settings.apply", "render.scene"] },
     Section { tab: "RENDER CAMERA", panel: "LENS", promoted: 1, ids: &["render.camera.get", "render.camera.set"] },
@@ -368,7 +368,6 @@ const LEGACY_RENDER_SECTIONS: &[Section] = &[
 /// Compact source labels for painted big buttons only. Menus, search and tooltips
 /// retain the engine label. Route these through `tr_label`, like other UI labels.
 pub const RIBBON_LABELS: &[(&str, &str)] = &[
-    ("view.shots_strip", "Strip"),
     ("appearance.paint", "Paint"),
     ("appearance.pick_up", "Pick Up"),
     ("appearance.replace", "Replace"),

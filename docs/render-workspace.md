@@ -30,7 +30,8 @@ Render, Cancel and the shared command search (S) occupy the top row. The Pick co
 icon-text Body/Face/Component segments, Paint/Pick Up actions and direct-light
 preview information chip occupy Look's second row with 8 pt side padding. Changing the
 light coordinate frame remains disabled with its reason in this checkout. Frame
-uses the existing explicit camera command for projection; Output shows the current
+uses the existing explicit camera command for projection and the registered Save Shot
+action opens the shared naming confirmation; Output shows the current
 size/format and directs edits to the Output Inspector. No completion ticks are inferred.
 
 The Browser and Inspector float in both shell layouts and share a top edge, 8 pt

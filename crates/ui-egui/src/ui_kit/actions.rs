@@ -585,7 +585,7 @@ pub(super) fn icon_label_width(ui: &Ui, label: &str, icon: Option<&str>, primary
         + if icon.is_some() { t.space_14 + t.space_6 } else { 0.0 }
 }
 
-pub(super) fn icon_label_action(ui: &mut Ui, label: &str, icon: Option<&str>, enabled: bool, primary: bool) -> Response {
+pub(crate) fn icon_label_action(ui: &mut Ui, label: &str, icon: Option<&str>, enabled: bool, primary: bool) -> Response {
     icon_label_presentation(ui, label, icon, enabled, primary, false, false)
 }
 
