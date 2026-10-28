@@ -841,29 +841,25 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
         let frame = container.frame(ui.ctx(), fill, crate::frame::Side::Left).inner_margin(CARD_INSET as i8);
         let inner_width = (bounds.width() - frame.total_margin().sum().x).max(0.0);
         let inner_height = (bounds.height() - frame.total_margin().sum().y).max(0.0);
-        let card = Container::new(ui.ctx(), Surface::Panel)
-            .area(egui::Id::new("sc_browser_card"))
-            .fixed_pos(bounds.min)
-            .order(egui::Order::Middle)
-            .show(ui.ctx(), |ui| {
-                let limits = Rect::from_min_max(available.min, pos2(available.right(), bounds.bottom()));
-                let response = container.show_frame(ui, frame, limits, |ui| {
-                    ui.set_width(inner_width);
-                    ui.set_max_height(inner_height);
-                    if stacked {
-                        ui.set_min_height(inner_height);
-                        ui.set_clip_rect(ui.clip_rect().intersect(Rect::from_min_size(ui.max_rect().min, vec2(inner_width, inner_height))));
-                    }
-                    if collapsed {
-                        browser_collapsed_rail(app, ui);
-                    } else {
-                        browser_contents(app, ui, &mut acts, true);
-                    }
-                });
-                if !collapsed {
-                    resize_column(app, ui, response.response.rect, width, "left-browser-rail");
+        let card = Container::new(ui.ctx(), Surface::Panel).area(egui::Id::new("sc_browser_card")).fixed_pos(bounds.min).show(ui.ctx(), |ui| {
+            let limits = Rect::from_min_max(available.min, pos2(available.right(), bounds.bottom()));
+            let response = container.show_frame(ui, frame, limits, |ui| {
+                ui.set_width(inner_width);
+                ui.set_max_height(inner_height);
+                if stacked {
+                    ui.set_min_height(inner_height);
+                    ui.set_clip_rect(ui.clip_rect().intersect(Rect::from_min_size(ui.max_rect().min, vec2(inner_width, inner_height))));
+                }
+                if collapsed {
+                    browser_collapsed_rail(app, ui);
+                } else {
+                    browser_contents(app, ui, &mut acts, true);
                 }
             });
+            if !collapsed {
+                resize_column(app, ui, response.response.rect, width, "left-browser-rail");
+            }
+        });
         let rect = card.response.rect;
         app.shell.browser = Some(rect);
         crate::scenario::publish_rect("browser:card", rect);

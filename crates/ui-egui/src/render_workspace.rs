@@ -1814,7 +1814,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 pub(crate) fn interactive_command_info(app: &SolveApp, command: &solidcraft_engine::CommandSpec) -> solidcraft_engine::CommandInfo {
-    ribbon::command_info(app, command)
+    let mut info = ribbon::command_info(app, command);
+    // A drawing tool on the SKETCH tab kept shown outside a sketch starts one (#7904).
+    if crate::workspace::starts_a_sketch(app, command.id) {
+        info.enabled = true;
+        info.disabled_reason = None;
+    }
+    info
 }
 pub(crate) fn start_interactive(app: &mut SolveApp, id: &str) -> bool {
     ribbon::start(app, id)

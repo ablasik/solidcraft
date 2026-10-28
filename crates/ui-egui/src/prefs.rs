@@ -844,6 +844,9 @@ preference_settings! {
     navigation_bar: crate::navigation_bar::NavigationBar = Default::default(), PAGE_INTERFACE;
     /// Show command names beneath ribbon icons, independently of workspace layout.
     ribbon_labels: bool = true, PAGE_INTERFACE;
+    /// Keep the SKETCH tab in the ribbon, right after MODEL, while no sketch is open; its drawing
+    /// tools then start a sketch first (#7904).
+    sketch_tab_always: bool = false, PAGE_INTERFACE => check_id("prefs.sketch_tab_always");
     /// Where a dialog's OK and Cancel sit: under its inputs (the default) or in its title row (#6708).
     dialog_buttons: crate::ui_kit::DialogButtons = Default::default(), PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
@@ -902,6 +905,8 @@ preference_settings! {
     trackpad_pan: bool = true, PAGE_NAVIGATION;
     /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
     pan_reverse_x: bool = false, PAGE_NAVIGATION => check("Reverse horizontal pan direction", "Horizontal two-finger scrolling and the thumb wheel pan the other way");
+    /// Vertical trackpad scrolling pans the view the other way (#5240).
+    pan_reverse_y: bool = false, PAGE_NAVIGATION => check("Reverse vertical pan direction", "Vertical two-finger scrolling pans the other way");
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
     look_at_anim: bool = true, PAGE_NAVIGATION => check("Animate view changes", "Axis view, Look At, Home and Fit");
     look_at_speed: f32 = 1.0, PAGE_NAVIGATION, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
@@ -1580,6 +1585,11 @@ pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<Na
 /// +1, or −1 when horizontal scrolling pans the other way (#2007).
 pub fn pan_sign_x(app: &SolveApp) -> f32 {
     if app.preferences.pan_reverse_x { -1.0 } else { 1.0 }
+}
+
+/// +1, or −1 when vertical scrolling pans the other way.
+pub fn pan_sign_y(app: &SolveApp) -> f32 {
+    if app.preferences.pan_reverse_y { -1.0 } else { 1.0 }
 }
 
 /// Whether the configured suppress-snap chord is held.
@@ -4247,6 +4257,7 @@ mod tests {
             ("ui_font", json!("test font"), PAGE_INTERFACE),
             ("layout", json!("compact"), PAGE_INTERFACE),
             ("ribbon_labels", json!(false), PAGE_INTERFACE),
+            ("sketch_tab_always", json!(true), PAGE_INTERFACE),
             ("dialog_buttons", json!("top"), PAGE_INTERFACE),
             ("timeline_left", json!(true), PAGE_INTERFACE),
             ("timeline_under_browser", json!(true), PAGE_INTERFACE),
@@ -5406,6 +5417,23 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert!(other.preferences.pan_reverse_x);
+    }
+
+    #[test]
+    fn pan_reverse_y_defaults_off_persists_and_flips_the_sign() {
+        assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().pan_reverse_y);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(pan_sign_y(&app), 1.0);
+        set(&mut app, &json!({"pan_reverse_y": true})).unwrap();
+        assert_eq!(pan_sign_y(&app), -1.0);
+        assert_eq!(pan_sign_x(&app), 1.0);
+        set(&mut app, &json!({"pan_reverse_x": true, "pan_reverse_y": false})).unwrap();
+        assert_eq!(pan_sign_x(&app), -1.0);
+        assert_eq!(pan_sign_y(&app), 1.0);
+        set(&mut app, &json!({"pan_reverse_y": true})).unwrap();
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.preferences.pan_reverse_y);
     }
 
     #[test]

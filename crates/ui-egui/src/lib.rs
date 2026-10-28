@@ -1286,6 +1286,20 @@ impl SolveApp {
             }
             return;
         }
+        // A drawing tool on the SKETCH tab kept shown outside a sketch (#7904) starts Create
+        // Sketch, on the selected plane or planar face or else on the plane picked next, and then
+        // the tool, as the tool's shortcut does outside a sketch (`keymap::press`).
+        if workspace::starts_a_sketch(self, id)
+            && let Some(then) = solidcraft_engine::find_command(id).map(|c| c.id)
+        {
+            self.start("sketch.create");
+            if let Some(d) = self.dialog.as_mut().filter(|d| matches!(d.kind, dialogs::Kind::Sketch)) {
+                d.then_start = Some(then);
+            }
+            // The ribbon stays on SKETCH while the plane is picked, not on Create Sketch's MODEL.
+            self.ui.tab = "SKETCH".into();
+            return;
+        }
         // A disabled command starts nothing, however it was reached. The toolbar greys its
         // button, but a shortcut, the command palette and the control channel all land here.
         // Its reason goes to the status line, so the refusal is never silent.

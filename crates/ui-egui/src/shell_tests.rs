@@ -526,6 +526,64 @@ fn tool_sheets_drag_over_browser_and_history_but_clear_protected_panels() {
 }
 
 #[test]
+fn tool_sheets_stay_above_browser_and_history_after_panel_clicks() {
+    for dock in ["bottom", "left", "under_browser"] {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1800,"height":1000}));
+        h.call("ui.set", json!({"layout":"floating"}));
+        h.app.run("view.history_layout", json!({"dock":dock})).unwrap();
+        h.app.start("solid.extrude");
+        h.settle();
+        for panel in [h.app.shell.browser.unwrap(), h.app.shell.history.unwrap()] {
+            let title = crate::scenario::handle_at("dialog:title").unwrap();
+            let target = panel.center();
+            h.call("ui.drag", json!({"x0":title.x,"y0":title.y,"x1":target.x,"y1":target.y,"steps":10}));
+            let sheet = h.app.viewport.dialog_rect.unwrap();
+            let overlap = sheet.intersect(panel);
+            assert!(overlap.is_positive(), "{dock}: the dialog overlaps the panel");
+            let exposed = panel.left_top() + egui::vec2(10.0, 10.0);
+            assert!(!sheet.contains(exposed), "the panel click is outside the dialog");
+            h.call("ui.click", json!({"x":exposed.x,"y":exposed.y}));
+            let layer = h.ctx.layer_id_at(overlap.center()).unwrap();
+            assert_eq!(layer.id, egui::Id::new(("sc_dialog", "EXTRUDE")), "{dock}: clicking a panel must not cover the dialog");
+            let panel_layer = h.ctx.layer_id_at(exposed).unwrap();
+            h.call("ui.click", json!({"x":1700,"y":500}));
+            assert_eq!(h.ctx.layer_id_at(exposed), Some(panel_layer), "clicking the model view must not cover the panel");
+        }
+        h.step(&json!({"widget":"Cancel"})).unwrap();
+        assert!(h.app.dialog.is_none(), "{dock}: the overlapping dialog remains clickable");
+    }
+}
+
+#[test]
+fn tool_sheet_dropdowns_and_preferences_still_open_above_the_sheet() {
+    for layout in ["floating", "compact"] {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        h.call("ui.set", json!({"layout":layout}));
+        h.app.start("solid.extrude");
+        h.settle();
+        let title = crate::scenario::handle_at("dialog:title").unwrap();
+        h.call("ui.drag", json!({"x0":title.x,"y0":title.y,"x1":700,"y1":350,"steps":10}));
+        h.step(&json!({"widget":"One Side"})).unwrap();
+        h.step(&json!({"widget":"Symmetric"})).unwrap();
+        assert!(matches!(h.app.dialog.as_ref().unwrap().kind, crate::dialogs::Kind::Extrude { direction: 2, .. }));
+        let sheet = h.app.viewport.dialog_rect.unwrap();
+        h.call("ui.prefs", json!({"open":"General"}));
+        let preferences = rect_of("dialog:window").unwrap();
+        let overlap = sheet.intersect(preferences);
+        assert!(overlap.is_positive(), "Preferences overlaps the feature dialog");
+        assert_eq!(h.ctx.layer_id_at(overlap.center()).unwrap().id, egui::Id::new("sc_prefs"), "Preferences receives input above the sheet");
+        h.step(&json!({"widget":"Cancel"})).unwrap();
+        assert!(!h.app.prefs_window.open && h.app.dialog.is_some(), "Cancel closes Preferences, leaving the feature dialog open");
+        h.step(&json!({"widget":"Cancel"})).unwrap();
+        assert!(h.app.dialog.is_none());
+    }
+}
+
+#[test]
 fn compact_layout_is_saved_and_survives_cancel_apply_defaults_and_bad_input() {
     let mut h = Harness::new();
     h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();

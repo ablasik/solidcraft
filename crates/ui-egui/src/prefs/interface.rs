@@ -73,6 +73,11 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             app.preferences.ribbon_labels = selected == 0;
                         }
                     });
+                    // The SKETCH tab outside a sketch too (#7904).
+                    ui_kit::row(ui, "", |ui| {
+                        let check = setting::sketch_tab_always(app, ui).on_hover_text(app.tr("prefs.sketch_tab_always_note"));
+                        crate::scenario::publish_target("prefs:sketch_tab_always", check.rect);
+                    });
                     // Where every feature dialog puts its OK and Cancel (#6708).
                     ui_kit::row(ui, app.tr("prefs.dialog_buttons"), |ui| {
                         let placements = [crate::ui_kit::DialogButtons::Bottom, crate::ui_kit::DialogButtons::Top];

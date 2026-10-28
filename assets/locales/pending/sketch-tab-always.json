@@ -1,0 +1,38 @@
+{
+  "en": {
+    "prefs.sketch_tab_always": "Keep the Sketch tab shown",
+    "prefs.sketch_tab_always_note": "The Sketch tab stays in the ribbon, right after Model, while no sketch is open. Its drawing tools then start a sketch on the selected plane or face, or on the plane you pick next, with the tool ready in it."
+  },
+  "ja": {
+    "prefs.sketch_tab_always": "スケッチ タブを常に表示",
+    "prefs.sketch_tab_always_note": "スケッチを開いていないときも、スケッチ タブをリボンのモデルのすぐ後に表示します。そこにある作図ツールは、選択した平面または面に、なければ次に選ぶ平面にスケッチを開始し、そのスケッチでツールをすぐ使える状態にします。"
+  },
+  "zh": {
+    "prefs.sketch_tab_always": "始终显示草图选项卡",
+    "prefs.sketch_tab_always_note": "未打开草图时，草图选项卡也保留在功能区中紧随模型之后。其中的绘图工具会先在所选平面或面上（否则在接下来选取的平面上）创建草图，并在其中准备好该工具。"
+  },
+  "ar": {
+    "prefs.sketch_tab_always": "إبقاء تبويب الرسم ظاهرًا",
+    "prefs.sketch_tab_always_note": "يبقى تبويب الرسم في الشريط بعد تبويب النموذج مباشرة حتى عندما لا يكون أي رسم مفتوحًا. عندها تبدأ أدوات الرسم فيه رسمًا على المستوي أو الوجه المحدد، أو على المستوي الذي تختاره بعد ذلك، وتكون الأداة جاهزة فيه."
+  },
+  "he": {
+    "prefs.sketch_tab_always": "השארת לשונית הסקיצה מוצגת",
+    "prefs.sketch_tab_always_note": "לשונית הסקיצה נשארת ברצועה, מיד אחרי מודל, גם כשאין סקיצה פתוחה. כלי השרטוט בה מתחילים אז סקיצה על המישור או הפאה שנבחרו, או על המישור שתבחרו בהמשך, והכלי מוכן בה."
+  },
+  "vi": {
+    "prefs.sketch_tab_always": "Luôn hiện thẻ Bản phác",
+    "prefs.sketch_tab_always_note": "Thẻ Bản phác vẫn nằm trên thanh công cụ, ngay sau Mô hình, khi không có bản phác nào đang mở. Khi đó các công cụ vẽ của nó bắt đầu một bản phác trên mặt phẳng hoặc mặt đã chọn, hoặc trên mặt phẳng bạn chọn tiếp theo, với công cụ sẵn sàng trong đó."
+  },
+  "de": {
+    "prefs.sketch_tab_always": "Registerkarte Skizze immer zeigen",
+    "prefs.sketch_tab_always_note": "Die Registerkarte Skizze bleibt im Menüband direkt nach Modell, auch wenn keine Skizze offen ist. Ihre Zeichenwerkzeuge beginnen dann eine Skizze auf der ausgewählten Ebene oder Fläche oder auf der Ebene, die Sie als Nächstes wählen, und das Werkzeug ist darin bereit."
+  },
+  "ko": {
+    "prefs.sketch_tab_always": "스케치 탭 항상 표시",
+    "prefs.sketch_tab_always_note": "스케치가 열려 있지 않을 때도 스케치 탭이 리본에서 모델 바로 다음에 남아 있습니다. 그 그리기 도구는 선택한 평면이나 면, 또는 다음에 고르는 평면에서 스케치를 시작하고 그 안에서 도구를 바로 쓸 수 있게 합니다."
+  },
+  "nl": {
+    "prefs.sketch_tab_always": "Schets-tab altijd tonen",
+    "prefs.sketch_tab_always_note": "De Schets-tab blijft in het lint staan, direct na Model, ook als er geen schets open is. Zijn tekentools beginnen dan een schets op het geselecteerde vlak, of op het vlak dat je daarna kiest, met de tool daarin klaar voor gebruik."
+  }
+}

@@ -600,7 +600,11 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
         return Vec::new();
     }
     let mut tabs = TABS.to_vec();
-    if app.session.active_sketch.is_some() {
+    if app.preferences.sketch_tab_always {
+        // Right after MODEL, whether a sketch is open or not (#7904).
+        let at = tabs.iter().position(|t| *t == "MODEL").map_or(0, |i| i + 1);
+        tabs.insert(at, "SKETCH");
+    } else if app.session.active_sketch.is_some() {
         tabs.push("SKETCH");
     }
     // Always reachable, as before the ribbon redesign: a sheet-metal part starts from an
@@ -609,6 +613,17 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     tabs.push("SHEET METAL");
     tabs.push("WELDMENTS");
     tabs
+}
+
+/// With the SKETCH tab kept shown (#7904) and no sketch open: whether `id` is one of the tools in
+/// its CREATE or REFERENCE sections, which then start a sketch first (Create Sketch, then the
+/// tool). Tools that work on a sketch's geometry (modify, pattern, constrain) wait for one.
+pub fn starts_a_sketch(app: &crate::SolveApp, id: &str) -> bool {
+    app.preferences.sketch_tab_always
+        && app.session.active_sketch.is_none()
+        && solidcraft_engine::find_command(id)
+            .and_then(destination)
+            .is_some_and(|(tab, panel)| tab == "SKETCH" && matches!(panel, "CREATE" | "REFERENCE"))
 }
 
 /// Select contextual tabs on entry (or a different sheet body or frame member), allowing the

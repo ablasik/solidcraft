@@ -312,7 +312,7 @@ impl<'a> Panel<'a> {
             return None;
         }
         let ctx = ui.ctx().clone();
-        Some(container.area(egui::Id::new(id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
+        Some(container.area(egui::Id::new(id)).fixed_pos(rect.min).movable(false).show(&ctx, |ui| {
             let frame = container.frame(&ctx, Tokens::get().panel, crate::frame::Side::Left).inner_margin(Tokens::get().space_4);
             container
                 .show_frame(ui, frame, rect, |ui| {
@@ -384,7 +384,7 @@ impl<'a> Panel<'a> {
         );
         let ctx = ui.ctx().clone();
         let mut move_side = None;
-        let response = container.area(egui::Id::new(options.id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
+        let response = container.area(egui::Id::new(options.id)).fixed_pos(rect.min).movable(false).show(&ctx, |ui| {
             let frame = container.frame(&ctx, t.panel, if left { crate::frame::Side::Left } else { crate::frame::Side::Right }).inner_margin(0.0);
             let content = container.show_frame(ui, frame, bounds, |ui| {
                 let size = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);

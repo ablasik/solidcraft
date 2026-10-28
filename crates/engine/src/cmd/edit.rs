@@ -1670,6 +1670,11 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(e) = trial.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
     }
+    // What this edit rebuilt: the trial computed the edited feature and the features after it. The
+    // session's evaluation below only takes those results from what the trial kept, so its own
+    // counters read as "nothing was rebuilt" (#5694).
+    let rebuilt = trial.model.last_recomputed;
+    let reused = trial.model.last_restored;
     let original_ids: std::collections::BTreeSet<u64> = s.doc.features.iter().map(|feature| feature.id).collect();
     let added_ids: std::collections::BTreeSet<u64> =
         trial.doc.features.iter().filter(|feature| !original_ids.contains(&feature.id)).map(|feature| feature.id).collect();
@@ -1711,7 +1716,9 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
     }
-    Ok(json!({"feature": id, "recomputed": s.model.last_recomputed, "restored": s.model.last_restored}))
+    // Report the trial's rebuild, plus anything the session still had to compute itself (a kept
+    // result its budget dropped); `s.model`'s own counters would only report the reuse (#5694).
+    Ok(json!({"feature": id, "recomputed": rebuilt + s.model.last_recomputed, "restored": reused}))
 }
 
 fn dependents(s: &mut Session, p: &Value) -> Result<Value> {
