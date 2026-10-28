@@ -50,6 +50,16 @@ pub fn families(v: &Value) -> Vec<Family> {
         .collect()
 }
 
+/// A family's name in the user's language, by its id in the library: the library's own (English)
+/// name for a family the catalogs don't know.
+pub(crate) fn family_name(f: &Family) -> String {
+    let id = format!("parts.family.{}", f.id);
+    match crate::i18n::tr(&id) {
+        shown if shown == id => f.name.clone(),
+        shown => shown.to_string(),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Pt {
     pub family: usize,
@@ -129,7 +139,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         return false;
     }
     let names: Vec<String> =
-        lib.iter().map(|f| if f.standard.is_empty() { f.name.clone() } else { format!("{} ({})", f.name, f.standard) }).collect();
+        lib.iter().map(|f| if f.standard.is_empty() { family_name(f) } else { format!("{} ({})", family_name(f), f.standard) }).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let before = k.family;
     choice_row(ui, "Type", "pt_family", &mut k.family, &refs);
@@ -150,7 +160,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             k.length = i.checked_sub(1);
         });
     }
-    text_row(ui, "Name", &mut k.name, "automatic");
+    text_row(ui, "Name", &mut k.name, crate::i18n::tr("parts.automatic_name"));
     // The part, and its table values.
     let key = (k.family, k.size, k.length);
     let tex_id = egui::Id::new("sc_part_picture");
@@ -232,6 +242,20 @@ mod tests {
         assert_eq!(l[0].sizes[1].0, "M6");
         assert_eq!(l[0].lengths.as_deref(), Some(&[10.0, 16.0, 20.0][..]));
         assert!(l[1].lengths.is_none());
+    }
+
+    /// The library's families are named in the user's language, and a family the catalogs
+    /// don't know keeps the library's name.
+    #[test]
+    fn family_names_follow_the_language() {
+        let l = families(&solidcraft_engine::Session::default().execute("parts.library", &json!({})).unwrap());
+        assert!(l.len() >= 7, "{}", l.len());
+        let _german = crate::i18n::scope("de");
+        for f in &l {
+            assert_ne!(family_name(f), f.name, "{}", f.id);
+        }
+        let unknown = Family { id: "spring".into(), name: "Spring".into(), standard: String::new(), sizes: vec![], lengths: None };
+        assert_eq!(family_name(&unknown), "Spring");
     }
 
     /// A hole pick seats the part (`at`); without one it goes to the origin along Z.

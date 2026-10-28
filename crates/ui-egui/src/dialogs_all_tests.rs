@@ -255,6 +255,42 @@ form_case!(shell, "solid.shell", ["Thickness", "Direction"]);
 form_case!(draft, "solid.draft", ["Angle"]);
 form_case!(mirror, "solid.mirror", ["Operation"]);
 
+/// The Motion Study's and Motion Trace's hints read in the user's language: the dialogs drew them
+/// as they got them, in English.
+#[test]
+fn motion_dialog_hints_are_translated() {
+    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+            _ => {}
+        }
+    }
+    let mut h = fixture();
+    h.app.preferences.language = "ja".into();
+    let _japanese = crate::i18n::scope("ja");
+    for (command, english) in [("motion.study", "add a key for a joint first"), ("motion.trace", "select a point on a component")] {
+        let mut d = Dialog::for_command(&h.app, command).unwrap();
+        let mut painted = Vec::new();
+        for _ in 0..2 {
+            let mut out = h.ctx.run_ui(
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(320.0, 1600.0))), ..Default::default() },
+                |ui| {
+                    ui.set_width(264.0);
+                    ui_kit::scope(ui, |ui| {
+                        rows(&mut h.app, &h.ctx, &mut d, ui);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            painted.clear();
+            out.shapes.iter().for_each(|shape| texts(&shape.shape, &mut painted));
+        }
+        assert!(!painted.iter().any(|p| p == english), "{command} paints {english:?} in Japanese");
+        assert!(painted.iter().any(|p| p == crate::i18n::tr_label(english)), "{command} paints {painted:?}");
+    }
+}
+
 fn mirror_preselection() -> (Harness, Vec<Sel>) {
     let mut h = Harness::new();
     h.app.run("sketch.create", json!({"plane":"XY","name":"Sketch1"})).unwrap();
@@ -418,6 +454,47 @@ fn registry_dialog_inventory_has_no_unclassified_feature_forms() {
     for spec in solidcraft_engine::command_specs() {
         let Some(d) = Dialog::for_command(&h.app, spec.id) else { continue };
         assert!(super::command(&d.kind).is_some(), "{}: {:?}", spec.id, d.kind);
+    }
+}
+
+/// Texts these dialogs draw themselves read in the user's language: the joints' Play button, the
+/// Motion Study's Loop, the Stitch tolerance hint, the Flange type and the Emboss note.
+#[test]
+fn hand_drawn_dialog_texts_are_translated() {
+    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+            _ => {}
+        }
+    }
+    let mut h = fixture();
+    h.app.preferences.language = "ja".into();
+    let _japanese = crate::i18n::scope("ja");
+    for (command, english) in [
+        ("joint.gear", "▶ Play"),
+        ("motion.study", "Loop"),
+        ("surface.stitch", "tight"),
+        ("sheet.flange", "Base"),
+        ("solid.emboss", "Orthogonal line profiles tangent to one supported cylinder wrap automatically. Pick a wall to choose a target."),
+    ] {
+        let mut d = Dialog::for_command(&h.app, command).unwrap();
+        let mut painted = Vec::new();
+        for _ in 0..2 {
+            let mut out = h.ctx.run_ui(
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(320.0, 1600.0))), ..Default::default() },
+                |ui| {
+                    ui.set_width(264.0);
+                    ui_kit::scope(ui, |ui| {
+                        rows(&mut h.app, &h.ctx, &mut d, ui);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            painted.clear();
+            out.shapes.iter().for_each(|shape| texts(&shape.shape, &mut painted));
+        }
+        assert!(!painted.iter().any(|p| p == english), "{command} paints {english:?} in Japanese: {painted:?}");
     }
 }
 

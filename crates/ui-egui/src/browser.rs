@@ -2032,9 +2032,9 @@ impl Entry {
             thing: Thing::Sketch(f.id),
             patterns: crate::sketch_pattern_tree::has_patterns(app, f.id).then(|| format!("s:{}/patterns", f.id)),
             label: if lost {
-                format!("{}  (attachment lost)", f.name)
+                crate::i18n::format("browser.sketch_attachment_lost", &[("name", &crate::i18n::tr_name(&f.name))])
             } else if active {
-                format!("{}  (editing)", f.name)
+                crate::i18n::format("browser.sketch_editing", &[("name", &crate::i18n::tr_name(&f.name))])
             } else {
                 f.name.clone()
             },
@@ -2478,10 +2478,7 @@ fn entry_row(
     }
     if r.double && folder == "sketches" {
         if let Ok(id) = e.key.parse() {
-            if let Some(path) = path {
-                let _ = app.run("component.activate", json!({"component": comp,"occurrence":path.last(),"path":path}));
-            }
-            app.edit_sketch(id);
+            app.edit_sketch_in(id, path.map(|path| (comp, path)));
         }
     } else if r.clicked {
         let shift = ui.input(|i| i.modifiers.shift);
