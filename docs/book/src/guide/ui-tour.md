@@ -223,7 +223,10 @@ pills when `on_accent` has less than 4.5:1 contrast with the fill. See the
 
 - **Import…** adds a theme file and turns it on. Importing a file with the same name again updates
   that theme. A file with an unknown colour name or a malformed colour is refused, and the message
-  names every problem.
+  names every problem. A theme shared as text imports the same way without a file: with the
+  Interface page open, press Ctrl+V (Cmd+V on a Mac), or right-click the Import tile and choose
+  **Paste theme**. Pasted text that isn't a theme is left alone. A theme file dropped on the tile
+  imports too.
 - **Export…** saves the theme on now as a complete file listing every colour and radius. It is a good starting
   point for your own theme.
 - **Remove** deletes the selected imported theme.

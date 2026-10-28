@@ -61,6 +61,7 @@ pub mod drag_extrude;
 pub mod drag_snap;
 pub mod easyprint_ui;
 pub mod edit_clipboard;
+pub mod edit_in_place;
 mod feature_edit;
 #[cfg(test)]
 mod font_literals_tests;
@@ -515,6 +516,8 @@ pub struct SolveApp {
     /// OK pressed on a feature that takes a while: its evaluation runs off the window thread.
     pub applying: Option<dialogs::Applying>,
     pub(crate) editing_state: Option<dialogs::EditingState>,
+    /// A linked component's design edited in place, with its assembly around it.
+    pub edit_in_place: edit_in_place::EditInPlace,
     pub(crate) pending_feature_edit: Option<feature_edit::PendingFeatureEdit>,
     /// A command recomputing the history (the marker moved, undo) computing off the window
     /// thread, and those asked for meanwhile ([`deferred`]).
@@ -712,6 +715,7 @@ impl SolveApp {
             preview: preview::PreviewState::default(),
             applying: None,
             editing_state: None,
+            edit_in_place: Default::default(),
             pending_feature_edit: None,
             deferred: None,
             deferred_queue: Vec::new(),
@@ -1020,6 +1024,13 @@ impl SolveApp {
 
     /// Host effects shared by directly executed and already evaluated commands.
     pub(crate) fn command_completed(&mut self, id: &str, r: Result<Value, String>) -> Result<Value, String> {
+        // The engine has no edit in place to start or finish; the window does, and says when it can't.
+        let r = match solidcraft_engine::find_command(id).map(|spec| spec.id) {
+            // `queued`: it waits for the end of the agent's turn.
+            Some("component.edit_in_place") => r.and_then(|v| edit_in_place::command_ran(self, &v).map(|queued| with_queued(v, queued))),
+            Some("component.finish_edit") => r.and_then(|v| edit_in_place::finish_command(self).map(|queued| with_queued(v, queued))),
+            _ => r,
+        };
         if let Ok(v) = &r {
             match id {
                 "view.fit" | "view.home" => self.frame_view(id == "view.home"),
@@ -1194,6 +1205,7 @@ impl SolveApp {
                 }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     documents::reset_chat(self);
+                    self.edit_in_place.active = None;
                     render_workspace::reset_document(self);
                     dim_view::cancel();
                     self.menu.props = None;
@@ -1405,6 +1417,10 @@ impl SolveApp {
         if dialogs_sheet::start_export(self, id) {
             return;
         }
+        if id == "component.finish_edit" {
+            edit_in_place::finish(self);
+            return;
+        }
         // The picked drawing is placed (position and scale, previewed) before OK adds it.
         if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
             let command = id.to_string();
@@ -1414,6 +1430,13 @@ impl SolveApp {
                 }
             });
             return;
+        }
+        if id == "component.update_links" && self.edit_in_place.active.is_some() {
+            // In a part edited in place it also refreshes the assembly around it.
+            edit_in_place::refresh(self);
+            if self.session.doc.links.is_empty() {
+                return;
+            }
         }
         if id == "component.update_links" && !self.session.doc.links.is_empty() {
             // Reading the linked designs again takes a while in a large assembly: off the window
@@ -2154,7 +2177,12 @@ impl SolveApp {
         render_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         save_job::tick(self, false);
-        if self.saving.is_some() {
+        edit_in_place::tick(self);
+        let typing = ctx.egui_wants_keyboard_input();
+        if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Extra1) || (i.key_pressed(egui::Key::BrowserBack) && !typing)) {
+            edit_in_place::back(self);
+        }
+        if self.saving.is_some() || self.edit_in_place.refreshing() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         open_meshing::tick(self, ctx);
@@ -2201,6 +2229,8 @@ impl SolveApp {
         open_elsewhere::tick(self, ctx);
         update::tick(self, ctx);
         if self.issue_report.draft.is_none() && self.file_picker.is_none() {
+            // Files dropped on the theme Import tile are themes (#8226).
+            prefs::take_theme_drops(self, ctx);
             // Files dropped on the agent chat attach to its next message instead.
             agent_chat::take_drops(self, ctx);
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
@@ -2648,6 +2678,14 @@ impl SolveApp {
 /// shown: the screenshot deadline still ends a wait for a frame that never comes.
 fn window_hidden(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.viewport().visible()) == Some(false)
+}
+
+/// An edit in place command's result, saying when it waits for the end of the agent's turn.
+fn with_queued(mut result: Value, queued: bool) -> Value {
+    if queued && let Some(o) = result.as_object_mut() {
+        o.insert("queued".into(), Value::Bool(true));
+    }
+    result
 }
 
 /// A command's name as people see it (its label), for the status bar.

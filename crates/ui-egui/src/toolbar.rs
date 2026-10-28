@@ -1297,8 +1297,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut overflow = Vec::new();
         // Every panel with all its buttons (the user's pins have no cap); a toolbar too narrow
         // for them narrows the buttons, then trims panels into their drop-down and the » menu.
+        let editing_in_place = app.edit_in_place.active.is_some();
         let lists: Vec<_> = crate::toolbar_custom::panel_lists(&tab)
             .into_iter()
+            .filter(|(panel, _, _)| editing_in_place || !(tab == "MODEL" && *panel == "FINISH EDITING"))
             .map(|(panel, cmds, promote)| {
                 let mut shown = crate::toolbar_custom::buttons(app, &tab, panel, &cmds, promote);
                 // Gallery cells are painted together after the large buttons, in reading order.
@@ -1341,7 +1343,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let right = r.right();
         // The Sketch exit group follows the last sketch panel, and is always kept room for so it
         // stays reachable at every width; when panels go into the » menu it moves to the far right.
-        let finish_plan = sizes.last().and_then(|size| if tab == "SKETCH" { Some(Plan::full(size)) } else { None });
+        let finish_plan =
+            sizes.last().and_then(|size| if tab == "SKETCH" || (tab == "MODEL" && editing_in_place) { Some(Plan::full(size)) } else { None });
         let finish_width = finish_plan.as_ref().map_or(0.0, |p| p.width().max(80.0));
         let normal_count = sizes.len().saturating_sub(usize::from(finish_plan.is_some()));
         let mut plans = fit(sizes.get(..normal_count).unwrap_or_default(), right - 4.0 - px - finish_width);
@@ -1364,7 +1367,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             // commands never vanish from the toolbar (#7166). Both are COLLAPSED_WIDTH wide.
             let collapsed = plan.fit == Fit::Collapsed || (shown.is_empty() && !cmds.is_empty());
             let trimmed = plan.shown < plan.widths.len();
-            let finish = tab == "SKETCH" && *panel == "FINISH SKETCH";
+            let finish = (tab == "SKETCH" && *panel == "FINISH SKETCH") || (tab == "MODEL" && *panel == "FINISH EDITING");
             let pinned = finish;
             let width = if pinned { finish_width } else { plan.width() };
             if pinned && finish_right {
@@ -2189,6 +2192,8 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             .collect();
         (keys, i.modifiers)
     });
+    // A theme pasted on the Interface page is a theme, not copied components (#8226).
+    crate::prefs::take_theme_paste(app, ctx);
     // Home hides the design: only New, Open and Preferences work there.
     let shown = design_shown(app);
     if shown {
@@ -3734,7 +3739,8 @@ mod fill_width_tests {
                 let right = bar.right() - 4.0 - finish.map_or(0.0, |f| f.width() + 4.0);
                 let count = |name: &str| crate::scenario::count_of(name).unwrap_or(-1.0);
                 let (collapsed, trimmed, more) = (count("toolbar_collapsed"), count("toolbar_trimmed"), count("toolbar_more"));
-                let lists = crate::toolbar_custom::panel_lists(tab);
+                // FINISH EDITING is shown only while a linked design is edited in place.
+                let lists: Vec<_> = crate::toolbar_custom::panel_lists(tab).into_iter().filter(|(panel, _, _)| *panel != "FINISH EDITING").collect();
                 let mut end = bar.left();
                 let mut on_bar = 0;
                 for (panel, cmds, promote) in &lists {

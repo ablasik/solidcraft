@@ -5,6 +5,8 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui_kit::settings_heading(ui, app.tr("prefs.sketch_selection_heading"), app.tr("prefs.sketch_selection_note"));
     ui_kit::settings_section(ui, "sketch", app.tr("prefs.sketching"), |ui| {
+        ui_kit::checkbox(ui, app.tr("prefs.sketch_tracking_guides"), &mut app.preferences.sketch_tracking_guides)
+            .on_hover_text(app.tr("prefs.sketch_tracking_guides_note"));
         let mut auto = app.session.auto_project;
         if ui_kit::checkbox(ui, crate::i18n::tr_label("Project face edges into new sketches"), &mut auto).changed() {
             let _ = app.run("sketch.auto_project", json!({"value": auto}));

@@ -823,6 +823,14 @@ preference_settings! {
     /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
     /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
     step_values: bool = false, PAGE_DESIGN => check_id("ui.step_values");
+    /// A design coming back to its tab reads again the linked designs whose files changed since
+    /// it last read them. Off: they wait for Update Links, as before.
+    update_changed_links: bool = true, PAGE_DESIGN => check_id("settings.update_changed_links");
+    /// A double-click on a component, in the browser or on its face in the view, opens a linked
+    /// one's design with the assembly around it (`edit_in_place`) and activates any other. Off:
+    /// a double-click in the browser activates every component and one in the view does nothing,
+    /// as before.
+    double_click_components: bool = true, PAGE_DESIGN => check_id("settings.double_click_components");
     /// Reopen the saved designs that were open when the app was last closed (#5542).
     reopen_designs: bool = true, PAGE_GENERAL;
     /// Those designs' files, in tab order, as the last quit left them.
@@ -1025,6 +1033,8 @@ preference_settings! {
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
     /// Default: Alt/Option. Set to Ctrl/Cmd for the alternate mapping.
     suppress_sketch_snap: ModifierCombo = ModifierCombo::CTRL_ALT, PAGE_SKETCH;
+    /// Temporary horizontal/vertical guides from hovered centres and edge midpoints.
+    sketch_tracking_guides: bool = true, PAGE_SKETCH;
     /// Whether Alt/Option also frees gizmo / canvas manipulator arrows (Primary always does).
     manipulator_free_alt: bool = true, PAGE_SKETCH;
     /// A sketch tool's shortcut pressed again before the first point steps to the tool's next
@@ -1111,6 +1121,8 @@ pub struct PrefsWindow {
     land_on: Option<usize>,
     /// The row to scroll to after a result is chosen.
     reveal: Option<crate::prefs_search::Reveal>,
+    /// Where the theme Import tile was drawn last frame: a file dropped there is a theme (#8226).
+    import_tile: Option<egui::Rect>,
 }
 
 /// Following a theme file needs the file system: the desktop app only (#7573).
@@ -1276,6 +1288,7 @@ fn theme_row(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut action_theme: Option<String> = None;
     let mut chosen: Option<String> = None;
     let mut action: Option<&str> = None;
+    let mut import_tile = None;
     ui_kit::theme_rail(
         ui,
         |ui| {
@@ -1328,11 +1341,25 @@ fn theme_row(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         },
         |ui| {
-            if ui_kit::theme_import_tile(ui, app.tr_label("Import…"), app.tr("prefs.theme_file")).clicked() {
+            let tile = ui_kit::theme_import_tile(ui, app.tr_label("Import…"), app.tr("prefs.theme_file_or_paste"))
+                .on_hover_text(app.tr("prefs.theme_import_hint"));
+            import_tile = Some(tile.rect);
+            if tile.clicked() {
                 action = Some("import");
             }
+            // The keyboard's paste needs no menu; this is for touch screens and the browser's mouse users.
+            #[cfg(not(target_arch = "wasm32"))]
+            ui_kit::Menu::context(&tile, |ui| {
+                ui_kit::Menu::show(ui, Tokens::get().form_card_width, |ui| {
+                    if ui_kit::MenuItem::new("theme_paste", app.tr("prefs.theme_paste"), "paste").show(ui).clicked() {
+                        action = Some("paste");
+                        ui.close();
+                    }
+                });
+            });
         },
     );
+    app.prefs_window.import_tile = import_tile;
     if let Some((kind, id)) = tile_action {
         action = Some(kind);
         action_theme = Some(id);
@@ -1346,17 +1373,18 @@ fn theme_row(app: &mut SolveApp, ui: &mut egui::Ui) {
         Some("import") => app.pick_open_for(&["json"], |app, path| {
             let Some(path) = path else { return };
             // Through `vfs`, like every other import: in the web app a picked file is there.
-            let r = solidcraft_engine::io::vfs::read_to_string(&path, crate::theme_files::MAX_BYTES)
-                .map_err(|e| e.to_string())
-                .and_then(|text| import_theme(app, &serde_json::Value::String(text)));
-            match r {
-                Ok(id) => {
-                    let name = crate::theme_files::find(&id, &app.preferences.custom_themes).map(|t| t.name.clone()).unwrap_or(id);
-                    app.set_status(format!("Theme imported: {name}"), false);
-                }
-                Err(e) => app.set_status(format!("Theme import: {e}"), true),
-            }
+            let text = solidcraft_engine::io::vfs::read_to_string(&path, crate::theme_files::MAX_BYTES).map_err(|e| e.to_string());
+            import_theme_text(app, text);
         }),
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("paste") => {
+            let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
+            if looks_like_theme(&text) {
+                import_theme_text(app, Ok(text));
+            } else {
+                app.set_status(app.tr("prefs.theme_paste_none").to_string(), true);
+            }
+        }
         Some("export") => {
             let system_dark = ui.ctx().system_theme().map_or(app.ui.dark, |theme| theme == egui::Theme::Dark);
             let file = theme_file(app, action_theme.as_deref().unwrap_or(&app.preferences.theme), system_dark);
@@ -1816,6 +1844,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         app.keymap.open = false;
         open_at(app, PAGE_SHORTCUTS);
     }
+    app.prefs_window.import_tile = None;
     if !app.prefs_window.open {
         app.prefs_window.filter.clear();
         app.prefs_window.search_from = None;
@@ -2659,6 +2688,60 @@ fn select_theme(app: &mut SolveApp, id: &str) {
 
 /// Import a theme file (its text, or its JSON) into the preferences and turn it on; returns
 /// the id it is kept under.
+/// Import a theme file's text, from a file, a paste or a drop, and say what happened in the status bar.
+fn import_theme_text(app: &mut SolveApp, text: Result<String, String>) {
+    match text.and_then(|text| import_theme(app, &serde_json::Value::String(text))) {
+        Ok(id) => {
+            let name = crate::theme_files::find(&id, &app.preferences.custom_themes).map(|t| t.name.clone()).unwrap_or(id);
+            app.set_status(format!("Theme imported: {name}"), false);
+        }
+        Err(e) => app.set_status(format!("Theme import: {e}"), true),
+    }
+}
+
+/// Text that is meant as a theme file: a JSON object naming the theme format. Anything else
+/// pasted while Preferences is open keeps its usual meaning.
+fn looks_like_theme(text: &str) -> bool {
+    text.trim_start().starts_with('{') && text.contains(crate::theme_files::FORMAT)
+}
+
+/// Ctrl/Cmd+V on the Interface page with a theme file's text on the clipboard imports it, like
+/// Import… with a file (#8226). Called before the global Copy and Paste shortcuts, which would
+/// otherwise paste copied components; the paste is taken out of the input once it is a theme's.
+pub fn take_theme_paste(app: &mut SolveApp, ctx: &egui::Context) {
+    if !app.prefs_window.open || app.prefs_window.section != PAGE_INTERFACE {
+        return;
+    }
+    let Some(text) = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None })) else {
+        return;
+    };
+    if !looks_like_theme(&text) {
+        return;
+    }
+    ctx.input_mut(|i| {
+        i.events.retain(|e| {
+            !matches!(e, egui::Event::Paste(_) | egui::Event::Key { key: egui::Key::V, .. } | egui::Event::Key { key: egui::Key::Insert, .. })
+        })
+    });
+    import_theme_text(app, Ok(text));
+}
+
+/// Files dropped on the theme Import tile are themes to import, not designs to open (#8226).
+pub fn take_theme_drops(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(rect) = app.prefs_window.import_tile.filter(|_| app.prefs_window.open) else { return };
+    if !ctx.input(|i| !i.raw.dropped_files.is_empty() && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))) {
+        return;
+    }
+    let files = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+    for f in files.iter().take(8) {
+        let text = f
+            .bytes()
+            .and_then(|b| if b.len() > crate::theme_files::MAX_BYTES { Err("the file is too large for a theme".into()) } else { Ok(b) })
+            .and_then(|b| String::from_utf8(b).map_err(|_| "not a theme file".to_string()));
+        import_theme_text(app, text);
+    }
+}
+
 pub fn import_theme(app: &mut SolveApp, v: &serde_json::Value) -> Result<String, String> {
     let theme = match v {
         serde_json::Value::String(text) => crate::theme_files::parse(text)?,
@@ -4293,6 +4376,7 @@ mod tests {
             ("look_at_anim", json!(false), PAGE_NAVIGATION),
             ("selection_shift_add_only", json!(true), PAGE_SKETCH),
             ("suppress_sketch_snap", json!(ModifierCombo::NONE), PAGE_SKETCH),
+            ("sketch_tracking_guides", json!(false), PAGE_SKETCH),
             ("msaa", json!(8), PAGE_GRAPHICS),
         ];
         let defaults = serde_json::to_value(Prefs::default()).unwrap();
@@ -4501,6 +4585,62 @@ mod tests {
     /// web app a picked file is kept there, where `std::fs` can't read it (#7643). On the disk it
     /// is the same file; a folder scope active while it is read refuses a path outside it, which
     /// shows the read goes through `vfs`.
+    #[test]
+    fn a_theme_pasted_or_dropped_on_the_interface_page_imports_and_other_pastes_pass_through() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let theme = |name: &str| format!(r##"{{"format":"solidcraft-theme/1","name":"{name}","base":"dark","colors":{{"panel":"#102030"}}}}"##);
+        let has = |h: &crate::scenario::Harness, id: &str| h.app.preferences.custom_themes.iter().any(|t| t.id == id);
+
+        // Another page: a theme's text is left to the usual paste.
+        h.call("ui.prefs", json!({"open":"General"}));
+        h.frames(2);
+        h.frame_with(vec![egui::Event::Paste(theme("Elsewhere"))]);
+        assert!(!has(&h, "elsewhere"));
+
+        // The Interface page: plain text is not a theme and changes nothing.
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.frames(2);
+        let before = h.app.preferences.clone();
+        h.frame_with(vec![egui::Event::Paste("just some words".into())]);
+        assert_eq!(h.app.preferences.custom_themes, before.custom_themes);
+
+        // A theme's text imports and turns on, as Import… does with a file.
+        h.frame_with(vec![egui::Event::Paste(theme("Pasted"))]);
+        assert!(has(&h, "pasted"), "{:?}", h.app.preferences.custom_themes.iter().map(|t| &t.id).collect::<Vec<_>>());
+        assert_eq!(h.app.preferences.theme, "pasted");
+
+        // An invalid theme says why, and imports nothing.
+        h.frame_with(vec![egui::Event::Paste(r#"{"format":"solidcraft-theme/1","name":"Bad","base":"sideways"}"#.into())]);
+        assert!(!has(&h, "bad"));
+
+        // A file dropped on the Import tile is a theme to import, not a design to open.
+        h.frames(2);
+        let tile = h.app.prefs_window.import_tile.expect("the Import tile is drawn on the Interface page");
+        let dir = std::env::temp_dir().join(format!("solidcraft-theme-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("dropped.json");
+        std::fs::write(&file, theme("Dropped")).unwrap();
+        #[derive(Debug)]
+        struct File(std::path::PathBuf);
+        impl egui::DroppedFile for File {
+            fn path(&self) -> &std::path::Path {
+                &self.0
+            }
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                std::fs::read(&self.0).map_err(|e| e.to_string())
+            }
+        }
+        let tabs = h.app.docs.count();
+        h.frame_with(vec![egui::Event::PointerMoved(tile.center())]);
+        h.drop_files(tile.center(), vec![std::sync::Arc::new(File(file)) as egui::DroppedFileHandle]);
+        h.frames(2);
+        assert!(has(&h, "dropped"));
+        assert_eq!(h.app.docs.count(), tabs, "the drop opened no design");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn theme_import_reads_through_vfs() {
         use serde_json::json;
