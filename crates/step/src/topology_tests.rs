@@ -538,6 +538,32 @@ fn bands_and_caps_without_seams_get_one() {
     faces_away(&s.brep, 0, |p| [0.0, 0.0, p[2].clamp(1.0, 2.0)]);
 }
 
+/// A dome whose loop already carries its seam: the meridian out to the pole, back, then the
+/// equator. The pole makes the rim wind once, yet nothing needs adding.
+#[test]
+fn a_dome_loop_that_already_has_its_seam_gets_no_other() {
+    let mut w = W::default();
+    let (ve, vn) = (w.vertex([5.0, 0.0, 0.0]), w.vertex([0.0, 0.0, 5.0]));
+    let meridian = w.circle([0.0; 3], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0], 5.0);
+    let seam = w.add(format!("EDGE_CURVE('',#{ve},#{vn},#{meridian},.T.)"));
+    let k = w.circle([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], 5.0);
+    let rim = w.add(format!("EDGE_CURVE('',#{ve},#{ve},#{k},.T.)"));
+    let a = w.axis([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let sphere = w.add(format!("SPHERICAL_SURFACE('',#{a},5.)"));
+    let (o1, o2, o3) = (w.oe(seam, true), w.oe(seam, false), w.oe(rim, true));
+    let bx = w.bound(&[o1, o2, o3], true, true);
+    let dome = w.face(&[bx], sphere, true);
+    let plane = w.plane([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let x = w.oe(rim, false);
+    let bx = w.bound(&[x], true, true);
+    let disk = w.face(&[bx], plane, false);
+    let shell = closed_shell(&mut w, &[dome, disk]);
+    let solid = w.add(format!("MANIFOLD_SOLID_BREP('dome',#{shell})"));
+    let s = one_solid(&w.file(&[solid]));
+    assert_eq!(counts(&s.brep), [2, 1, 2, 2, 2]);
+    assert!(!s.notes.iter().any(|n| n.contains("seam edges added")), "{:?}", s.notes);
+}
+
 /// A 20 × 20 × 5 plate with a hole of radius 3 through it; with `marked`, its square bounds are
 /// FACE_OUTER_BOUNDs, otherwise every bound is a FACE_BOUND and the hole is listed first.
 fn plate(marked: bool) -> p21::Exchange {
