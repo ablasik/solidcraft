@@ -12,6 +12,8 @@ use egui::{Ui, vec2};
 /// Text segments retain mixed states and optional compact clipping instead of dropdown fallback.
 #[derive(Default)]
 pub(crate) struct Segments<'a> {
+    /// Optional stable scenario targets, independent of translated option labels.
+    pub targets: &'a [&'a str],
     /// Optional leading icons retain the same text-segment geometry and accessibility.
     pub icons: &'a [&'a str],
     pub workspace_accent: bool,
@@ -30,7 +32,7 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
     if crate::prefs_search::querying(ui) && !crate::prefs_search::shows_all(ui) {
         crate::prefs_search::reveal(ui);
     }
-    let Segments { icons, workspace_accent, dense, states, compact, primary, intrinsic, proportional } = config;
+    let Segments { targets, icons, workspace_accent, dense, states, compact, primary, intrinsic, proportional } = config;
     let accent = crate::theme::TabAccent::current(ui.ctx());
     let t = Tokens::get();
     let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
@@ -132,6 +134,12 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
         t.button_bevel_with_radius(ui, &response, on, rounding);
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, *option));
         scenario::publish_handle(&format!("dialog:{}:{option}", label(ui)), segment.center());
+        if let Some(target) = targets.get(index) {
+            let visible = segment.intersect(ui.clip_rect());
+            if visible.is_positive() {
+                scenario::publish_target(target, visible);
+            }
+        }
         if response.on_hover_text(*option).clicked() {
             *selected = index;
             clicked = true;

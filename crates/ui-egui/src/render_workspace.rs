@@ -538,6 +538,7 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
         app.ui.tab = "MODEL".into();
         crate::render_ui::reset_shell(app);
     }
+    app.viewport.hover = None;
     app.cam_anim = None;
     if !render {
         app.pending_fit = None;
@@ -1644,9 +1645,29 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     app.viewport.rect = Some(rect);
     crate::viewport::refresh_layout(app, ui.ctx().pixels_per_point());
     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
-    // The modelling viewport's camera input (preset, Orbit around, zoom to the cursor, middle
-    // double-click), with nothing to pick or select here.
-    crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
+    let input = crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
+    let navigating = input.scroll != 0.0
+        || input.pinch != 1.0
+        || input.pan != egui::Vec2::ZERO
+        || input.middle
+        || input.secondary_down
+        || (input.primary_nav.is_some() && input.primary_down)
+        || input.mode.is_some()
+        || app.viewport.axis_drag.is_some()
+        || app.viewport.spin
+        || app.cam_anim.is_some();
+    let hits = input
+        .hover
+        .filter(|_| input.inside && !navigating)
+        .map(|p| crate::viewport::pick_cached(app, &crate::viewport::projection(app, rect), p))
+        .unwrap_or_default();
+    let candidate = crate::viewport::candidate(app, &hits);
+    app.viewport.hover = candidate.as_ref().map(|(hit, _)| hit.clone());
+    if response.clicked_by(egui::PointerButton::Primary) && input.inside && !navigating {
+        let (add, toggle) =
+            crate::tool_modifiers::selection_click(crate::tool_modifiers::Held::from_modifiers(input.mods), app.preferences.selection_shift_add_only);
+        crate::viewport::select(app, candidate.map(|(_, sel)| sel), add, toggle);
+    }
     let bg = app.render_workspace.view.draft.background;
     ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
     let result = (|| -> Result<(), String> {
@@ -1695,6 +1716,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let camera = app.cam;
         let radius = scene.bounds.diagonal().max(10.0) + scene.bounds.center().dist(camera.target);
         let eye = camera.eye();
+        let highlight_key = crate::viewport::highlight_key(app);
+        if highlight_key != app.viewport.hl_key {
+            let overlay = crate::viewport::build_highlight(app);
+            if let Ok(mut slot) = app.viewport.hl_slot.lock() {
+                *slot = Some(overlay);
+            }
+            app.viewport.hl_key = highlight_key;
+        }
         let slot = app.render_workspace.slot.clone();
         let callback = ViewportCallback(Frame {
             product: true,
@@ -1702,8 +1731,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             slot: slot.clone(),
             sketch_key: 0,
             sketch_slot: slot.clone(),
-            hl_key: 0,
-            hl_slot: slot.clone(),
+            hl_key: app.viewport.hl_key,
+            hl_slot: app.viewport.hl_slot.clone(),
             pv_key: 0,
             pv_slot: slot,
             pv_hide: false,
@@ -1721,8 +1750,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ao_radius: 0.0,
             eye: [eye.x as f32, eye.y as f32, eye.z as f32, if camera.fov > 0.0 { 1.0 } else { 0.0 }],
             ssaa: if width < full.0 { width as f32 / full.0 as f32 } else { 1.0 },
-            hover_tint: [0.0; 3],
-            selection_tint: [0.0; 3],
+            hover_tint: [f32::from(Tokens::get().hover_face_lift) / 255.0; 3],
+            selection_tint: {
+                let c = Tokens::get().body_selected;
+                [f32::from(c.r()) / 255.0, f32::from(c.g()) / 255.0, f32::from(c.b()) / 255.0]
+            },
         });
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(rect, callback));
         Ok(())

@@ -2091,7 +2091,9 @@ fn drag_ghost(app: &SolveApp, ctx: &egui::Context, id: &str, at: egui::Pos2, rem
 pub(crate) fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.label(egui::RichText::new(crate::i18n::tr_label("Selection filter")).color(t.text_dim).size(t.font_small));
-    crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Select bodies (a face picks its body)"), &mut app.ui.pick_bodies);
+    if crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Select bodies (a face picks its body)"), &mut app.ui.pick_bodies).changed() {
+        app.ui.pick_components = false;
+    }
     for (k, label) in [
         ("faces", "Faces"),
         ("edges", "Edges"),

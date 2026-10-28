@@ -332,6 +332,8 @@ pub struct UiState {
     pub pick_off: Vec<String>,
     /// A click on a face picks its whole body.
     pub pick_bodies: bool,
+    /// A face picks its exact component occurrence in Design and Render.
+    pub pick_components: bool,
     /// 0: shaded with edges, 1: shaded, 2: wireframe, 3: shaded with hidden edges.
     pub visual_style: u8,
     /// A soft shadow on the ground under the model (seen from above).
@@ -362,6 +364,7 @@ impl Default for UiState {
             dark: true,
             pick_off: Vec::new(),
             pick_bodies: false,
+            pick_components: false,
             visual_style: 0,
             ground_shadow: true,
             up_axis: Default::default(),
@@ -1038,6 +1041,12 @@ impl SolveApp {
                 && let Some(stage) = v.get("stage").and_then(Value::as_str)
             {
                 render_workspace::select_stage(self, stage);
+            }
+            if id == "select.filter" {
+                let mode = v.get("mode").and_then(Value::as_str);
+                self.ui.pick_bodies = mode == Some("body");
+                self.ui.pick_components = mode == Some("component");
+                self.ui.pick_off.retain(|kind| kind != "faces");
             }
             if id == "view.shots_strip"
                 && let Some(visible) = v.get("visible").and_then(Value::as_bool)

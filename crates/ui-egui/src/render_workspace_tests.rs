@@ -307,6 +307,7 @@ fn opaque_pbr_product_gpu_and_cpu_share_color_and_material_semantics() {
         for srgb in [false, true] {
             let Some(gpu) = crate::gpu::render_product_offscreen(
                 gpu.clone(),
+                None,
                 camera.view_proj(1.0, radius).to_f32(),
                 camera.back().to_f32(),
                 [eye[0], eye[1], eye[2], 0.0],
@@ -1427,7 +1428,7 @@ fn nav_app(render: bool, preset: &str, around: crate::prefs::OrbitAround) -> cra
     app.preferences.orbit_around = around;
     app.preferences.zoom_to_cursor = true;
     app.ui.perspective = true;
-    let mut cam = Camera::default();
+    let mut cam = Camera { fov: 0.6, ..Default::default() };
     cam.set_view(solidcraft_engine::render::StandardView::Iso);
     cam.fit(&solidcraft_engine::product_scene::extract(&app.session).unwrap().bounds);
     app.cam = cam;
@@ -1454,7 +1455,7 @@ fn render_preview_navigates_like_the_modelling_viewport_in_every_preset() {
             };
             both(vec![], none, &mut design, &mut render);
             assert_eq!(design.viewport.rect, render.viewport.rect);
-            // Presses start on empty space (the Render preview has nothing to pick), and the wheel
+            // Presses start on empty space in both workspaces, and the wheel
             // turns over the model, so zoom to the cursor anchors on its surface.
             let empty = pos2(90.0, 520.0);
             let proj = crate::viewport::projection(&design, design.viewport.rect.unwrap());
@@ -1499,7 +1500,7 @@ fn render_preview_navigates_like_the_modelling_viewport_in_every_preset() {
                 both(vec![Event::PointerMoved(empty)], none, &mut design, &mut render);
                 assert_eq!(design.cam, render.cam, "{preset} {around:?}: modifier motion with {mods:?}");
             }
-            assert!(render.session.selection.is_empty(), "the Render preview never selects");
+            assert!(render.session.selection.is_empty(), "camera navigation must not select");
         }
     }
 }
@@ -2844,8 +2845,11 @@ fn render_workspace_stage_chips_dispatch_without_mutations_and_remember_each_doc
     for stage in Stage::ALL {
         h.frames(3);
         h.step(&json!({"click":{"handle":format!("render:stage:{}",stage.key())}})).unwrap();
+        h.frames(2);
         assert_eq!(h.app.render_workspace.view.stage, stage);
         assert_eq!(h.app.render_workspace.view.inspector.page, stage.page());
+        assert_eq!(crate::scenario::rect_of("render:pick").is_some(), stage == Stage::Look);
+        assert_eq!(crate::scenario::rect_of("render:preview_note").is_some(), stage == Stage::Look);
         assert!(Arc::ptr_eq(&h.app.session.doc, &document));
         assert_eq!((h.app.session.revision, h.app.session.undo.len(), h.app.session.redo.len()), history);
         assert!(h.app.render_workspace.view.job.is_none());
@@ -3163,5 +3167,251 @@ fn render_workspace_card_grips_swap_sides_and_resize_without_design_edits() {
         assert_eq!(h.app.cam, camera, "card gestures must not move the camera");
         assert_eq!(h.app.session.doc, document);
         assert_eq!((h.app.session.undo.len(), h.app.session.redo.len()), history);
+    }
+}
+
+/// A small public-safe model, built through the sample recipe inside an occurrence.
+fn render_pick_sample() -> (Harness, u64) {
+    let mut h = Harness::new();
+    let part = h.app.run("component.create", json!({"name":"Sample","grounded":false})).unwrap();
+    let occurrence = part["occurrence"].as_u64().unwrap();
+    h.app.session.run_script(&solidcraft_engine::sample::script()).unwrap();
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    h.frames(4);
+    h.app.start("render.camera.fit");
+    h.settle();
+    (h, occurrence)
+}
+
+fn product_pick_point(h: &Harness) -> egui::Pos2 {
+    let rect = h.app.viewport.layout.as_ref().unwrap().drawable;
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    for y in 2..18 {
+        for x in 2..18 {
+            let at = rect.min + egui::vec2(rect.width() * x as f32 / 20.0, rect.height() * y as f32 / 20.0);
+            if !crate::shell::covered(&h.app, at)
+                && crate::viewport::pick(&h.app, &proj, at).iter().any(|h| matches!(h, crate::viewport::Hit::Face { .. }))
+            {
+                return at;
+            }
+        }
+    }
+    panic!("sample must offer a visible product face outside the floating panels");
+}
+
+#[test]
+fn render_workspace_pick_stage_tools_filter_sample_clicks_with_shots_shown_and_hidden() {
+    use solidcraft_engine::Sel;
+    let (mut h, occurrence) = render_pick_sample();
+    let doc = h.app.session.doc.clone();
+    let undo = h.app.session.undo.len();
+    for shots in [true, false] {
+        h.app.run("view.shots_strip", json!({"visible":shots})).unwrap();
+        h.frames(3);
+        let tools = crate::scenario::rect_of("render:stage_tools").unwrap();
+        assert!(tools.contains_rect(crate::scenario::rect_of("render:pick").unwrap()));
+        assert!(tools.contains_rect(crate::scenario::rect_of("render:preview_note").unwrap()));
+        assert!(crate::scenario::rect_of("render:hud").is_none());
+        for mode in ["body", "face", "component"] {
+            assert!(crate::scenario::handle_at(&format!("render:pick:{mode}")).is_some(), "Pick must be enabled");
+            h.step(&json!({"click":{"handle":format!("render:pick:{mode}")}})).unwrap();
+            h.frames(2);
+            let at = product_pick_point(&h);
+            h.step(&json!({"move":[at.x,at.y]})).unwrap();
+            assert!(matches!(h.app.viewport.hover, Some(crate::viewport::Hit::Face { .. })));
+            h.step(&json!({"click":[at.x,at.y]})).unwrap();
+            match h.app.session.selection.as_slice() {
+                [Sel::Body { name }] if mode == "body" => assert_eq!(name, "Plate"),
+                [Sel::Face { body, .. }] if mode == "face" => assert_eq!(body, "Plate"),
+                [Sel::Occurrence { path }] if mode == "component" => assert_eq!(path, &[occurrence]),
+                other => panic!("{mode}, Shots {shots}: wrong selection {other:?}"),
+            }
+            let selected = h.app.session.selection.clone();
+            enter(&mut h.app, false).unwrap();
+            h.frames(3);
+            assert_eq!(h.app.session.selection, selected);
+            enter(&mut h.app, true).unwrap();
+            h.settle();
+            assert_eq!(h.app.session.selection, selected);
+        }
+    }
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    assert_eq!(h.app.session.undo.len(), undo);
+    assert!(h.app.tool.is_none() && h.app.dialog.is_none());
+}
+
+#[test]
+fn render_workspace_click_modifiers_clear_and_browser_share_selection() {
+    use solidcraft_engine::Sel;
+    let mut h = Harness::new();
+    for (name, x) in [("Left", -30), ("Right", 30)] {
+        h.app.run("solid.box", json!({"corner":[x,0,0],"length":20,"width":20,"height":20,"body_name":name})).unwrap();
+    }
+    enter(&mut h.app, true).unwrap();
+    h.settle();
+    h.app.run("select.filter", json!({"mode":"body"})).unwrap();
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let left = proj.to_screen(solidcraft_engine::geom::Vec3::new(-20.0, 10.0, 20.0)).unwrap();
+    let right = proj.to_screen(solidcraft_engine::geom::Vec3::new(40.0, 10.0, 20.0)).unwrap();
+    h.step(&json!({"click":[left.x,left.y]})).unwrap();
+    assert_eq!(h.app.session.selection, [Sel::Body { name: "Left".into() }]);
+    h.step(&json!({"click":[right.x,right.y],"shift":true})).unwrap();
+    assert_eq!(h.app.session.selection.len(), 2);
+    h.step(&json!({"click":[left.x,left.y],"ctrl":true})).unwrap();
+    assert_eq!(h.app.session.selection, [Sel::Body { name: "Right".into() }]);
+    h.app.preferences.selection_shift_add_only = true;
+    h.step(&json!({"click":[right.x,right.y],"shift":true})).unwrap();
+    assert_eq!(h.app.session.selection, [Sel::Body { name: "Right".into() }]);
+    // A Browser body row writes the same selection and immediately feeds the product overlay.
+    h.step(&json!({"click":{"handle":"row:Left"}})).unwrap();
+    assert_eq!(h.app.session.selection, [Sel::Body { name: "Left".into() }]);
+    assert!(!crate::viewport::build_highlight(&h.app).merged().tris.is_empty());
+    let empty = h.app.viewport.layout.as_ref().unwrap().drawable.left_bottom() + egui::vec2(10.0, -10.0);
+    h.step(&json!({"click":[empty.x,empty.y]})).unwrap();
+    assert!(h.app.session.selection.is_empty());
+    assert!(h.app.viewport.hover.is_none());
+}
+
+#[test]
+fn render_workspace_selection_overlay_never_changes_started_frames_png_or_retained_results() {
+    use solidcraft_engine::Sel;
+    let (mut h, _) = render_pick_sample();
+    let at = product_pick_point(&h);
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let hit = crate::viewport::pick(&h.app, &proj, at).into_iter().next().unwrap();
+    let face = crate::viewport::hit_sel(&hit).unwrap();
+    let first = completed_preview(&mut h, [230, 230, 230]);
+    let clean = h.app.session.render_job_handle(first).unwrap().frame().unwrap().unwrap();
+    let clean_scene = gpu_scene(&solidcraft_engine::product_scene::extract(&h.app.session).unwrap()).unwrap();
+    h.app.run("select.set", json!({"items":[face]})).unwrap();
+    let face_overlay = crate::viewport::build_highlight(&h.app).merged();
+    assert!(!face_overlay.tris.is_empty());
+    h.app.run("select.set", json!({"items":[Sel::Body { name:"Plate".into() }]})).unwrap();
+    let body_overlay = crate::viewport::build_highlight(&h.app).merged();
+    assert!(body_overlay.tris.len() > face_overlay.tris.len(), "Face must only tint the selected face");
+    h.app.viewport.hover = Some(hit);
+    let second = completed_preview(&mut h, [230, 230, 230]);
+    let selected = h.app.session.render_job_handle(second).unwrap().frame().unwrap().unwrap();
+    assert_eq!(clean.png(), selected.png(), "started image job must never capture selection or hover pixels");
+    let after = gpu_scene(&solidcraft_engine::product_scene::extract(&h.app.session).unwrap()).unwrap();
+    assert_eq!(clean_scene.0, after.0);
+    assert_eq!(clean_scene.1.tris, after.1.tris);
+    h.app.render_workspace.view.completed = Some(second);
+    h.app.render_workspace.view.result = true;
+    h.frames(3);
+    h.app.run("select.filter", json!({"mode":"face"})).unwrap();
+    h.step(&json!({"click":{"handle":"render:pick:body"}})).unwrap();
+    assert!(!h.app.ui.pick_bodies && !h.app.ui.pick_components, "result canvas must disable the stage's Pick control");
+    let path = h.dir.join("overlay-free.png");
+    h.app.run("render.export", json!({"job":second,"path":path})).unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), clean.png());
+    assert_eq!(h.app.session.render_job_handle(second).unwrap().frame().unwrap().unwrap().png(), clean.png());
+}
+
+#[test]
+fn render_workspace_pick_filter_rejects_invalid_requests_atomically() {
+    let mut h = Harness::new();
+    let doc = h.app.session.doc.clone();
+    for mode in ["body", "face", "component"] {
+        assert_eq!(h.app.run("select.filter", json!({"mode":mode})).unwrap()["mode"], mode);
+        assert_eq!(h.app.ui.pick_bodies, mode == "body");
+        assert_eq!(h.app.ui.pick_components, mode == "component");
+    }
+    for request in [json!({}), json!({"mode":"edge"}), json!({"mode":"body","extra":true})] {
+        assert!(h.app.run("select.filter", request).is_err());
+        assert!(!h.app.ui.pick_bodies && h.app.ui.pick_components);
+    }
+    assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
+    assert!(h.app.session.undo.is_empty());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn render_workspace_product_pass_draws_only_requested_face_or_body_overlay() {
+    let mut app = nav_app(true, "fusion", crate::prefs::OrbitAround::ViewCentre);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(256.0, 256.0));
+    app.viewport.rect = Some(rect);
+    let proj = crate::viewport::projection(&app, rect);
+    let hit = crate::viewport::pick(&app, &proj, rect.center()).into_iter().find(|h| matches!(h, crate::viewport::Hit::Face { .. })).unwrap();
+    let face = crate::viewport::hit_sel(&hit).unwrap();
+    let scene = solidcraft_engine::product_scene::extract(&app.session).unwrap();
+    let gpu = gpu_scene(&scene).unwrap().1;
+    let radius = scene.bounds.diagonal().max(10.0) + scene.bounds.center().dist(app.cam.target);
+    let eye = app.cam.eye().to_f32();
+    let camera = app.cam;
+    let draw = |overlay| {
+        crate::gpu::render_product_offscreen(
+            gpu.clone(),
+            overlay,
+            camera.view_proj(1.0, radius).to_f32(),
+            camera.back().to_f32(),
+            [eye[0], eye[1], eye[2], 1.0],
+            256,
+            false,
+        )
+    };
+    let Some(clean) = draw(None) else {
+        eprintln!("skipping: no GPU adapter for product overlay pixels");
+        return;
+    };
+    app.run("select.set", json!({"items":[face]})).unwrap();
+    let face_pixels = draw(Some(crate::viewport::build_highlight(&app))).unwrap();
+    app.run("select.set", json!({"items":[{"type":"body","name":"Product"}]})).unwrap();
+    let body_pixels = draw(Some(crate::viewport::build_highlight(&app))).unwrap();
+    let changed = |image: &[u8]| clean.as_chunks::<4>().0.iter().zip(image.as_chunks::<4>().0).filter(|(a, b)| a != b).count();
+    assert!(changed(&face_pixels) > 100, "Face overlay must reach the product pass");
+    assert!(changed(&body_pixels) > changed(&face_pixels) + 100, "Face must leave the other faces untouched");
+}
+
+#[test]
+fn render_workspace_pick_projection_matches_orthographic_and_custom_perspective_camera() {
+    use egui::{Event, Modifiers, PointerButton};
+    use solidcraft_engine::geom::Vec3;
+    for fov in [0.0, 0.6, 1.1] {
+        let mut app = nav_app(true, "fusion", crate::prefs::OrbitAround::ViewCentre);
+        app.cam.fov = fov;
+        let ctx = crate::fonts::test_context();
+        let mut time = 0.0;
+        nav_frame(&mut app, &ctx, true, &mut time, Modifiers::NONE, vec![]);
+        let rect = app.viewport.rect.unwrap();
+        let proj = crate::viewport::projection(&app, rect);
+        assert_eq!(proj.cam.fov, fov);
+        let (x, y, _) = app.cam.to_screen(Vec3::new(20.0, 15.0, 20.0), f64::from(rect.width()), f64::from(rect.height()), 100.0).unwrap();
+        let pos = rect.min + egui::vec2(x as f32, y as f32);
+        nav_frame(&mut app, &ctx, true, &mut time, Modifiers::NONE, vec![Event::PointerMoved(pos)]);
+        assert!(matches!(app.viewport.hover, Some(crate::viewport::Hit::Face { .. })), "FOV {fov}");
+        for pressed in [true, false] {
+            nav_frame(
+                &mut app,
+                &ctx,
+                true,
+                &mut time,
+                Modifiers::NONE,
+                vec![Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE }],
+            );
+        }
+        assert!(matches!(app.session.selection.as_slice(), [solidcraft_engine::Sel::Face { body, .. }] if body == "Product"), "FOV {fov}");
+    }
+}
+
+#[test]
+fn render_workspace_component_filter_keeps_nested_repeated_occurrences_distinct() {
+    use crate::viewport::{Hit, candidate};
+    use solidcraft_engine::{Sel, geom::Vec3};
+    let mut h = Harness::new();
+    let parent = h.app.run("component.create", json!({"name":"Parent"})).unwrap();
+    let child = h.app.run("component.create", json!({"name":"Part"})).unwrap();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Solid"})).unwrap();
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    let second = h.app.run("occurrence.copy", json!({"occurrence":parent["occurrence"],"translate":[50,0,0]})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    h.app.run("select.filter", json!({"mode":"component"})).unwrap();
+    for top in [parent["occurrence"].as_u64().unwrap(), second["occurrence"].as_u64().unwrap()] {
+        let path = vec![top, child["occurrence"].as_u64().unwrap()];
+        let names = h.app.session.occurrence_bodies(&path, true).unwrap();
+        assert_eq!(names.len(), 1);
+        let hit = Hit::Face { body: names[0].clone(), index: 0, point: Vec3::ZERO };
+        assert_eq!(candidate(&h.app, &[hit]).unwrap().1, Sel::Occurrence { path });
     }
 }

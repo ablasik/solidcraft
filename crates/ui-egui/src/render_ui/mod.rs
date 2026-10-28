@@ -68,23 +68,29 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
     use crate::render_workspace::Stage;
     match app.render_workspace.view.stage {
         Stage::Look => {
-            let disabled = ui.add_enabled_ui(false, |ui| {
-                ui_kit::StageBar::caption(ui, crate::i18n::tr_label("Pick"));
-                let mut selected = 0;
-                ui_kit::segmented(
+            ui_kit::StageBar::caption(ui, app.tr("render.pick_label"));
+            let modes = ["body", "face", "component"];
+            let mut selected = modes.iter().position(|mode| *mode == current_pick_mode(app)).unwrap_or(0);
+            let pick = ui.add_enabled_ui(!crate::render_workspace::result_active(app), |ui| {
+                if ui_kit::segmented(
                     ui,
                     &mut selected,
-                    &[crate::i18n::tr_label("Body"), crate::i18n::tr_label("Face"), crate::i18n::tr_label("Component")],
+                    &[app.tr("render.pick_body"), app.tr("render.pick_face"), app.tr("render.pick_component")],
                     ui_kit::Segments {
+                        targets: &["render:pick:body", "render:pick:face", "render:pick:component"],
                         icons: &["body", "surface", "component"],
                         workspace_accent: true,
                         dense: true,
                         intrinsic: true,
                         ..Default::default()
                     },
-                );
+                ) && let Some(mode) = modes.get(selected)
+                {
+                    let _ = app.run("select.filter", serde_json::json!({"mode":mode}));
+                }
             });
-            disabled.response.on_disabled_hover_text(crate::i18n::tr_label("Product picking is not supported yet."));
+            crate::scenario::publish_target("render:pick", pick.response.rect);
+            pick.response.on_hover_text(app.tr("render.pick_help"));
             ui_kit::StageBar::tool_gap(ui);
             for (id, label, icon) in
                 [("appearance.paint", "render.paint_label", "appearance"), ("appearance.pick_up", "render.pick_up_label", "select")]
@@ -101,7 +107,8 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
             ui_kit::StageBar::separator(ui);
-            ui_kit::StageBar::note(ui, app.tr("render.stage_preview_note")).on_hover_text(app.tr("render.preview_lighting_help"));
+            let note = ui_kit::StageBar::note(ui, app.tr("render.stage_preview_note")).on_hover_text(app.tr("render.preview_lighting_help"));
+            crate::scenario::publish_rect("render:preview_note", note.rect);
             if ui_kit::StageBar::icon_action(ui, "settings", app.tr("render.preview_image_settings_help")).clicked() {
                 app.start("render.settings.get");
             }
@@ -154,6 +161,16 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     crate::viewport::nav_bar(app, ui, viewport);
     shots_pill(app, ui, free);
+}
+
+fn current_pick_mode(app: &SolveApp) -> &'static str {
+    if app.ui.pick_components {
+        "component"
+    } else if app.ui.pick_bodies {
+        "body"
+    } else {
+        "face"
+    }
 }
 
 fn shots_pill(app: &mut SolveApp, ui: &mut egui::Ui, free: Rect) {

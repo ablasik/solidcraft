@@ -80,6 +80,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("select.set", "Select", select_set).icon("select")
         .noundo()
         .params("items: [{type: body|edge|face|feature|sketch_curve|sketch_point|profile, …}], add?: bool"),
+    CommandSpec::new("select.filter", "Selection filter", select_filter).icon("select").noundo().doc_only()
+        .params("mode: body|face|component → validated UI pick granularity; headless echo only, no document edits or undo"),
     CommandSpec::new("select.clear", "Clear Selection", select_clear).icon("select").noundo(),
 ];
 
@@ -1197,6 +1199,19 @@ fn select_set(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.revision += 1;
     Ok(json!({"selected": s.selection.len()}))
+}
+
+fn select_filter(_s: &mut Session, p: &Value) -> Result<Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        mode: String,
+    }
+    let request: Request = serde_json::from_value(p.clone()).map_err(|e| bad("select.filter", e.to_string()))?;
+    if !matches!(request.mode.as_str(), "body" | "face" | "component") {
+        return Err(bad("select.filter", "mode must be body, face or component"));
+    }
+    Ok(json!({"mode": request.mode}))
 }
 
 fn select_clear(s: &mut Session, _p: &Value) -> Result<Value> {

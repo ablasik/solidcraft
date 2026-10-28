@@ -3242,6 +3242,7 @@ impl Renderer {
         if cb.product {
             res.product.take(device, queue, &res.uniform, &res.uniform_bgl, cb.key, &cb.slot, None, false);
             res.product.sort_glass(queue, cb.back);
+            res.highlight.take(device, queue, &res.uniform, &res.uniform_bgl, cb.hl_key, &cb.hl_slot, None, false);
             queue.write_buffer(&res.uniform, 0, &uniform_bytes(cb, cb.size_px[0], cb.size_px[1], res.linear_out, res.target.reversed_depth()));
             // The product picture goes through the window's pass too: offscreen when the targets
             // differ or it is drawn smaller, else straight into the window's pass.
@@ -3434,7 +3435,7 @@ impl Renderer {
             }
         };
         let (m, sk, h, pv) = if cb.product {
-            (&res.product, &res.empty, &res.empty, &res.empty)
+            (&res.product, &res.empty, &res.highlight, &res.empty)
         } else if cb.pv_hide {
             (&res.model, &res.sketch, &res.highlight, &res.empty)
         } else {
