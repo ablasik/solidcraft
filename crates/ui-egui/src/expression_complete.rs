@@ -121,6 +121,10 @@ pub(crate) fn showing(ctx: &egui::Context, editor: egui::Id) -> bool {
 
 pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut String) -> bool {
     let ctx = ui.ctx().clone();
+    // The field's right-click menu is open (#8875): the suggestions wait rather than cover it.
+    if ui_kit::text_menu_open(&ctx, resp.id) {
+        return false;
+    }
     // A press on a suggestion takes the focus from the editor before the list can see it
     // clicked, and the editor then gives up what was typed (#3257). The press picks the
     // suggestion under it, and the editor gets its focus back below.

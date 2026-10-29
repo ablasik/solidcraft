@@ -1,0 +1,20 @@
+{
+  "ar": { "ui.select_all": "تحديد الكل" },
+  "de": { "ui.select_all": "Alles auswählen" },
+  "en": { "ui.select_all": "Select All" },
+  "es": { "ui.select_all": "Seleccionar todo" },
+  "fr": { "ui.select_all": "Tout sélectionner" },
+  "he": { "ui.select_all": "בחירת הכול" },
+  "it": { "ui.select_all": "Seleziona tutto" },
+  "ja": { "ui.select_all": "すべて選択" },
+  "ko": { "ui.select_all": "모두 선택" },
+  "nl": { "ui.select_all": "Alles selecteren" },
+  "pl": { "ui.select_all": "Zaznacz wszystko" },
+  "pt-BR": { "ui.select_all": "Selecionar tudo" },
+  "ru": { "ui.select_all": "Выделить всё" },
+  "tr": { "ui.select_all": "Tümünü seç" },
+  "uk": { "ui.select_all": "Виділити все" },
+  "vi": { "ui.select_all": "Chọn tất cả" },
+  "zh": { "ui.select_all": "全选" },
+  "zh-TW": { "ui.select_all": "全選" }
+}

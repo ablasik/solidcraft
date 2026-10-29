@@ -997,9 +997,10 @@ impl Session {
     /// Pin the name of every body the features made, as if the body had been renamed to it, and
     /// reserve the `Body<N>` names, so that no later command renames a body or hands its number
     /// to another. It is part of the command that made the bodies. A design saved before names
-    /// were pinned is pinned by its first command that changes it, with the names it has after
-    /// that command: when that command is itself a delete, reorder, suppress or rollback, the
-    /// later counted bodies are renumbered once, as they always were.
+    /// were pinned is pinned as it opens ([`Self::opened_at`]), with the names it was saved
+    /// with; one made in memory ([`Self::new`]) by its first command that changes it, with the
+    /// names it has after that command (a delete, reorder, suppress or rollback renumbers the
+    /// later counted bodies once).
     fn pin_body_names(&mut self) {
         if self.model.is_stale() {
             return;

@@ -338,21 +338,24 @@ pub(crate) fn delete_button(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) {
     }
 }
 
-/// The features from timeline position `from` to the end.
-fn features_from(app: &SolveApp, from: usize) -> Vec<u64> {
-    app.session.doc.features.iter().skip(from).map(|f| f.id).collect()
+/// The features from design position `from` to the end, only the `shown` positions (ascending)
+/// when the timeline shows some of the design's features.
+fn features_from(app: &SolveApp, from: usize, shown: Option<&[usize]>) -> Vec<u64> {
+    let features = app.session.doc.features.iter().enumerate().skip(from);
+    features.filter(|(i, _)| shown.is_none_or(|shown| shown.binary_search(i).is_ok())).map(|(_, f)| f.id).collect()
 }
 
-/// In the menu of a feature after the history marker (feature `id` at timeline position
-/// `index`): delete every feature after the marker, labelled with how many, in one delete
-/// through [`delete_features`] so the confirmation still lists what would fail. Not offered
-/// before the marker, nor when the menu acts on several selected features: an entry that acts
-/// partly on the selection and partly beyond it is hard to read.
-pub(crate) fn delete_after_marker_button(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, index: usize, marker: usize) {
+/// In the menu of a feature after the history marker (feature `id` at design position
+/// `index`, `marker` a design position too): delete every feature after the marker, only the
+/// `shown` ones when the timeline is filtered to a component, labelled with how many, in one
+/// delete through [`delete_features`] so the confirmation still lists what would fail. Not
+/// offered before the marker, nor when the menu acts on several selected features: an entry
+/// that acts partly on the selection and partly beyond it is hard to read.
+pub(crate) fn delete_after_marker_button(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, index: usize, marker: usize, shown: Option<&[usize]>) {
     if index < marker || menu_targets(app, id).len() > 1 {
         return;
     }
-    let ids = features_from(app, marker);
+    let ids = features_from(app, marker, shown);
     let key = if ids.len() == 1 { "timeline.delete_after_marker_one" } else { "timeline.delete_after_marker_other" };
     let label = crate::i18n::format(key, &[("count", &ids.len().to_string())]);
     if crate::context_menu::button(ui, &label, "delete").clicked() {
@@ -837,6 +840,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                 }
                 x = br.right() + 8.0;
             }
+            let design_marker = marker;
             let marker = shown.iter().position(|i| *i >= marker).unwrap_or(shown.len());
             let feats: Vec<_> = shown
                 .iter()
@@ -1007,7 +1011,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     message_button(app, ui, *id);
                     ui.separator();
                     delete_button(app, ui, *id);
-                    delete_after_marker_button(app, ui, *id, i, marker);
+                    delete_after_marker_button(app, ui, *id, design_position(&shown, i, n), design_marker, Some(&shown));
                 });
                 x += 32.0;
             }
@@ -1947,6 +1951,37 @@ mod tests {
             h.app.run("edit.undo", json!({})).unwrap();
             assert_eq!(names(&h), ["First", "Second", "Third"], "left: {left}");
         }
+    }
+
+    /// With the timeline showing one component's features, the entry counts and deletes that
+    /// component's features after the marker, found by their positions in the design: none of
+    /// another component's and none before the marker (#8860).
+    #[test]
+    fn after_the_marker_a_shown_component_deletes_only_its_features() {
+        let mut h = Harness::new();
+        h.app.run("component.create", json!({"name": "C1"})).unwrap();
+        h.app.run("component.activate", json!({"component": 0})).unwrap();
+        h.app.run("component.create", json!({"name": "C2"})).unwrap();
+        for (k, name) in ["B1", "B2", "B3", "B4", "B5", "B6"].into_iter().enumerate() {
+            h.app.run("component.activate", json!({"component": if k % 2 == 0 { "C1" } else { "C2" }})).unwrap();
+            h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20 * k, 0, 0], "name": name})).unwrap();
+        }
+        let before = names(&h);
+        h.app.run("timeline.roll_to", json!({"feature": "B2"})).unwrap();
+        h.app.run("component.activate", json!({"component": "C1"})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.settle();
+        h.frames(4);
+        h.step(&json!({"click": {"handle": "timeline:B1"}, "button": "right"})).unwrap();
+        assert!(h.widget("Delete 2 Features After History Marker").is_none(), "B1 is before the marker");
+        h.step(&json!({"key": "Escape"})).unwrap();
+        h.step(&json!({"click": {"handle": "timeline:B3"}, "button": "right"})).unwrap();
+        h.step(&json!({"widget": "Delete 2 Features After History Marker"})).unwrap();
+        h.settle();
+        let kept: Vec<String> = before.iter().filter(|n| *n != "B3" && *n != "B5").cloned().collect();
+        assert_eq!(names(&h), kept, "B2 is before the marker, B4 and B6 are C2's");
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(names(&h), before);
     }
 
     /// Deleting a sketch together with the extrude that uses it asks nothing: the extrude is

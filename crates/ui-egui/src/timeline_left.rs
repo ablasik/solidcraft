@@ -1579,7 +1579,7 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
         selection_actions(app, ui, groups, true);
         ui.separator();
         delete_button(app, ui, id);
-        delete_after_marker_button(app, ui, id, index, marker);
+        delete_after_marker_button(app, ui, id, index, marker, None);
     });
     if edit {
         rows.edit = Some(id);
