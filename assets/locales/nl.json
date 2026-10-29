@@ -4068,6 +4068,7 @@
   "ui.select": "Selecteren",
   "ui.selectOther": "Overige selecteren…",
   "ui.selectTangentChain": "Tangentiële keten selecteren",
+  "ui.select_all": "Alles selecteren",
   "ui.selection": "Selectie",
   "ui.selection_modifiers": "Selectiemodificatoren",
   "ui.selection_shift_add_only": "Shift+klik voegt toe zonder te verwijderen",

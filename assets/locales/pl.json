@@ -2118,6 +2118,7 @@
   "ui.select": "Zaznacz",
   "ui.selectOther": "Wybierz inny…",
   "ui.selectTangentChain": "Zaznacz łańcuch styczny",
+  "ui.select_all": "Zaznacz wszystko",
   "ui.selection": "Zaznaczenie",
   "ui.selection_modifiers": "Modyfikatory zaznaczania",
   "ui.selection_shift_add_only": "Shift+kliknięcie tylko dodaje",

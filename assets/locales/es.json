@@ -3449,6 +3449,7 @@
   "ui.select": "Seleccionar",
   "ui.selectOther": "Seleccionar otro…",
   "ui.selectTangentChain": "Seleccionar cadena tangente",
+  "ui.select_all": "Seleccionar todo",
   "ui.selection": "Selección",
   "ui.selection_modifiers": "Modificadores de selección",
   "ui.selection_shift_add_only": "Mayús+clic añade sin quitar",
