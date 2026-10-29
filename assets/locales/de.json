@@ -3571,6 +3571,7 @@
   "ui.pan_zoom_orbit": "Verschieben, zoomen, umkreisen",
   "ui.parallel": "Parallel",
   "ui.parameters": "Parameter",
+  "ui.part_size_needs_a_part": "Wählen Sie ein eingefügtes Standardbauteil (Schraube, Mutter, Scheibe oder Stift) aus, um seine Größe zu ändern. Einen Körper vergrößern oder verkleinern Sie mit Skalieren.",
   "ui.part_size_shared": "Baut das Teil neu auf und ersetzt alle hinzugefügten Merkmale. Alle Vorkommen dieser Komponente werden aktualisiert.",
   "ui.paste": "Einfügen",
   "ui.path": "Pfad",

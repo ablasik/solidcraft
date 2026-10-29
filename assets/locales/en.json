@@ -4222,6 +4222,7 @@
   "ui.pan_zoom_orbit": "Pan, zoom, orbit",
   "ui.parallel": "Parallel",
   "ui.parameters": "Parameters",
+  "ui.part_size_needs_a_part": "Select an inserted standard part (a screw, nut, washer or pin) to change its size. To make a body larger or smaller, use Scale.",
   "ui.part_size_shared": "Rebuilds the part, replacing any added features. All occurrences of this component update.",
   "ui.paste": "Paste",
   "ui.path": "Path",

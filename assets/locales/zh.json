@@ -4222,6 +4222,7 @@
   "ui.pan_zoom_orbit": "平移、缩放、环绕",
   "ui.parallel": "平行",
   "ui.parameters": "参数",
+  "ui.part_size_needs_a_part": "请选择已插入的标准零件（螺钉、螺母、垫圈或销）以更改其尺寸。要放大或缩小实体，请使用缩放。",
   "ui.part_size_shared": "重新生成零件并替换额外添加的特征。此零部件的所有实例都会更新。",
   "ui.paste": "粘贴",
   "ui.path": "路径",

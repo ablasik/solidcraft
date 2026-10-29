@@ -3954,6 +3954,7 @@
   "ui.pan_zoom_orbit": "Pannen, zoomen, roteren",
   "ui.parallel": "Evenwijdig",
   "ui.parameters": "Parameters",
+  "ui.part_size_needs_a_part": "Selecteer een ingevoegd standaardonderdeel (een schroef, moer, sluitring of pen) om de grootte te wijzigen. Gebruik Schalen om een lichaam groter of kleiner te maken.",
   "ui.part_size_shared": "Bouwt het onderdeel opnieuw op en vervangt alle toegevoegde kenmerken. Alle voorkomens van dit component worden bijgewerkt.",
   "ui.paste": "Plakken",
   "ui.path": "Pad",

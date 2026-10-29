@@ -4222,6 +4222,7 @@
   "ui.pan_zoom_orbit": "Dời góc nhìn, thu phóng, xoay quanh tâm",
   "ui.parallel": "Song song",
   "ui.parameters": "Bảng tham số",
+  "ui.part_size_needs_a_part": "Hãy chọn một chi tiết tiêu chuẩn đã chèn (vít, đai ốc, vòng đệm hoặc chốt) để đổi kích thước. Để phóng to hoặc thu nhỏ một thân khối, hãy dùng Thay đổi tỷ lệ.",
   "ui.part_size_shared": "Dựng lại chi tiết, thay thế mọi tính năng đã thêm. Tất cả các lần xuất hiện của chi tiết này đều được cập nhật.",
   "ui.paste": "Dán",
   "ui.path": "Đường dẫn",
