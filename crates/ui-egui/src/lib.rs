@@ -1014,6 +1014,7 @@ impl SolveApp {
             self.preferences = p;
         }
         // Before a design given at start opens: its paths follow the network preferences.
+        prefs::sync_surface_analysis(self);
         prefs::apply_network(&self.preferences);
         // Before a file given at start opens: the largest file it may be (#4086).
         prefs::apply_file_limits(&self.preferences);
@@ -1131,6 +1132,13 @@ impl SolveApp {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
                 "view.next_tab" | "view.previous_tab" => documents::cycle(self, id == "view.next_tab"),
+                // An edit OK'd on a feature behind the history marker changes nothing in the view:
+                // say why, or the edit looks as if it had silently failed (#8100).
+                "timeline.redefine" if v.get("rolled_back").and_then(Value::as_bool) == Some(true) => {
+                    let feature = v.get("feature").and_then(Value::as_u64).and_then(|f| self.session.doc.feature(f));
+                    let name = feature.map(|f| f.name.clone()).unwrap_or_default();
+                    self.set_status(i18n::format("timeline.edited_rolled_back", &[("name", &name)]), false);
+                }
                 _ => {}
             }
             if id == "view.render_inspector" {
@@ -1368,6 +1376,24 @@ impl SolveApp {
         self.start_at(id, None);
     }
 
+    /// Insert Design's file picker: another design becomes a linked component; a STEP or mesh
+    /// file picked here is inserted the way Insert STEP or Insert Mesh would (#1240).
+    pub(crate) fn pick_design_to_insert(&mut self) {
+        self.pick_open(|app, path| {
+            let Some(path) = path else { return };
+            if solidcraft_engine::io::is_design_path(&path) {
+                // Picked in the file dialog: its server is the user's choice.
+                let hosts: Vec<String> = solidcraft_engine::io::vfs::network_host(&path).into_iter().collect();
+                let inserted = solidcraft_engine::io::vfs::allowing_hosts(&hosts, || app.run("component.insert_design", json!({ "path": path })));
+                if inserted.is_ok() {
+                    app.fit_view();
+                }
+            } else {
+                app.insert_path_async(&path);
+            }
+        });
+    }
+
     /// Start an interactive command with its menu anchored below the invoking button.
     pub(crate) fn start_at(&mut self, id: &str, opener: Option<egui::Rect>) {
         self.start_with_variant_memory(id, true, opener);
@@ -1582,21 +1608,17 @@ impl SolveApp {
             return;
         }
         if id == "component.insert_design" {
-            // Another design becomes a linked component; a STEP or mesh file picked here is
-            // inserted the way Insert STEP or Insert Mesh would (#1240).
-            self.pick_open(|app, path| {
-                let Some(path) = path else { return };
-                if solidcraft_engine::io::is_design_path(&path) {
-                    // Picked in the file dialog: its server is the user's choice.
-                    let hosts: Vec<String> = solidcraft_engine::io::vfs::network_host(&path).into_iter().collect();
-                    let inserted = solidcraft_engine::io::vfs::allowing_hosts(&hosts, || app.run("component.insert_design", json!({ "path": path })));
-                    if inserted.is_ok() {
-                        app.fit_view();
-                    }
+            // The designs open in other tabs first, each a click away, then Browse… (#8570).
+            if self.preferences.insert_lists_open_designs && !documents::other_designs(self).is_empty() {
+                if let Some(rect) = opener {
+                    context_menu::toggle_for(self, rect, rect.left_bottom(), context_menu::Target::InsertDesign);
                 } else {
-                    app.insert_path_async(&path);
+                    let at = self.viewport.rect.map(|rect| rect.center()).unwrap_or(egui::pos2(300.0, 200.0));
+                    context_menu::open_for(self, at, context_menu::Target::InsertDesign);
                 }
-            });
+            } else {
+                self.pick_design_to_insert();
+            }
             return;
         }
         if id == "component.relink" {

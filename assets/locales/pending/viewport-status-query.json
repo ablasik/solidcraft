@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "cmd.view.status_items": "عناصر حالة منفذ العرض"
+  },
+  "de": {
+    "cmd.view.status_items": "Ansichtsstatus-Elemente"
+  },
+  "en": {
+    "cmd.view.status_items": "Viewport Status Items"
+  },
+  "he": {
+    "cmd.view.status_items": "פריטי מצב תצוגה"
+  },
+  "ja": {
+    "cmd.view.status_items": "ビューポートの状態項目"
+  },
+  "ko": {
+    "cmd.view.status_items": "뷰포트 상태 항목"
+  },
+  "vi": {
+    "cmd.view.status_items": "Các mục trạng thái khung nhìn"
+  },
+  "zh": {
+    "cmd.view.status_items": "视口状态项"
+  }
+}

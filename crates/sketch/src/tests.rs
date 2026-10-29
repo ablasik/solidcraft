@@ -1398,3 +1398,43 @@ fn a_fillet_folded_through_flat_is_refused_like_a_fold() {
     }
     assert!(refused.is_some_and(|s| (7..=9).contains(&s)), "refused at {refused:?}");
 }
+
+/// #8639: two rounded rectangles drawn as closed control-point splines with the same straight
+/// sides and different corners (as a DXF can carry an outline twice). Where the sides lie on each
+/// other the two curves' sampled pieces end a few millionths apart; every profile must still close
+/// within the 1e-6 a solid needs, or the region around them can't be extruded or shown.
+#[test]
+fn rounded_rectangles_sharing_their_sides_leave_every_profile_closed() {
+    // Control points of a rounded rectangle 17.6 by 17.6, corner `r`, sides split in thirds.
+    fn rounded(sk: &mut Sketch, r: f64) {
+        let (lo, hi) = (0.0, 17.6);
+        let k = r * 0.448;
+        let mut pts = Vec::new();
+        for (cx, cy, dx, dy) in [(hi, hi, 1.0, 1.0), (hi, lo, 1.0, -1.0), (lo, lo, -1.0, -1.0), (lo, hi, -1.0, 1.0)] {
+            // Into the corner along the side, round it, out along the next side (clockwise).
+            let (a, b) = if dx * dy > 0.0 { ((cx - dx * r, cy), (cx, cy - dy * r)) } else { ((cx, cy - dy * r), (cx - dx * r, cy)) };
+            let (ka, kb) = if dx * dy > 0.0 { ((cx - dx * k, cy), (cx, cy - dy * k)) } else { ((cx, cy - dy * k), (cx - dx * k, cy)) };
+            pts.extend([v(a.0, a.1), v(ka.0, ka.1), v(kb.0, kb.1), v(b.0, b.1)]);
+            // Two more points along the next side, so it is straight.
+            let (nx, ny) = if dx * dy > 0.0 { (cx, cy - dy * (hi - r)) } else { (cx - dx * (hi - r), cy) };
+            let t = |f: f64| v(b.0 + (nx - b.0) * f, b.1 + (ny - b.1) * f);
+            pts.extend([t(1.0 / 3.0), t(2.0 / 3.0)]);
+        }
+        let mut ids: Vec<usize> = pts.iter().map(|p| sk.add_point(*p, None).unwrap()).collect();
+        ids.push(ids[0]);
+        sk.add_curve(CurveKind::Spline { pts: ids, control: true, degree: 3, periodic: false }, None).unwrap();
+    }
+    let mut sk = Sketch::new();
+    rounded(&mut sk, 0.55);
+    rounded(&mut sk, 0.8);
+    sk.add_circle(v(8.8, 8.8), 10.0, None, None).unwrap();
+    let ps = find_profiles(&sk);
+    assert!(!ps.is_empty());
+    for p in &ps {
+        for lp in std::iter::once(&p.region.outer).chain(&p.region.holes) {
+            let n = lp.segs.len();
+            let gap = (0..n).map(|i| lp.segs[i].end().dist(lp.segs[(i + 1) % n].start())).fold(0.0, f64::max);
+            assert!(lp.is_closed(1e-6), "a loop of {:?} is open by {gap:.3e}", crate::distinct_curves(&p.outer_curves));
+        }
+    }
+}

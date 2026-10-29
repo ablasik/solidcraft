@@ -199,6 +199,17 @@ to prefer a line midpoint instead; hold Ctrl/Cmd or Alt/Option (the default supp
 to stop snapping for that gesture. Scripts pass `"x:<curve>+<curve>:x,y"` as a point
 argument, the same way `"mid:<line>"` and `"on:<curve>:x,y"` work.
 
+With Preferences › Sketch › **Line up with other sketch points while drawing** turned on (it's
+off by default), the pointer also **lines up** while drawing with the sketch's points on screen:
+line ends, centres, standalone points and the origin, and the shape's own earlier points. It
+lines up on both axes at once, level with one point and plumb with another, so a rectangle drawn
+beside another can take its height from one and its width from a point below. A line kept
+horizontal or vertical from its start can still end under or beside another point. A dotted guide
+runs from each point it lines up with, and the snap hint shows **H**, **V** or **H+V**. The click
+keeps the alignment: the new point gets a Horizontal or Vertical constraint with each sketch
+point it lined up with, in the shape's undo step, unless the sketch already sets it. With the
+preference off, drawing lines up only with the previous point, one axis at a time.
+
 Enable **3D Sketch** in the Sketch Palette to draw lines, fit splines and points off the plane.
 While placing these points, you can snap to points on other visible sketches. For a bridge
 line, start Line and click an endpoint on each source sketch; each endpoint uses its source

@@ -182,6 +182,41 @@ changed it meanwhile. Compare both values, and export when either differs from t
 answer. The same answer comes from `engine.execute` `document.revision` (and so from scripts and
 MCP `execute`), which waits its turn behind design changes like any command.
 
+`engine.execute` with `view.status_items` and `{}` reads the persistent viewport effects without
+evaluating the model or changing the design, undo history or view revision. It returns
+`{items: [...]}` in oldest activation order. Each item contains a stable slot `id`
+(`surface_analysis`, `section`, or the legacy independent `continuity`), `kind`, source `command`, structured `setting`, `has_key`
+and a `clear: {command, params}` request that can be executed unchanged. Settings retain numbers:
+lengths use millimetres, Draft's `angle_deg` uses degrees, directions are normalised, and
+Continuity's `edge_count` counts the seams currently kept for shading. Labels and units are
+formatted by clients. `engine.describe {command: "view.status_items"}` exposes both schemas.
+
+By default, surface analyses, including Continuity, share one slot; successful replacement keeps that
+slot's position and ends the previous analysis. Section stacks independently. Clearing and
+re-enabling a slot makes it newest. Ordering metadata belongs only to the running session;
+effects and ordering are not saved in the design. Existing analysis clear semantics apply:
+any surface-shading command with `{clear: true}` clears the active surface shading, whereas
+Continuity clears its seam records. Section clear never clears an analysis.
+
+The standard **Graphics → Viewport → Use a single surface analysis** preference is
+`single_surface_analysis` (default `true`). `ui.prefs {"single_surface_analysis": false}` restores
+the legacy behavior: surface shading and Continuity remain independently active and clearable,
+and `view.status_items` faithfully lists both, using a separate stable `continuity` ID. Together
+with Section there are at most three slots. Turning the preference back on keeps the last
+successfully started or changed analysis at the oldest analysis-group position beside Section.
+Queries never normalize state. Graphics Restore Defaults restores `true`; other page resets
+leave it alone. It applies immediately to all open designs without document edits or undo.
+Cancel restores the opening preference value, but does not restart an analysis already stopped
+by switching to single mode. Run that analysis again to restore coexistence after cancelling.
+Successful Continuity measurements with no seams create no item: legacy mode keeps existing
+surface shading; single mode ends the previous analysis as for other successful replacements.
+
+Headless SDK clients use `Session::set_single_surface_analysis(bool)` and
+`Session::single_surface_analysis()`. Configuration survives scratch/new/open session lifecycle;
+effects and chronology still follow their existing transient lifecycle. The policy is an
+application preference/session setting, never saved design-format data. Policy changes update
+the view revision only when visible effects or their declarations change.
+
 A client need not ask again and again: after `control.subscribe` on its connection, the app
 sends it a line whenever the active design changes (#6985):
 

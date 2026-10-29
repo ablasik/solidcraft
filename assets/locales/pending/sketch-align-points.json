@@ -1,0 +1,34 @@
+{
+  "en": {
+    "prefs.sketch_align_points": "Line up with other sketch points while drawing",
+    "prefs.sketch_align_points_note": "While drawing, a point lines up horizontally with one sketch point and vertically with another at the same time, with a dotted guide, and the click keeps both alignments. Off: only with the previous point, one axis at a time."
+  },
+  "ar": {
+    "prefs.sketch_align_points": "المحاذاة مع نقاط الرسم الأخرى أثناء الرسم",
+    "prefs.sketch_align_points_note": "أثناء الرسم، تتحاذى النقطة أفقيًا مع نقطة رسم وعموديًا مع نقطة أخرى في الوقت نفسه، مع خط إرشادي منقط، وتحتفظ النقرة بالمحاذاتين. عند الإيقاف: مع النقطة السابقة فقط، محور واحد في كل مرة."
+  },
+  "de": {
+    "prefs.sketch_align_points": "Beim Zeichnen an anderen Skizzenpunkten ausrichten",
+    "prefs.sketch_align_points_note": "Beim Zeichnen richtet sich ein Punkt zugleich waagerecht an einem Skizzenpunkt und senkrecht an einem anderen aus, mit einer gepunkteten Hilfslinie; der Klick behält beide Ausrichtungen. Aus: nur am vorherigen Punkt, jeweils eine Achse."
+  },
+  "he": {
+    "prefs.sketch_align_points": "יישור לנקודות סקיצה אחרות בזמן השרטוט",
+    "prefs.sketch_align_points_note": "בזמן השרטוט, נקודה מתיישרת אופקית עם נקודת סקיצה אחת ואנכית עם אחרת בו-זמנית, עם קו עזר מנוקד, והלחיצה שומרת את שני היישורים. כבוי: רק עם הנקודה הקודמת, ציר אחד בכל פעם."
+  },
+  "ja": {
+    "prefs.sketch_align_points": "描画中にほかのスケッチ点に揃える",
+    "prefs.sketch_align_points_note": "描画中、点が一つのスケッチ点と水平に、別の点と垂直に同時に揃い、点線のガイドが表示されます。クリックすると両方の整列が保持されます。オフ: 直前の点にのみ、一度に一方向だけ揃えます。"
+  },
+  "ko": {
+    "prefs.sketch_align_points": "그리는 동안 다른 스케치 점에 맞추기",
+    "prefs.sketch_align_points_note": "그리는 동안 점이 한 스케치 점과 수평으로, 다른 점과 수직으로 동시에 맞춰지고 점선 안내선이 표시됩니다. 클릭하면 두 정렬이 모두 유지됩니다. 끄기: 이전 점에만, 한 번에 한 축씩 맞춥니다."
+  },
+  "vi": {
+    "prefs.sketch_align_points": "Căn theo các điểm phác thảo khác khi vẽ",
+    "prefs.sketch_align_points_note": "Khi vẽ, một điểm được căn ngang theo một điểm phác thảo và căn dọc theo điểm khác cùng lúc, kèm đường dẫn chấm; cú nhấp giữ cả hai ràng buộc căn. Tắt: chỉ căn theo điểm trước, mỗi lần một trục."
+  },
+  "zh": {
+    "prefs.sketch_align_points": "绘制时与其他草图点对齐",
+    "prefs.sketch_align_points_note": "绘制时，点可同时与一个草图点水平对齐、与另一个草图点竖直对齐，并显示虚线参考线；单击后保留两个对齐约束。关闭：仅与上一点对齐，每次一个方向。"
+  }
+}

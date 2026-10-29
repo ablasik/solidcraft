@@ -182,6 +182,7 @@ fn swap_in(app: &mut SolveApp, mut slot: DocSlot) -> DocSlot {
     app.tree.picked_components.clear();
     // Preferences the session holds go with the user, not the tab (#680).
     app.session.auto_project = out.session.auto_project;
+    app.session.set_single_surface_analysis(app.preferences.single_surface_analysis);
     // Views cache by revision: the incoming design must not look unchanged.
     let before = app.session.revision;
     app.session.invalidate_view(out_rev);
@@ -615,6 +616,26 @@ pub fn tabs_info(app: &SolveApp) -> Vec<(String, bool)> {
             Some(d) => (d.session.doc.name.clone(), d.session.is_dirty()),
             None => (app.session.doc.name.clone(), app.session.is_dirty()),
         })
+        .collect()
+}
+
+/// A design open in another tab, as Insert Design offers it (#8570): its name, its file (`None`:
+/// not saved yet, so there is nothing to link) and whether it has unsaved changes.
+pub(crate) struct OpenDesign {
+    pub name: String,
+    pub path: Option<String>,
+    pub unsaved: bool,
+}
+
+/// The designs open in the other tabs, in tab order: none on the shown design's file, and no
+/// blank one (an empty new design has nothing to insert).
+pub(crate) fn other_designs(app: &SolveApp) -> Vec<OpenDesign> {
+    let shown = app.session.path.as_deref();
+    app.docs
+        .background()
+        .filter(|s| s.path.is_some() || !s.doc.features.is_empty())
+        .filter(|s| !s.path.as_deref().zip(shown).is_some_and(|(a, b)| same_path(a, b)))
+        .map(|s| OpenDesign { name: s.doc.name.clone(), path: s.path.clone(), unsaved: s.is_dirty() })
         .collect()
 }
 

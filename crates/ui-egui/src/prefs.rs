@@ -920,6 +920,8 @@ preference_settings! {
     nav_bridge_port: u16 = 8765, PAGE_NAVIGATION;
     /// Anti-aliasing samples (applies on restart).
     msaa: u32 = 4, PAGE_GRAPHICS;
+    /// Share shading and Continuity; false preserves their independent legacy behavior.
+    single_surface_analysis: bool = true, PAGE_GRAPHICS => check_id("prefs.single_surface_analysis");
     /// Linux: the window system the app opens with at its next start (#3083): `auto` (XWayland
     /// whenever there is an X display, native Wayland on niri), `wayland` or `x11`.
     window_system: String = "auto".into(), PAGE_GRAPHICS;
@@ -973,6 +975,9 @@ preference_settings! {
     /// a double-click in the browser activates every component and one in the view does nothing,
     /// as before.
     double_click_components: bool = true, PAGE_DESIGN => check_id("settings.double_click_components");
+    /// Insert Design lists the designs open in other tabs, each inserted with one click, then
+    /// Browse… for a file (#8570). Off: it opens the file picker at once, as before.
+    insert_lists_open_designs: bool = true, PAGE_DESIGN => check_id("settings.insert_lists_open_designs");
     /// Reopen the saved designs that were open when the app was last closed (#5542).
     reopen_designs: bool = true, PAGE_GENERAL;
     /// Those designs' files, in tab order, as the last quit left them.
@@ -1224,6 +1229,10 @@ preference_settings! {
     suppress_sketch_snap: ModifierCombo = ModifierCombo::CTRL_ALT, PAGE_SKETCH;
     /// Temporary horizontal/vertical guides from hovered centres and edge midpoints.
     sketch_tracking_guides: bool = true, PAGE_SKETCH;
+    /// Drawing lines a point up with the sketch's points on both axes at once, keeping the
+    /// horizontal or vertical snap to the previous point, and the click adds the alignments
+    /// (#7828). Off by default: only with the previous point, one axis at a time, as before.
+    sketch_align_points: bool = false, PAGE_SKETCH;
     /// Open Project's options before picking; off restores its previous direct-pick workflow.
     project_options_dialog: bool = true, PAGE_SKETCH;
     /// Whether Alt/Option also frees gizmo / canvas manipulator arrows (Primary always does).
@@ -1452,6 +1461,7 @@ impl Snapshot {
         // Update bookkeeping isn't a setting: a check that finished while the dialog was open stays.
         let update = std::mem::take(&mut app.preferences.update);
         app.preferences = self.prefs;
+        sync_surface_analysis(app);
         app.preferences.update = update;
         if units_changed {
             default_units_changed(app);
@@ -1743,6 +1753,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
     let (msaa, window_system, adapter) = (app.preferences.msaa, app.preferences.window_system.clone(), app.preferences.graphics_adapter.clone());
     let units = app.preferences.default_units.clone();
     reset_preferences(&mut app.preferences, page);
+    sync_surface_analysis(app);
     if app.preferences.default_units != units {
         default_units_changed(app);
     }
@@ -1781,6 +1792,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
 /// Settings that follow the preferences every frame: the theme when it follows the system, and
 /// the interface scale.
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
+    sync_surface_analysis(app);
     apply_network(&app.preferences);
     apply_file_limits(&app.preferences);
     // The viewport's display quality (an unknown saved value draws at Normal).
@@ -1829,6 +1841,15 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     let z = app.preferences.ui_scale.clamp(0.5, 2.5);
     if z.is_finite() && !ctx.input(|i| i.pointer.any_down()) && (ctx.zoom_factor() - z).abs() > 1e-3 {
         ctx.set_zoom_factor(z);
+    }
+}
+
+/// The user's analysis policy applies immediately to every open design, without document edits.
+pub(crate) fn sync_surface_analysis(app: &mut SolveApp) {
+    let single = app.preferences.single_surface_analysis;
+    app.session.set_single_surface_analysis(single);
+    for slot in app.docs.background_mut() {
+        slot.session.set_single_surface_analysis(single);
     }
 }
 
@@ -3302,6 +3323,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         app.ui.layout = new.layout;
     }
     app.preferences = new;
+    sync_surface_analysis(app);
     apply_file_limits(&app.preferences);
     if units_changed {
         default_units_changed(app);
@@ -4788,7 +4810,9 @@ mod tests {
             ("suppress_sketch_snap", json!(ModifierCombo::NONE), PAGE_SKETCH),
             ("sketch_state_icons", json!(false), PAGE_SKETCH),
             ("sketch_tracking_guides", json!(false), PAGE_SKETCH),
+            ("sketch_align_points", json!(true), PAGE_SKETCH),
             ("msaa", json!(8), PAGE_GRAPHICS),
+            ("single_surface_analysis", json!(false), PAGE_GRAPHICS),
         ];
         let defaults = serde_json::to_value(Prefs::default()).unwrap();
         for (field, value, owner) in fields {
@@ -5970,6 +5994,135 @@ mod tests {
         assert!(!h.app.preferences.radial_context_menu, "Navigation defaults disable the ring");
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert!(h.app.preferences.radial_context_menu, "Cancel restores the last Apply");
+    }
+
+    #[test]
+    fn single_surface_analysis_live_cancel_restores_policy_without_restarting_effects() {
+        let mut app = SolveApp::new(Default::default(), Default::default());
+        super::control(&mut app, &json!({"single_surface_analysis":false})).unwrap();
+        for (command, params) in [
+            ("solid.box", json!({"length":10,"width":10,"height":10})),
+            ("inspect.zebra", json!({"stripes":14.5})),
+            ("inspect.section", json!({"plane":"XY"})),
+            ("inspect.continuity", json!({"edges":[[5,0,0]],"samples":5})),
+        ] {
+            app.run(command, params).unwrap();
+        }
+        app.session.mark_saved();
+        let doc = app.session.doc.clone();
+        let undo = app.session.undo.len();
+        assert_eq!(app.session.status_items().len(), 3);
+        super::control(&mut app, &json!({"open":"Graphics"})).unwrap();
+        super::control(&mut app, &json!({"single_surface_analysis":true})).unwrap();
+        assert!(app.session.single_surface_analysis());
+        assert_eq!(app.session.analysis, None, "turning on applies immediately and ends older shading");
+        assert_eq!(app.session.status_items()[0].command, "inspect.continuity");
+        super::control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert!(!app.preferences.single_surface_analysis && !app.session.single_surface_analysis());
+        assert_eq!(app.session.analysis, None, "Cancel restores the policy, not ended view effects");
+        assert_eq!(app.session.continuity.len(), 1);
+        assert_eq!(app.session.status_items().len(), 2);
+        app.run("inspect.zebra", json!({"stripes":14.5})).unwrap();
+        assert!(app.session.analysis.is_some() && !app.session.continuity.is_empty());
+        assert_eq!(app.session.status_items().len(), 3, "the restored legacy policy permits reactivation");
+        assert!(std::sync::Arc::ptr_eq(&doc, &app.session.doc));
+        assert!(!app.session.is_dirty());
+        assert_eq!(app.session.undo.len(), undo);
+    }
+
+    #[test]
+    fn single_surface_analysis_preference_checkbox_persists_cancels_and_resets() {
+        assert!(Prefs::default().single_surface_analysis);
+        let old: Prefs = serde_json::from_value(json!({"theme":"light"})).unwrap();
+        assert!(old.single_surface_analysis);
+        assert!(lenient(&json!({"single_surface_analysis":"no"})).single_surface_analysis);
+        let mut h = crate::scenario::Harness::new();
+        let design = h.app.session.doc.to_json();
+        let revision = h.app.session.revision;
+        h.call("ui.prefs", json!({"open":"Graphics"}));
+        super::reveal_preference(&mut h, "prefs:single_surface_analysis");
+        let checkbox = crate::scenario::handle_at("prefs:single_surface_analysis").unwrap();
+        h.call("ui.click", json!({"x":checkbox.x,"y":checkbox.y}));
+        assert!(!h.app.preferences.single_surface_analysis);
+        assert!(!h.app.session.single_surface_analysis());
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(!restored.preferences.single_surface_analysis);
+        assert!(!restored.session.single_surface_analysis(), "loaded settings apply before any command");
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(h.app.preferences.single_surface_analysis && h.app.session.single_surface_analysis());
+        h.call("ui.prefs", json!({"open":"Graphics","single_surface_analysis":false,"button":"apply"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(h.app.preferences.single_surface_analysis && h.app.session.single_surface_analysis());
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(!h.app.preferences.single_surface_analysis && !h.app.session.single_surface_analysis());
+        for malformed in [json!("false"), json!(null), json!(0), json!([])] {
+            assert!(super::set(&mut h.app, &json!({"single_surface_analysis":malformed})).is_err());
+            assert!(!h.app.preferences.single_surface_analysis && !h.app.session.single_surface_analysis());
+        }
+        assert_eq!(h.app.session.revision, revision, "policy-only edits with no effects need no view revision");
+        assert_eq!(h.app.session.doc.to_json(), design);
+        assert!(!h.app.session.is_dirty());
+        assert!(h.app.session.undo.is_empty());
+    }
+
+    #[test]
+    fn single_surface_analysis_preference_syncs_background_designs_and_resets_effects() {
+        fn legacy_session() -> solidcraft_engine::Session {
+            let mut s = solidcraft_engine::Session::default();
+            s.set_single_surface_analysis(false);
+            s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+            s.execute("inspect.zebra", &json!({"stripes":14.5})).unwrap();
+            s.execute("inspect.section", &json!({"plane":"XY"})).unwrap();
+            s.execute("inspect.continuity", &json!({"edges":[[5,0,0]],"samples":5})).unwrap();
+            s.mark_saved();
+            s
+        }
+        let mut app = SolveApp::new(Default::default(), Default::default());
+        super::set(&mut app, &json!({"single_surface_analysis":false})).unwrap();
+        app.session = legacy_session();
+        crate::documents::open_tab(&mut app, legacy_session()).unwrap();
+        assert_eq!(app.docs.count(), 2);
+        assert!(!app.session.single_surface_analysis());
+        assert_eq!(app.session.status_items().len(), 3);
+        assert!(app.docs.background().all(|s| !s.single_surface_analysis() && s.status_items().len() == 3));
+        let doc = app.session.doc.clone();
+        let undo = app.session.undo.len();
+        let declarations = app.session.status_items();
+        let revision = app.session.revision;
+        app.preferences.single_surface_analysis = true;
+        app.run("view.status_items", json!({})).unwrap();
+        assert!(!app.session.single_surface_analysis(), "a raw query cannot apply a desynchronised preference");
+        assert_eq!(app.session.status_items(), declarations);
+        assert_eq!(app.session.revision, revision);
+        assert!(app.session.analysis.is_some() && !app.session.continuity.is_empty());
+        assert!(app.docs.background().all(|s| !s.single_surface_analysis() && s.status_items().len() == 3));
+        app.preferences.single_surface_analysis = false;
+        super::defaults(&mut app, super::PAGE_GENERAL);
+        assert!(!app.session.single_surface_analysis(), "another page leaves the policy alone");
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        for s in std::iter::once(&app.session).chain(app.docs.background()) {
+            assert!(s.single_surface_analysis());
+            assert_eq!(s.analysis, None, "latest Continuity wins on reset");
+            assert_eq!(s.continuity.len(), 1);
+            assert_eq!(s.status_items().len(), 2);
+            assert_eq!(s.status_items()[0].command, "inspect.continuity");
+            assert!(s.section.is_some());
+            assert!(!s.is_dirty());
+        }
+        assert!(std::sync::Arc::ptr_eq(&doc, &app.session.doc));
+        assert_eq!(app.session.undo.len(), undo);
+        // Query entry never applies a pending policy change; the explicit frame hook does.
+        app.preferences.single_surface_analysis = false;
+        app.run("view.status_items", json!({})).unwrap();
+        assert!(app.session.single_surface_analysis());
+        super::apply(&mut app, &egui::Context::default());
+        assert!(!app.session.single_surface_analysis());
+        assert!(app.docs.background().all(|s| !s.single_surface_analysis()));
+        app.preferences.single_surface_analysis = true;
+        super::apply(&mut app, &egui::Context::default());
+        assert!(app.session.single_surface_analysis());
+        assert!(app.docs.background().all(|s| s.single_surface_analysis()));
     }
 
     #[test]

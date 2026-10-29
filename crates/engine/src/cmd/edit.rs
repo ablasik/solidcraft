@@ -67,7 +67,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         "features: [id|name], position: insertion slot in the current history; selected features keep their relative order; active?: bool (as timeline.reorder's); refused when a feature that worked would fail, unless allow_errors?: bool (default false): then made, and broken: [{feature, error}] lists the features it broke",
     ),
     CommandSpec::new("timeline.redefine", "Edit Feature", redefine).icon("edit")
-        .params("feature: id|name, command: the feature's command id, params: its parameters (the feature is rebuilt in place)"),
+        .params("feature: id|name, command: the feature's command id, params: its parameters (the feature is rebuilt in place) → feature, recomputed, restored, rolled_back: bool (the feature is after the history marker, so the edit is not built yet; `note` then says so), warning?"),
     CommandSpec::new("timeline.dependents", "Feature Dependents", dependents).icon("graph")
         .noundo()
         .params("feature: id|name → features deleted with it, and features that would fail without it"),
@@ -1773,9 +1773,23 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
     }
+    // A feature behind the history marker is not built, so the edit changes nothing in the model
+    // yet: the reply says so, or the edit would look as if it had silently failed (#8100). Its
+    // warning is the one the constructor met building it in the trial, at its place.
+    let rolled_back = s.doc.marker.is_some_and(|marker| s.doc.feature_index(id).is_some_and(|index| index >= marker));
+    let warning =
+        if rolled_back { r.get("warning").and_then(Value::as_str).map(str::to_string) } else { s.model.result(id).and_then(|r| r.warning.clone()) };
     // Report the trial's rebuild, plus anything the session still had to compute itself (a kept
     // result its budget dropped); `s.model`'s own counters would only report the reuse (#5694).
-    Ok(json!({"feature": id, "recomputed": rebuilt + s.model.last_recomputed, "restored": reused}))
+    let mut reply = json!({"feature": id, "recomputed": rebuilt + s.model.last_recomputed, "restored": reused, "rolled_back": rolled_back});
+    if let Some(warning) = warning {
+        reply["warning"] = json!(warning);
+    }
+    if rolled_back {
+        let name = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
+        reply["note"] = json!(format!("{name} is after the history marker, so it is not built: move the marker past it to build it"));
+    }
+    Ok(reply)
 }
 
 fn dependents(s: &mut Session, p: &Value) -> Result<Value> {

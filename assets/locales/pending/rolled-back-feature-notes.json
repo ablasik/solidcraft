@@ -1,0 +1,34 @@
+{
+  "en": {
+    "timeline.edited_rolled_back": "{name} changed, but it is after the history marker, so it is not built: move the marker past it to see the result",
+    "timeline.feature_rolled_back": "Rolled back: after the history marker, so not built"
+  },
+  "de": {
+    "timeline.edited_rolled_back": "{name} geändert, liegt aber hinter der Verlaufsmarke und wird daher nicht erzeugt: Marke dahinter ziehen, um das Ergebnis zu sehen",
+    "timeline.feature_rolled_back": "Zurückgesetzt: hinter der Verlaufsmarke, daher nicht erzeugt"
+  },
+  "fr": {
+    "timeline.edited_rolled_back": "{name} modifié, mais il est après le marqueur d'historique et n'est donc pas construit : déplacez le marqueur au-delà pour voir le résultat",
+    "timeline.feature_rolled_back": "En retrait : après le marqueur d'historique, donc non construit"
+  },
+  "ar": {
+    "timeline.edited_rolled_back": "تم تغيير {name}، لكنه يقع بعد علامة السجل ولذلك لا يُبنى: انقل العلامة إلى ما بعده لرؤية النتيجة",
+    "timeline.feature_rolled_back": "تم التراجع: بعد علامة السجل، لذلك لا يُبنى"
+  },
+  "he": {
+    "timeline.edited_rolled_back": "{name} שונה, אך הוא אחרי סמן ההיסטוריה ולכן לא נבנה: הזיזו את הסמן אל מעבר אליו כדי לראות את התוצאה",
+    "timeline.feature_rolled_back": "בוטל: אחרי סמן ההיסטוריה, ולכן לא נבנה"
+  },
+  "ja": {
+    "timeline.edited_rolled_back": "{name} を変更しましたが、履歴マーカーより後ろにあるため構築されません。結果を見るにはマーカーをその先へ移動してください",
+    "timeline.feature_rolled_back": "ロールバック中: 履歴マーカーより後ろのため構築されません"
+  },
+  "vi": {
+    "timeline.edited_rolled_back": "{name} đã thay đổi, nhưng nó nằm sau dấu mốc lịch sử nên chưa được dựng: kéo dấu mốc qua nó để xem kết quả",
+    "timeline.feature_rolled_back": "Đã lùi lại: nằm sau dấu mốc lịch sử nên chưa được dựng"
+  },
+  "zh": {
+    "timeline.edited_rolled_back": "{name} 已更改，但它位于历史标记之后，因此未构建：将标记移到其后即可查看结果",
+    "timeline.feature_rolled_back": "已回退：位于历史标记之后，因此未构建"
+  }
+}

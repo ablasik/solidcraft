@@ -33,6 +33,7 @@ pub mod slicer_files;
 mod slicer_icon;
 pub mod slicers;
 pub mod snap;
+pub mod status_items;
 pub mod timing;
 pub mod view;
 
@@ -470,6 +471,10 @@ pub struct Session {
     /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
     /// part of the design and not an undo step.
     pub continuity: Vec<ContinuitySeam>,
+    /// Transient activation order only; effect settings remain in their existing fields.
+    status_order: Vec<status_items::StatusId>,
+    single_surface_analysis: bool,
+    latest_analysis: Option<status_items::StatusId>,
     /// What is hidden or shown in the view (`browser.visibility`): saved with the design and an
     /// undo step of its own ([`Snapshot::visibility`]). A design brings its saved visibility when
     /// it opens (`Session::new`).
@@ -649,6 +654,9 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            status_order: Vec::new(),
+            single_surface_analysis: true,
+            latest_analysis: None,
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             replacements: 0,
@@ -672,6 +680,7 @@ impl Session {
     /// checkpoint keeps, not the replaced session's file path (docs/mcp.md).
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
+        let single_surface_analysis = self.single_surface_analysis;
         let param_check = self.param_check;
         let easyprint_upload = self.easyprint_upload.take();
         let render_viewport = self.render_viewport.clone();
@@ -685,6 +694,7 @@ impl Session {
         *self = fresh;
         self.crash_journal = crash_journal;
         self.auto_project = auto_project;
+        self.set_single_surface_analysis(single_surface_analysis);
         self.param_check = param_check;
         self.easyprint_upload = easyprint_upload;
         self.render_viewport = render_viewport;
@@ -1493,6 +1503,9 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            status_order: Vec::new(),
+            single_surface_analysis: self.single_surface_analysis,
+            latest_analysis: None,
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             replacements: 0,

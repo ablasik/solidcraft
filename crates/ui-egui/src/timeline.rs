@@ -257,11 +257,6 @@ fn slot_at(xs: &[f32], end: f32, x: f32) -> usize {
     best.0
 }
 
-/// Ask before deleting a feature others depend on; delete right away otherwise.
-pub(crate) fn delete_feature(app: &mut SolveApp, id: u64) {
-    delete_features(app, vec![id]);
-}
-
 /// Check what deleting `ids` takes with it or makes fail (off the window thread when that takes a
 /// while, #2678), then delete them or ask first.
 pub(crate) fn delete_features(app: &mut SolveApp, ids: Vec<u64>) {
@@ -327,6 +322,20 @@ pub(crate) fn selected_feature_ids(app: &SolveApp) -> Vec<u64> {
 pub(crate) fn menu_targets(app: &SolveApp, id: u64) -> Vec<u64> {
     let selected = selected_feature_ids(app);
     if selected.contains(&id) { selected } else { vec![id] }
+}
+
+/// Delete in a feature's menu, in both timelines: the selected features when the right-clicked
+/// one is among them, labelled with how many, else that feature alone (#5005).
+pub(crate) fn delete_button(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) {
+    let targets = menu_targets(app, id);
+    let label = match targets.len() {
+        1 => crate::i18n::tr_label("Delete").to_string(),
+        n => crate::i18n::format("timeline.delete_many", &[("count", &n.to_string())]),
+    };
+    if crate::context_menu::button(ui, &label, "delete").clicked() {
+        delete_features(app, targets);
+        ui.close();
+    }
 }
 
 /// The features from timeline position `from` to the end.
@@ -930,6 +939,11 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     p.circle_filled(pos2(br.center().x, br.bottom() + t.space_3), t.space_2, accent.color);
                 }
                 let mut tip = status_text(name, ty, err.as_deref(), warn.as_deref());
+                // Greyed out says only "not shown": say why (#8100).
+                if rolled {
+                    tip.push('\n');
+                    tip.push_str(crate::i18n::tr("timeline.feature_rolled_back"));
+                }
                 if let Some(state) = sketch_state {
                     tip.push('\n');
                     tip.push_str(&state.text());
@@ -992,15 +1006,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     clipboard_buttons(app, ui, *id);
                     message_button(app, ui, *id);
                     ui.separator();
-                    let targets = menu_targets(app, *id);
-                    let label = match targets.len() {
-                        1 => crate::i18n::tr_label("Delete").to_string(),
-                        n => crate::i18n::format("timeline.delete_many", &[("count", &n.to_string())]),
-                    };
-                    if crate::context_menu::button(ui, &label, "delete").clicked() {
-                        delete_features(app, targets);
-                        ui.close();
-                    }
+                    delete_button(app, ui, *id);
                     delete_after_marker_button(app, ui, *id, i, marker);
                 });
                 x += 32.0;
@@ -1889,23 +1895,28 @@ mod tests {
     }
 
     /// Delete in the menu of a selected feature deletes the whole selection in one undo step,
-    /// and says how many; on a feature outside the selection it deletes that one (#5005).
+    /// and says how many; on a feature outside the selection it deletes that one (#5005). The
+    /// same in both timelines, and the history beside the browser no longer adds its own Delete
+    /// Selected Features… to a feature's menu (#8861).
     #[test]
     fn the_feature_menu_deletes_the_selected_features() {
-        let mut h = three_boxes(false);
-        h.step(&json!({"click": {"handle": "timeline:Third"}, "button": "right"})).unwrap();
-        assert!(h.widget("Delete").is_some());
-        h.step(&json!({"key": "Escape"})).unwrap();
+        for left in [false, true] {
+            let mut h = three_boxes(left);
+            h.step(&json!({"click": {"handle": "timeline:Third"}, "button": "right"})).unwrap();
+            assert!(h.widget("Delete").is_some(), "left: {left}");
+            h.step(&json!({"key": "Escape"})).unwrap();
 
-        h.step(&json!({"click": {"handle": "timeline:First"}})).unwrap();
-        h.step(&json!({"click": {"handle": "timeline:Second"}, "ctrl": true})).unwrap();
-        h.step(&json!({"click": {"handle": "timeline:Second"}, "button": "right"})).unwrap();
-        h.step(&json!({"widget": "Delete 2 Selected Features"})).unwrap();
-        h.settle();
-        assert!(h.app.dialog.is_none(), "nothing else depends on them");
-        assert_eq!(names(&h), ["Third"]);
-        h.app.run("edit.undo", json!({})).unwrap();
-        assert_eq!(names(&h), ["First", "Second", "Third"]);
+            h.step(&json!({"click": {"handle": "timeline:First"}})).unwrap();
+            h.step(&json!({"click": {"handle": "timeline:Second"}, "ctrl": true})).unwrap();
+            h.step(&json!({"click": {"handle": "timeline:Second"}, "button": "right"})).unwrap();
+            assert!(h.widget("Delete Selected Features…").is_none(), "left: {left}");
+            h.step(&json!({"widget": "Delete 2 Selected Features"})).unwrap();
+            h.settle();
+            assert!(h.app.dialog.is_none(), "nothing else depends on them");
+            assert_eq!(names(&h), ["Third"], "left: {left}");
+            h.app.run("edit.undo", json!({})).unwrap();
+            assert_eq!(names(&h), ["First", "Second", "Third"], "left: {left}");
+        }
     }
 
     /// The menu of a feature after the history marker deletes every feature after the marker,
@@ -1923,8 +1934,7 @@ mod tests {
             h.step(&json!({"click": {"handle": "timeline:Second"}})).unwrap();
             h.step(&json!({"click": {"handle": "timeline:Third"}, "ctrl": true})).unwrap();
             h.step(&json!({"click": {"handle": "timeline:Third"}, "button": "right"})).unwrap();
-            // (The history beside the browser has its own Delete Selected Features….)
-            assert!(left || h.widget("Delete 2 Selected Features").is_some());
+            assert!(h.widget("Delete 2 Selected Features").is_some(), "left: {left}");
             assert!(h.widget("Delete 2 Features After History Marker").is_none(), "left: {left}");
             h.step(&json!({"key": "Escape"})).unwrap();
             h.app.run("select.clear", json!({})).unwrap();

@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::history_rows::{HistoryFeature, HistoryRows};
 use crate::theme::Tokens;
 use crate::timeline::{
-    TimelineKind, clipboard_buttons, delete_after_marker_button, delete_feature, delete_features, icon_of, message_button, selected_feature_ids,
+    TimelineKind, clipboard_buttons, delete_after_marker_button, delete_button, delete_features, icon_of, message_button, selected_feature_ids,
 };
 use crate::{SolveApp, icons};
 
@@ -671,7 +671,7 @@ fn select_item(app: &mut SolveApp, ui: &egui::Ui, item: TimelineItem, order: &[T
     }
 }
 
-fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft_engine::doc::TimelineGroup]) {
+fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft_engine::doc::TimelineGroup], feature_menu: bool) {
     let features = selected_feature_ids(app);
     let selected_groups = app.tree.picked_timeline_groups.clone();
     let has_selection = !features.is_empty() || !selected_groups.is_empty();
@@ -737,7 +737,9 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
             ui.close();
         }
     }
-    if !features.is_empty() {
+    // A feature's menu has its own Delete, which deletes the selection ([`delete_button`]): a
+    // right-click on a feature outside the selection selects that feature first.
+    if !features.is_empty() && !feature_menu {
         ui.separator();
         if crate::context_menu::button(ui, "Delete Selected Features…", "delete").clicked() {
             delete_features(app, features);
@@ -1125,7 +1127,7 @@ fn vertical_group_row(
             ui.close();
         }
         ui.separator();
-        selection_actions(app, ui, groups);
+        selection_actions(app, ui, groups, false);
     });
     open
 }
@@ -1517,6 +1519,10 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
         if error.is_some() || warning.is_some() {
             tip.push_str(&format!("\n{}", crate::timeline::status_text(name, ty, error.as_deref(), warning.as_deref())));
         }
+        // Greyed out says only "not shown": say why (#8100).
+        if rolled {
+            tip.push_str(&format!("\n{}", crate::i18n::tr("timeline.feature_rolled_back")));
+        }
         if let Some(state) = sketch_state {
             tip.push_str(&format!("\n{}", state.text()));
         }
@@ -1570,12 +1576,9 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
         clipboard_buttons(app, ui, id);
         message_button(app, ui, id);
         ui.separator();
-        selection_actions(app, ui, groups);
+        selection_actions(app, ui, groups, true);
         ui.separator();
-        if crate::context_menu::button(ui, "Delete", "delete").clicked() {
-            delete_feature(app, id);
-            ui.close();
-        }
+        delete_button(app, ui, id);
         delete_after_marker_button(app, ui, id, index, marker);
     });
     if edit {

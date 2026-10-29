@@ -1,0 +1,56 @@
+{
+  "ar": {
+    "sketch.dimension_added_driven": "الرسم يحدد هذا البُعد بالفعل، لذا أُضيف بُعدًا مُشتقًا (مرجعيًا)",
+    "sketch.dimension_applied": "تم تطبيق البُعد",
+    "sketch.dimension_applied_defined": "تم تطبيق البُعد؛ تم تعريف المعامل `{name}`",
+    "sketch.dimension_applied_renamed": "تم تطبيق البُعد؛ أصبح اسم المعامل `{name}`"
+  },
+  "de": {
+    "sketch.dimension_added_driven": "Die Skizze legt dieses Maß bereits fest, daher wurde es als abhängiges Maß (Referenzmaß) hinzugefügt",
+    "sketch.dimension_applied": "Maß angewendet",
+    "sketch.dimension_applied_defined": "Maß angewendet; Parameter `{name}` definiert",
+    "sketch.dimension_applied_renamed": "Maß angewendet; der Parameter heißt jetzt `{name}`"
+  },
+  "en": {
+    "sketch.dimension_added_driven": "The sketch already determines that dimension, so it was added as a driven (reference) dimension",
+    "sketch.dimension_applied": "Dimension applied",
+    "sketch.dimension_applied_defined": "Dimension applied; parameter `{name}` defined",
+    "sketch.dimension_applied_renamed": "Dimension applied; parameter named `{name}`"
+  },
+  "he": {
+    "sketch.dimension_added_driven": "הסקיצה כבר קובעת את המידה הזו, ולכן היא נוספה כמידה מונעת (מידת ייחוס)",
+    "sketch.dimension_applied": "המידה הוחלה",
+    "sketch.dimension_applied_defined": "המידה הוחלה; הפרמטר `{name}` הוגדר",
+    "sketch.dimension_applied_renamed": "המידה הוחלה; שם הפרמטר הוא כעת `{name}`"
+  },
+  "ja": {
+    "sketch.dimension_added_driven": "スケッチがすでにその寸法を決めているため、従動寸法（参照寸法）として追加しました",
+    "sketch.dimension_applied": "寸法を適用しました",
+    "sketch.dimension_applied_defined": "寸法を適用しました。パラメータ `{name}` を定義しました",
+    "sketch.dimension_applied_renamed": "寸法を適用しました。パラメータ名を `{name}` にしました"
+  },
+  "ko": {
+    "sketch.dimension_added_driven": "스케치가 이미 이 치수를 결정하므로 종속(참조) 치수로 추가했습니다",
+    "sketch.dimension_applied": "치수를 적용했습니다",
+    "sketch.dimension_applied_defined": "치수를 적용했습니다. 매개변수 `{name}`을(를) 정의했습니다",
+    "sketch.dimension_applied_renamed": "치수를 적용했습니다. 매개변수 이름을 `{name}`(으)로 지정했습니다"
+  },
+  "pl": {
+    "sketch.dimension_added_driven": "Szkic już określa ten wymiar, więc dodano go jako wymiar sterowany (referencyjny)",
+    "sketch.dimension_applied": "Wymiar zastosowany",
+    "sketch.dimension_applied_defined": "Wymiar zastosowany; zdefiniowano parametr `{name}`",
+    "sketch.dimension_applied_renamed": "Wymiar zastosowany; parametr nazywa się teraz `{name}`"
+  },
+  "vi": {
+    "sketch.dimension_added_driven": "Bản phác thảo đã xác định kích thước đó, nên nó được thêm vào dưới dạng kích thước tham chiếu",
+    "sketch.dimension_applied": "Đã áp dụng kích thước",
+    "sketch.dimension_applied_defined": "Đã áp dụng kích thước; đã định nghĩa tham số `{name}`",
+    "sketch.dimension_applied_renamed": "Đã áp dụng kích thước; tham số được đặt tên là `{name}`"
+  },
+  "zh": {
+    "sketch.dimension_added_driven": "草图已确定该尺寸，因此已将其添加为被驱动（参考）尺寸",
+    "sketch.dimension_applied": "已应用尺寸",
+    "sketch.dimension_applied_defined": "已应用尺寸；已定义参数 `{name}`",
+    "sketch.dimension_applied_renamed": "已应用尺寸；参数已命名为 `{name}`"
+  }
+}
