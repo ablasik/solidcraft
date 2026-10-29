@@ -51,7 +51,7 @@ pub(super) struct State {
     pub(super) copies: u64,
 }
 
-/// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on more opt-in upstream fixes (`UpstreamFixes`) than the always-on ones, for measuring them.
+/// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on opt-in upstream fixes (`UpstreamFixes`), for measuring them.
 fn new_kernel() -> Kernel {
     let mut k = Kernel::default();
     // Always on: a blend whose ball does not fit its faces (WR-462) is refused as too large, so a taper can take over, where upstream fails with status 1001; and a trace step that lands far short of its aim is not the next point (WR-503).

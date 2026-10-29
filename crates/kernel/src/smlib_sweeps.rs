@@ -1285,59 +1285,10 @@ mod imp {
         Ok(((t1 + t2).normalized().ok_or_else(|| KernelError::Invalid("path corner".into()))?, turn))
     }
 
-    /// Where a column of a loft pairs an arc with another kind of curve (a circle section against a
-    /// square's lines), each arc in it becomes a cubic Bézier chain (15 degrees a span) that
-    /// runs round at a steady rate, so the ruling pairs points by distance round the arc, as a
-    /// line's own parameter does, and not by the rational arc's, which runs ahead of its angle
-    /// mid-span (OpenCASCADE and truck pair by length; the volume differs by a tenth of a percent
-    /// for a square against a circle). A column of arcs only stays exact.
-    fn by_angle_where_mixed(sections: &mut [Vec<Curve>]) {
-        let columns = sections.iter().map(Vec::len).min().unwrap_or(0);
-        for i in 0..columns {
-            let arcs = sections.iter().filter(|s| matches!(s[i], Curve::Arc { .. })).count();
-            if arcs == 0 || arcs == sections.len() {
-                continue;
-            }
-            for s in sections.iter_mut() {
-                if let Curve::Arc { center, axis, reference, radius, start, end } = s[i] {
-                    s[i] = steady_arc(center, axis, reference, radius, start, end);
-                }
-            }
-        }
-    }
-
-    /// The arc as cubic Béziers of at most 15 degrees each (the standard 4/3 tan(a/4) handles:
-    /// within 1e-6 of the radius), C0 at the joins.
-    fn steady_arc(center: [f64; 3], axis: [f64; 3], reference: [f64; 3], radius: f64, start: f64, end: f64) -> Curve {
-        let spans = (((end - start) / (std::f64::consts::PI / 12.0) - 1e-9).ceil() as usize).max(1);
-        let step = (end - start) / spans as f64;
-        let handle = 4.0 / 3.0 * (step / 4.0).tan();
-        let v = Vec3::new(reference[0], reference[1], reference[2]);
-        let w = Vec3::new(axis[0], axis[1], axis[2]).cross(v);
-        let c = Vec3::new(center[0], center[1], center[2]);
-        let at = |t: f64| c + (v * t.cos() + w * t.sin()) * radius;
-        let toward = |t: f64| (w * t.cos() - v * t.sin()) * radius;
-        let mut points: Vec<[f64; 4]> = Vec::with_capacity(3 * spans + 1);
-        let q = |x: Vec3| [x.x, x.y, x.z, 1.0];
-        points.push(q(at(start)));
-        for k in 0..spans {
-            let (a, b) = (start + step * k as f64, start + step * (k + 1) as f64);
-            points.push(q(at(a) + toward(a) * handle));
-            points.push(q(at(b) - toward(b) * handle));
-            points.push(q(at(b)));
-        }
-        let mut knots = vec![0.0; 4];
-        for k in 1..spans {
-            knots.extend([k as f64 / spans as f64; 3]);
-        }
-        knots.extend([1.0; 4]);
-        Curve::Nurbs { degree: 3, points, knots }
-    }
     /// A loft through `sections` (each a closed loop of pieces, all re-split to the same count
     /// and lined up), `first` the index of the section given first (its cap is the start cap).
     pub(crate) fn loft(sections: &[(Plane, Vec<Piece>)], first: usize) -> Result<Body> {
-        let mut curves: Vec<Vec<Curve>> = sections.iter().map(|(pl, ps)| curves(pl, ps)).collect::<Result<_>>()?;
-        by_angle_where_mixed(&mut curves);
+        let curves: Vec<Vec<Curve>> = sections.iter().map(|(pl, ps)| curves(pl, ps)).collect::<Result<_>>()?;
         // Ruled between two sections, else smooth through them (cubic from four).
         let degree = match sections.len() {
             0..=2 => 1,
