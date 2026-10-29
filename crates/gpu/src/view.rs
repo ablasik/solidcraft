@@ -41,7 +41,7 @@ pub struct PaletteIndex(pub u32);
 /// How many palette entries fit on one texel row: the shader reads `x = i & 2047`,
 /// `y = i >> 11`. A power of two keeps the lookup a shift and a mask.
 pub const PALETTE_WIDTH: u32 = 2048;
-/// Most palette entries a scene may carry (2048 × 512): the palette is an `R32Uint` texture
+/// Most palette entries a scene may carry (2048 × 512): the palette is an `Rg32Uint` texture
 /// (`downlevel_defaults`/WebGL2 have no storage buffers in the vertex stage).
 pub const MAX_PALETTE: usize = 1 << 20;
 
@@ -50,17 +50,22 @@ pub const MAX_PALETTE: usize = 1 << 20;
 /// The first [`Palette::stable_len`] entries are stable for a scene: cached block bytes keep
 /// referring to them, so appearance edits only change their values. Entries after that are
 /// interned per build for ephemeral geometry (grids, highlights, sketch, previews).
+///
+/// A stable entry also carries the section hatch of the body it colours
+/// (`solidcraft_render::hatch`): none, the cap's own hatch, unless the scene hatches by part.
 #[derive(Clone, Debug, Default)]
 pub struct Palette {
     entries: Vec<[u8; 4]>,
     lookup: std::collections::HashMap<[u8; 4], u32>,
     stable_len: usize,
+    /// Per entry, 1 + its body's hatch, or 0 for the cap's own (empty: 0 for every entry).
+    hatches: Vec<u8>,
 }
 
 impl Palette {
     /// A palette whose entries are all stable (the model scene's body/face slots).
     pub fn with_stable(entries: Vec<[u8; 4]>) -> Palette {
-        Palette { stable_len: entries.len(), entries, lookup: std::collections::HashMap::new() }
+        Palette { stable_len: entries.len(), entries, lookup: std::collections::HashMap::new(), hatches: Vec::new() }
     }
 
     /// Where the stable entries end and the per-build interned ones begin.
@@ -116,9 +121,35 @@ impl Palette {
         PaletteIndex(i)
     }
 
-    /// The palette as the shader's `R32Uint` texels (rgba bytes packed little-endian).
-    pub fn texels(&self) -> Vec<u32> {
-        self.entries.iter().map(|[r, g, b, a]| u32::from_le_bytes([*r, *g, *b, *a])).collect()
+    /// Give stable entry `i` (a body's colour) that body's section hatch; `false` when `i` is not
+    /// a stable entry.
+    pub fn set_hatch(&mut self, i: PaletteIndex, hatch: solidcraft_render::hatch::Hatch) -> bool {
+        let at = i.0 as usize;
+        if at >= self.stable_len {
+            return false;
+        }
+        if self.hatches.len() < self.stable_len {
+            self.hatches.resize(self.stable_len, 0);
+        }
+        match self.hatches.get_mut(at) {
+            Some(slot) => {
+                *slot = hatch.0.saturating_add(1);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The section hatch entry `i` was given ([`Palette::set_hatch`]), if any.
+    pub fn hatch(&self, i: PaletteIndex) -> Option<solidcraft_render::hatch::Hatch> {
+        self.hatches.get(i.0 as usize).and_then(|h| h.checked_sub(1)).map(solidcraft_render::hatch::Hatch)
+    }
+
+    /// Entry `i` as the shader's `Rg32Uint` texel: the rgba bytes packed little-endian, then
+    /// 1 + its hatch (0: the cap's own).
+    fn texel(&self, i: usize) -> [u32; 2] {
+        let colour = self.entries.get(i).map_or(0, |[r, g, b, a]| u32::from_le_bytes([*r, *g, *b, *a]));
+        [colour, u32::from(self.hatches.get(i).copied().unwrap_or(0))]
     }
 }
 
@@ -151,8 +182,8 @@ fn octahedral6(n: [f32; 3]) -> u32 {
 }
 /// The shader's `U`: the view-projection matrix, 10 `vec4`s (the tenth carries the ambient
 /// occlusion radius), the 8 analysis colours, their flags, the depth direction and the two
-/// whole-body highlight colours (`uniform_bytes`).
-const UNIFORM_SIZE: u64 = 416;
+/// whole-body highlight colours, then the section hatch colours (`uniform_bytes`).
+const UNIFORM_SIZE: u64 = 416 + 16 * solidcraft_render::hatch::HATCH_COLOURS as u64;
 
 /// A body drawn from its display plan, evaluated on the GPU: the plan, and a palette index per
 /// face (the plan's face numbering; faces past the end take the last index).
@@ -163,6 +194,10 @@ pub struct PlannedBody {
     /// How the whole body is drawn: opaque with the model, or faded or see-through blended
     /// order-independently (only on a renderer that does that: [`GpuTarget::oit`]).
     pub class: TriClass,
+    /// The body encloses a volume (a solid, a closed mesh). Only closed bodies take part in a
+    /// section's crossing count ([`Cut`]): an open one has no inside, so it neither gets a cap
+    /// nor takes one from the body it lies in.
+    pub closed: bool,
 }
 
 /// What the viewport's last frame drew, counted as it was drawn (the performance overlay, #2548).
@@ -403,6 +438,8 @@ pub struct InstancedMesh {
     /// in the part's frame): a placement small on screen is drawn from the coarsest whose error
     /// stays under [`LOD_PX`] there ([`Batches::cull`]).
     pub levels: Vec<(Arc<SharedTris>, f32)>,
+    /// The triangles enclose a volume (see [`PlannedBody::closed`]).
+    pub closed: bool,
 }
 
 impl InstancedMesh {
@@ -447,6 +484,9 @@ pub struct GpuScene {
     pub palette: Arc<Palette>,
     /// Opaque triangles. A zero normal draws the colour flat (unlit).
     pub tris: Vec<u8>,
+    /// Opaque triangles of open bodies, drawn as `tris` but left out of a section's crossing
+    /// count (see [`PlannedBody::closed`]).
+    pub open_tris: Vec<u8>,
     /// Opaque product PBR vertices; linear base color and explicit optical parameters.
     pub pbr: Vec<u8>,
     /// Translucent triangles (alpha from the colour), drawn after the opaque ones without
@@ -538,6 +578,7 @@ impl GpuScene {
             }
         }
         out.tris.append(&mut self.tris);
+        out.tris.append(&mut self.open_tris);
         out.trans.append(&mut self.trans);
         out.lines.append(&mut self.lines);
         out.hidden.append(&mut self.hidden);
@@ -603,6 +644,9 @@ pub enum TriClass {
 pub struct BlockBytes {
     pub vertices: Arc<Vec<u8>>,
     pub opaque: Arc<Vec<std::ops::Range<u32>>>,
+    /// The opaque runs of closed bodies: what a section's crossing count draws (see
+    /// [`PlannedBody::closed`]).
+    pub closed: Arc<Vec<std::ops::Range<u32>>>,
     pub glass: Arc<Vec<std::ops::Range<u32>>>,
     pub faded: Arc<Vec<std::ops::Range<u32>>>,
     pub lines: Arc<Vec<u8>>,
@@ -634,6 +678,9 @@ pub fn extend_runs(runs: &mut Vec<std::ops::Range<u32>>, at: u32) {
 pub struct BlockBuilder {
     vertices: Vec<u8>,
     opaque: Vec<std::ops::Range<u32>>,
+    closed: Vec<std::ops::Range<u32>>,
+    /// The triangles being added belong to an open body ([`BlockBuilder::open_body`]).
+    open: bool,
     glass: Vec<std::ops::Range<u32>>,
     faded: Vec<std::ops::Range<u32>>,
     lines: Vec<u8>,
@@ -664,6 +711,16 @@ impl BlockBuilder {
             TriClass::Faded => &mut self.faded,
         };
         extend_runs(runs, at);
+        if class == TriClass::Opaque && !self.open {
+            extend_runs(&mut self.closed, at);
+        }
+    }
+
+    /// Whether the triangles added from now on belong to an open body (a surface body, a mesh
+    /// that does not close): those are left out of a section's crossing count. Closed until
+    /// said otherwise.
+    pub fn open_body(&mut self, open: bool) {
+        self.open = open;
     }
 
     /// The runs of `class` that fall within `vertices` (a body's share of the block).
@@ -705,6 +762,7 @@ impl BlockBuilder {
         Arc::new(BlockBytes {
             vertices: Arc::new(self.vertices),
             opaque: Arc::new(self.opaque),
+            closed: Arc::new(self.closed),
             glass: Arc::new(self.glass),
             faded: Arc::new(self.faded),
             lines: Arc::new(self.lines),
@@ -726,6 +784,13 @@ impl GpuScene {
             self.tris.extend_from_slice(&v.to_le_bytes());
         }
         self.tris.extend_from_slice(&c.0.to_le_bytes());
+    }
+    /// A vertex of an open body's opaque triangle (see [`GpuScene::open_tris`]).
+    pub fn open_tri(&mut self, p: [f32; 3], n: [f32; 3], c: PaletteIndex) {
+        for v in p.iter().chain(&n) {
+            self.open_tris.extend_from_slice(&v.to_le_bytes());
+        }
+        self.open_tris.extend_from_slice(&c.0.to_le_bytes());
     }
     /// A vertex of the ground-plane shadow (see [`GpuScene::shadow`]).
     pub fn shadow_tri(&mut self, p: [f32; 3], c: PaletteIndex) {
@@ -880,6 +945,9 @@ pub struct Frame {
     pub hover_tint: [f32; 3],
     /// Whole-body selection highlight: a selected body's colour before lighting (sRGB 0..1).
     pub selection_tint: [f32; 3],
+    /// The section hatch colours by part (straight sRGB, 0..1; the first the cap's own): what a
+    /// cut body whose palette entries carry a hatch ([`Palette::set_hatch`]) is tinted toward.
+    pub hatch: [[f32; 3]; solidcraft_render::hatch::HATCH_COLOURS],
 }
 
 /// Heights of the model seen from a direction (an orthographic depth map): a point is reachable
@@ -1003,8 +1071,10 @@ struct Batch {
 struct PlannedDraw {
     mesh: Arc<crate::GpuMesh>,
     colors: wgpu::Buffer,
-    /// Its bodies' class: a chunk holds bodies of one class.
+    /// Its bodies' class and whether they are closed: a chunk holds bodies of one class, all
+    /// closed or all open.
     class: TriClass,
+    closed: bool,
     /// The address of each plan in the chunk, in `mesh.parts` order: a whole-body highlight
     /// finds the evaluated triangles of the body it lights.
     plans: Vec<usize>,
@@ -1141,6 +1211,8 @@ struct LevelDraw {
 /// while they come back), and the placements in view, each drawn from its level.
 struct InstancedDraw {
     look: InstanceLook,
+    /// Its triangles enclose a volume ([`InstancedMesh::closed`]).
+    closed: bool,
     /// The full triangles first, then coarser ones.
     levels: Vec<LevelDraw>,
     bounds: [[f32; 3]; 2],
@@ -1206,6 +1278,9 @@ struct BlockGpu {
     bytes: Arc<BlockBytes>,
     vertices: Option<wgpu::Buffer>,
     opaque: Option<ClassGpu>,
+    /// The opaque runs of closed bodies ([`BlockBytes::closed`]): `opaque`'s own when they are
+    /// all of them.
+    closed: Option<ClassGpu>,
     glass: Option<ClassGpu>,
     faded: Option<ClassGpu>,
     lines: Option<Batch>,
@@ -1272,6 +1347,12 @@ impl BlockGpu {
             class_gpu(device, fits, &bytes.vertices, bytes.runs(class), old_pair, same_vertices, uploaded)
         };
         let (opaque, glass, faded) = (class(TriClass::Opaque), class(TriClass::Glass), class(TriClass::Faded));
+        let closed = if bytes.closed == bytes.opaque {
+            opaque.clone()
+        } else {
+            let old_pair = old.as_ref().and_then(|o| o.closed.as_ref().map(|c| (c, &o.bytes.closed)));
+            class_gpu(device, fits, &bytes.vertices, &bytes.closed, old_pair, same_vertices, uploaded)
+        };
         let keep = |old: Option<&BlockGpu>, pick: fn(&BlockBytes) -> &Arc<Vec<u8>>, old_lines: fn(&BlockGpu) -> Option<&Batch>| {
             old.filter(|o| Arc::ptr_eq(pick(&o.bytes), pick(&bytes))).and_then(old_lines).cloned()
         };
@@ -1281,7 +1362,7 @@ impl BlockGpu {
         };
         let lines = keep(old.as_ref(), |b| &b.lines, |b| b.lines.as_ref()).or_else(|| fresh(&bytes.lines, "sc_block_lines"));
         let hidden = keep(old.as_ref(), |b| &b.hidden, |b| b.hidden.as_ref()).or_else(|| fresh(&bytes.hidden, "sc_block_hidden"));
-        BlockGpu { bytes, vertices, opaque, glass, faded, lines, hidden }
+        BlockGpu { bytes, vertices, opaque, closed, glass, faded, lines, hidden }
     }
 
     fn class(&self, class: TriClass) -> Option<&ClassGpu> {
@@ -1294,7 +1375,16 @@ impl BlockGpu {
 
     /// Draw `class`'s triangles with the pipeline already set (`tally`: what is counted).
     fn draw(&self, pass: &mut wgpu::RenderPass<'_>, class: TriClass, tally: &Tally) {
-        match self.class(class) {
+        self.draw_runs(pass, self.class(class), tally);
+    }
+
+    /// Draw the closed bodies' opaque triangles ([`BlockBytes::closed`]), as [`BlockGpu::draw`].
+    fn draw_closed(&self, pass: &mut wgpu::RenderPass<'_>, tally: &Tally) {
+        self.draw_runs(pass, self.closed.as_ref(), tally);
+    }
+
+    fn draw_runs(&self, pass: &mut wgpu::RenderPass<'_>, runs: Option<&ClassGpu>, tally: &Tally) {
+        match runs {
             Some(ClassGpu::Runs(runs)) => {
                 let Some(vertices) = &self.vertices else { return };
                 pass.set_vertex_buffer(0, vertices.slice(..));
@@ -1337,15 +1427,18 @@ fn joined<'a>(blocks: impl Iterator<Item = &'a Option<Batch>>, own: Option<Batch
     (!parts.is_empty()).then_some(Batch { parts, chunk })
 }
 
-/// A scene's palette on the GPU: an `R32Uint` texture, [`PALETTE_WIDTH`] entries to a row.
+/// A scene's palette on the GPU: an `Rg32Uint` texture (colour, hatch), [`PALETTE_WIDTH`]
+/// entries to a row.
 struct PaletteGpu {
     palette: Arc<Palette>,
     /// Held for the bind group, which views it.
     _texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     rows: u32,
-    entries: Vec<[u8; 4]>,
 }
+
+/// Bytes of one palette texel.
+const PALETTE_TEXEL: u32 = 8;
 
 fn palette_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
@@ -1354,28 +1447,28 @@ fn palette_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Uint,
+        format: wgpu::TextureFormat::Rg32Uint,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
 }
 
-/// Rows `first..last` of `entries` as the texture's texels (zero past the end).
-fn palette_bytes(entries: &[[u8; 4]], first: u32, last: u32) -> Vec<u8> {
+/// Rows `first..last` of `palette` as the texture's texels (zero past the end).
+fn palette_bytes(palette: &Palette, first: u32, last: u32) -> Vec<u8> {
     let width = PALETTE_WIDTH as usize;
-    let mut out = Vec::with_capacity((last - first) as usize * width * 4);
+    let mut out = Vec::with_capacity((last - first) as usize * width * PALETTE_TEXEL as usize);
     for row in first..last {
         for col in 0..PALETTE_WIDTH {
-            let i = row as usize * width + col as usize;
-            let texel = entries.get(i).map_or(0, |[r, g, b, a]| u32::from_le_bytes([*r, *g, *b, *a]));
-            out.extend_from_slice(&texel.to_le_bytes());
+            for word in palette.texel(row as usize * width + col as usize) {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
         }
     }
     out
 }
 
-fn palette_rows(entries: &[[u8; 4]]) -> u32 {
-    u32::try_from(entries.len().div_ceil(PALETTE_WIDTH as usize)).unwrap_or(1).max(1)
+fn palette_rows(palette: &Palette) -> u32 {
+    u32::try_from(palette.len().div_ceil(PALETTE_WIDTH as usize)).unwrap_or(1).max(1)
 }
 
 impl PaletteGpu {
@@ -1387,15 +1480,14 @@ impl PaletteGpu {
         palette: Arc<Palette>,
         written: &mut u64,
     ) -> PaletteGpu {
-        let entries = palette.entries().to_vec();
-        let rows = palette_rows(&entries);
+        let rows = palette_rows(&palette);
         let texture = palette_texture(device, rows);
-        let bytes = palette_bytes(&entries, 0, rows);
+        let bytes = palette_bytes(&palette, 0, rows);
         *written += bytes.len() as u64;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             &bytes,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PALETTE_WIDTH * 4), rows_per_image: Some(rows) },
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PALETTE_WIDTH * PALETTE_TEXEL), rows_per_image: Some(rows) },
             wgpu::Extent3d { width: PALETTE_WIDTH, height: rows, depth_or_array_layers: 1 },
         );
         let view = texture.create_view(&Default::default());
@@ -1407,7 +1499,7 @@ impl PaletteGpu {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
             ],
         });
-        PaletteGpu { palette, _texture: texture, bind, rows, entries }
+        PaletteGpu { palette, _texture: texture, bind, rows }
     }
 
     /// Bring the texture up to `palette`, writing only the rows whose entries changed (or the
@@ -1424,8 +1516,7 @@ impl PaletteGpu {
         if Arc::ptr_eq(&self.palette, &palette) {
             return;
         }
-        let entries = palette.entries().to_vec();
-        let rows = palette_rows(&entries);
+        let rows = palette_rows(&palette);
         if rows != self.rows {
             *self = PaletteGpu::new(device, queue, uniform, bgl, palette, written);
             return;
@@ -1433,7 +1524,7 @@ impl PaletteGpu {
         let width = PALETTE_WIDTH as usize;
         let same = |row: u32| {
             let base = row as usize * width;
-            (0..width).all(|c| self.entries.get(base + c).copied().unwrap_or_default() == entries.get(base + c).copied().unwrap_or_default())
+            (0..width).all(|c| self.palette.texel(base + c) == palette.texel(base + c))
         };
         let mut row = 0u32;
         while row < rows {
@@ -1445,7 +1536,7 @@ impl PaletteGpu {
             while row < rows && !same(row) {
                 row += 1;
             }
-            let bytes = palette_bytes(&entries, first, row);
+            let bytes = palette_bytes(&palette, first, row);
             *written += bytes.len() as u64;
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -1455,11 +1546,10 @@ impl PaletteGpu {
                     aspect: wgpu::TextureAspect::All,
                 },
                 &bytes,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PALETTE_WIDTH * 4), rows_per_image: Some(row - first) },
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PALETTE_WIDTH * PALETTE_TEXEL), rows_per_image: Some(row - first) },
                 wgpu::Extent3d { width: PALETTE_WIDTH, height: row - first, depth_or_array_layers: 1 },
             );
         }
-        self.entries = entries;
         self.palette = palette;
     }
 }
@@ -1485,6 +1575,8 @@ struct Batches {
     block_order: Vec<u64>,
     key: Option<u64>,
     tris: Option<Batch>,
+    /// [`GpuScene::open_tris`].
+    open_tris: Option<Batch>,
     pbr: Option<Batch>,
     trans: Option<Batch>,
     shadow: Option<Batch>,
@@ -1576,6 +1668,7 @@ impl Batches {
                 upload(device, label, data, stride)
             };
             self.tris = own("sc_tris", &sc.tris, TRI_SIZE);
+            self.open_tris = own("sc_open_tris", &sc.open_tris, TRI_SIZE);
             self.pbr = own("sc_pbr", &sc.pbr, PBR_SIZE);
             self.trans = own("sc_trans", &sc.trans, TRI_SIZE);
             self.shadow = own("sc_shadow", &sc.shadow, TRI_SIZE);
@@ -1658,7 +1751,7 @@ impl Batches {
                 self.instanced_tris.insert(key, gpu);
             }
             if !levels.is_empty() {
-                out.push(InstancedDraw { look: m.look, levels, bounds: m.tris.bounds, placements, shown: None });
+                out.push(InstancedDraw { look: m.look, closed: m.closed, levels, bounds: m.tris.bounds, placements, shown: None });
             }
         }
         out
@@ -1741,7 +1834,9 @@ impl Batches {
         for b in bodies {
             let n = b.plan.vertex_count();
             match chunks.last_mut() {
-                Some(c) if open && filled + n <= crate::MAX_BATCH && c.first().is_some_and(|f| f.class == b.class) => c.push(b),
+                Some(c) if open && filled + n <= crate::MAX_BATCH && c.first().is_some_and(|f| (f.class, f.closed) == (b.class, b.closed)) => {
+                    c.push(b)
+                }
                 _ => {
                     chunks.push(vec![b]);
                     filled = 0;
@@ -1785,26 +1880,42 @@ impl Batches {
             }
             self.uploads.planned += bytes.len() as u64;
             if let Some((colors, _)) = upload(device, "sc_planned_colors", &bytes, 4).and_then(|c| c.parts.into_iter().next()) {
-                let class = chunk.first().map_or(TriClass::Opaque, |b| b.class);
-                out.push(PlannedDraw { mesh, colors, class, plans: key(chunk) });
+                let (class, closed) = chunk.first().map_or((TriClass::Opaque, true), |b| (b.class, b.closed));
+                out.push(PlannedDraw { mesh, colors, class, closed, plans: key(chunk) });
             }
         }
         out
     }
 }
 
-/// The section's pipelines (see `Renderer::tri_cut`).
+/// Where a section's crossing count starts (`Cut::count`): half the stencil's range, so a count
+/// that goes below it (more faces entered than left: an open sheet's front) stays apart from one
+/// above it.
+const STENCIL_BASE: u32 = 128;
+
+/// The section's pipelines (see `Renderer::tri_cut`), drawn in this order. The cap shows where
+/// the section plane lies inside a body: where the faces behind the plane, on the view ray
+/// through the pixel, are left by the ray more often than entered. The stencil counts them, so
+/// no depth is compared where bodies touch: a cut body's far wall and the face of the body it
+/// rests on lie at one depth, and settling that by depth let the other body show through the
+/// cap in specks, stripes and triangles. The display meshes are watertight, so the count is
+/// exact for closed bodies; an open one (a surface body, a solid with faces left out) gets no
+/// cap.
 struct Cut {
-    /// Draws the faces and marks the stencil by their true depth: 1 where a back face (the cap)
-    /// is the visible surface. Unpushed: `FACE_BIAS`'s slope part would let a front face win a
-    /// band along its edge with a back face seen through the cut, and the cap would skip it (#6328).
-    mark: wgpu::RenderPipeline,
-    /// The faces' depth again, pushed back by `FACE_BIAS` as unsectioned faces are (after
-    /// `Renderer::section_reset`), so their edges draw over them (#1434). No colour, no stencil.
-    push: wgpu::RenderPipeline,
-    /// The cap again, only where marked, at the section plane's depth: depth only, as the mark
-    /// drew the cap's colour (#6728).
+    /// Counts the crossings in the stencil from [`STENCIL_BASE`]: a back face behind the plane
+    /// adds one, a front face takes one away. No colour, no depth. Above the base, the plane is
+    /// inside a body; at or below it, outside (an open sheet seen from its front counts below).
+    count: wgpu::RenderPipeline,
+    /// Where the count is above the base, the nearest back face, by its true depth, in its body's cut
+    /// colour (the body the plane lies inside: the ray leaves it there).
+    fill: wgpu::RenderPipeline,
+    /// The cap again, only there, at the section plane's depth (pushed as faces are), so what
+    /// lies on the cut face draws over it: depth only, as `fill` drew its colour (#6728).
     cap: wgpu::RenderPipeline,
+    /// Elsewhere, the faces as they are drawn without a section, pushed back by
+    /// `FACE_BIAS` so their edges draw over them (#1434); a back face there is an open body's
+    /// inside, lit, not hatched.
+    rest: wgpu::RenderPipeline,
 }
 
 /// The viewport's pipelines and the scenes uploaded to one device, for one kind of target.
@@ -1835,8 +1946,8 @@ pub struct Renderer {
     /// The tessellation compute pipeline, where the device runs compute shaders.
     tess: Option<crate::TessGpu>,
     /// While a section is shown (when the depth buffer has a stencil), in place of `tri`: the
-    /// faces marking where the cap shows, their depth pushed back, then the cap again at the
-    /// section plane's depth, so it hides the inside ([`Cut`]).
+    /// faces behind the plane counted where the cap shows, the cap in its colour and at the
+    /// section plane's depth, so it hides the inside, then the other faces ([`Cut`]).
     tri_cut: Option<Cut>,
     /// Highlight triangles over the model (depth test ≤, no depth write).
     tri_hl: wgpu::RenderPipeline,
@@ -1924,9 +2035,9 @@ pub struct Renderer {
     /// Reversed depth drawn into the window's pass: egui clears its depth to 1, which is the near
     /// plane then, so the viewport first sets its rectangle to the far plane (0).
     depth_reset: Option<wgpu::RenderPipeline>,
-    /// The scene target's depth back to the far plane between the section's marking and push
-    /// passes ([`Cut`]); stencil and colour untouched.
-    section_reset: Option<wgpu::RenderPipeline>,
+    /// The scene target's stencil set to [`STENCIL_BASE`] before a section's crossing count
+    /// ([`Cut`]); depth and colour untouched.
+    section_stencil: Option<wgpu::RenderPipeline>,
 }
 
 /// A triangle over the whole viewport at the far plane's depth (`FAR`), writing no colour:
@@ -2456,36 +2567,40 @@ impl Renderer {
         let solid = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource| {
             solid_writes(label, fs, cull, ds, source, true)
         };
-        // While a section is shown: the stencil marking and the cap (see `Renderer::tri_cut`).
+        // While a section is shown: the crossing count and the cap (see `Cut`), drawn with the
+        // stencil reference `STENCIL_BASE`.
         let cut = |source: TriSource| {
             t.depth.filter(|f| f.has_stencil_aspect()).map(|format| {
-                // The visible surface, by its true depth, marks the stencil: 1 where it is a back face (the cap).
-                use wgpu::StencilOperation::{Keep, Replace, Zero};
-                let face = |pass_op| wgpu::StencilFaceState { compare: wgpu::CompareFunction::Always, fail_op: Keep, depth_fail_op: Keep, pass_op };
-                let mark = wgpu::DepthStencilState {
+                use wgpu::CompareFunction::{Always, GreaterEqual, Less};
+                use wgpu::StencilOperation::{DecrementWrap, IncrementWrap, Keep};
+                let face = |compare, pass_op| wgpu::StencilFaceState { compare, fail_op: Keep, depth_fail_op: Keep, pass_op };
+                let stencil = |front, back, write_mask| wgpu::StencilState { front, back, read_mask: 0xff, write_mask };
+                let count = wgpu::DepthStencilState {
                     format,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(Always),
+                    stencil: stencil(face(Always, DecrementWrap), face(Always, IncrementWrap), 0xff),
+                    bias: Default::default(),
+                };
+                // The reference (`STENCIL_BASE`) below the count: the plane is inside a body.
+                let inside = stencil(face(Less, Keep), face(Less, Keep), 0);
+                let fill = wgpu::DepthStencilState {
                     depth_write_enabled: Some(true),
                     depth_compare: Some(depth_compare(reversed, wgpu::CompareFunction::Less)),
-                    stencil: wgpu::StencilState { front: face(Zero), back: face(Replace), read_mask: 0xff, write_mask: 0xff },
-                    bias: Default::default(),
+                    stencil: inside.clone(),
+                    ..count.clone()
                 };
-                // Then the cap's back faces again, only there, at the section plane's depth.
-                let only = wgpu::StencilFaceState { compare: wgpu::CompareFunction::Equal, ..face(Keep) };
-                let cap = wgpu::DepthStencilState {
-                    format,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Always),
-                    stencil: wgpu::StencilState { front: only, back: only, read_mask: 0xff, write_mask: 0 },
-                    bias: Default::default(),
-                };
+                let cap = wgpu::DepthStencilState { depth_write_enabled: Some(true), stencil: inside, ..count.clone() };
+                let outside = stencil(face(GreaterEqual, Keep), face(GreaterEqual, Keep), 0);
+                let rest = pushed(wgpu::CompareFunction::Less, true, FACE_BIAS).map(|d| wgpu::DepthStencilState { stencil: outside, ..d });
                 Cut {
-                    mark: solid("sc_tris_mark", "fs_solid", None, Some(mark), source),
-                    push: solid_writes("sc_tris_push", "fs_solid", None, pushed(wgpu::CompareFunction::Less, true, FACE_BIAS), source, false),
-                    // Depth only: every back face behind a marked pixel draws here, so writing
+                    count: solid_writes("sc_tris_count", "fs_clip", None, Some(count), source, false),
+                    fill: solid("sc_tris_fill", "fs_solid", Some(wgpu::Face::Front), Some(fill), source),
+                    // Depth only: every back face behind a cap pixel draws here, so writing
                     // colour let the last one drawn paint the cut, other bodies behind it
-                    // included (their colours and outlines showed through it, #6328). The
-                    // marking pass already drew the nearest back face's colour.
+                    // included (their colours and outlines showed through it, #6328).
                     cap: solid_writes("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap), source, false),
+                    rest: solid("sc_tris_rest", "fs_solid_open", None, rest, source),
                 }
             })
         };
@@ -2557,7 +2672,7 @@ impl Renderer {
         Renderer {
             ao,
             depth_reset,
-            section_reset: t.depth.filter(|f| f.has_stencil_aspect()).and_then(|_| depth_reset_pipeline(device, t)),
+            section_stencil: stencil_set_pipeline(device, t),
             target: GpuTarget { oit: oit.is_some(), ..t },
             window,
             max_texture: device.limits().max_texture_dimension_2d,
@@ -2676,25 +2791,51 @@ const GHOST_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: 2 * FA
 /// leaving colour and stencil as they are. None without a depth buffer.
 fn depth_reset_pipeline(device: &wgpu::Device, t: GpuTarget) -> Option<wgpu::RenderPipeline> {
     let format = t.depth?;
+    let reset = wgpu::DepthStencilState {
+        format,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Always),
+        stencil: Default::default(),
+        bias: Default::default(),
+    };
+    Some(viewport_pipeline(device, t, "sc_depth_reset", reset))
+}
+
+/// A pipeline that sets the stencil of the viewport in a pass of `t`'s kind to the reference,
+/// leaving colour and depth as they are: a section's crossing count starts from it ([`Cut`]).
+/// None without a stencil.
+fn stencil_set_pipeline(device: &wgpu::Device, t: GpuTarget) -> Option<wgpu::RenderPipeline> {
+    let format = t.depth.filter(|f| f.has_stencil_aspect())?;
+    let replace = wgpu::StencilFaceState {
+        compare: wgpu::CompareFunction::Always,
+        fail_op: wgpu::StencilOperation::Keep,
+        depth_fail_op: wgpu::StencilOperation::Keep,
+        pass_op: wgpu::StencilOperation::Replace,
+    };
+    let set = wgpu::DepthStencilState {
+        format,
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::Always),
+        stencil: wgpu::StencilState { front: replace, back: replace, read_mask: 0xff, write_mask: 0xff },
+        bias: Default::default(),
+    };
+    Some(viewport_pipeline(device, t, "sc_stencil_set", set))
+}
+
+/// A triangle over the whole viewport in a pass of `t`'s kind, writing no colour, with `ds`.
+fn viewport_pipeline(device: &wgpu::Device, t: GpuTarget, label: &str, ds: wgpu::DepthStencilState) -> wgpu::RenderPipeline {
     let far = if t.reversed_depth() { "0.0" } else { "1.0" };
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sc_depth_reset"),
+        label: Some(label),
         source: wgpu::ShaderSource::Wgsl(DEPTH_RESET_SHADER.replace("FAR", far).into()),
     });
-    let layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("sc_depth_reset"), bind_group_layouts: &[], immediate_size: 0 });
-    Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sc_depth_reset"),
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(label), bind_group_layouts: &[], immediate_size: 0 });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
         primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
+        depth_stencil: Some(ds),
         multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
         fragment: Some(wgpu::FragmentState {
             module: &module,
@@ -2704,7 +2845,7 @@ fn depth_reset_pipeline(device: &wgpu::Device, t: GpuTarget) -> Option<wgpu::Ren
         }),
         multiview_mask: None,
         cache: None,
-    }))
+    })
 }
 
 fn upload(device: &wgpu::Device, label: &str, bytes: &[u8], stride: usize) -> Option<Batch> {
@@ -2835,6 +2976,7 @@ fn frame_key(cb: &Frame) -> u64 {
     // picture cached under the previous theme's colours is not shown (#5802).
     cb.hover_tint.map(f32::to_bits).hash(&mut h);
     cb.selection_tint.map(f32::to_bits).hash(&mut h);
+    cb.hatch.iter().flatten().for_each(|v| v.to_bits().hash(&mut h));
     cb.outline.hash(&mut h);
     cb.ao_radius.to_bits().hash(&mut h);
     cb.ssaa.to_bits().hash(&mut h);
@@ -3088,8 +3230,9 @@ impl Renderer {
         pass.set_bind_group(1, &res.access_bind, &[]);
         pass.set_bind_group(2, &res.ao.bind, &[]);
         pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
-        let planned = |pass: &mut wgpu::RenderPass<'static>, p: &wgpu::RenderPipeline| {
-            for d in m.planned.iter().filter(|d| d.class == TriClass::Opaque) {
+        // `counting`: only closed bodies, for a section's crossing count ([`Cut::count`]).
+        let planned = |pass: &mut wgpu::RenderPass<'static>, p: &wgpu::RenderPipeline, counting: bool| {
+            for d in m.planned.iter().filter(|d| d.class == TriClass::Opaque && (d.closed || !counting)) {
                 pass.set_pipeline(p);
                 pass.set_vertex_buffer(0, d.mesh.vertices.slice(..));
                 pass.set_vertex_buffer(1, d.colors.slice(..));
@@ -3099,8 +3242,8 @@ impl Renderer {
             }
         };
         // Instanced meshes, with the pipeline for smooth and for flat triangles.
-        let instanced = |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline| {
-            for d in m.instanced.iter().filter(|d| d.look == InstanceLook::Opaque) {
+        let instanced = |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline, counting: bool| {
+            for d in m.instanced.iter().filter(|d| d.look == InstanceLook::Opaque && (d.closed || !counting)) {
                 d.draw(pass, smooth, flat, tally);
             }
         };
@@ -3147,36 +3290,51 @@ impl Renderer {
             res.tri_cut_planned.as_ref(),
             res.tri_cut_instanced.as_ref(),
             res.tri_cut_instanced_flat.as_ref(),
-            res.section_reset.as_ref(),
+            res.section_stencil.as_ref(),
         ) {
-            (Some(cut), Some(cut_planned), Some(cut_instanced), Some(cut_flat), Some(reset)) => {
+            (Some(cut), Some(cut_planned), Some(cut_instanced), Some(cut_flat), Some(base)) => {
                 // The model's own triangles, blocks, plans and instances with its palette, then the
                 // preview's with its own.
-                let all = |pass: &mut wgpu::RenderPass<'static>, pick: fn(&Cut) -> &wgpu::RenderPipeline| {
+                // `counting`: the crossing count, which leaves open bodies out.
+                let all = |pass: &mut wgpu::RenderPass<'static>, pick: fn(&Cut) -> &wgpu::RenderPipeline, counting: bool| {
                     pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
                     tris(pass, pick(cut), &m.tris);
-                    block_class(pass, pick(cut), TriClass::Opaque);
-                    planned(pass, pick(cut_planned));
-                    instanced(pass, pick(cut_instanced), pick(cut_flat));
+                    if counting {
+                        for block in m.block_order.iter().filter_map(|k| m.blocks.get(k)).filter(|b| b.closed.is_some()) {
+                            pass.set_pipeline(pick(cut));
+                            block.draw_closed(pass, tally);
+                        }
+                    } else {
+                        tris(pass, pick(cut), &m.open_tris);
+                        block_class(pass, pick(cut), TriClass::Opaque);
+                    }
+                    planned(pass, pick(cut_planned), counting);
+                    instanced(pass, pick(cut_instanced), pick(cut_flat), counting);
                     pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
                     tris(pass, pick(cut), &pv.tris);
+                    if !counting {
+                        tris(pass, pick(cut), &pv.open_tris);
+                    }
                 };
-                pass.set_stencil_reference(1);
-                all(pass, |c| &c.mark);
-                pass.set_pipeline(reset);
+                pass.set_stencil_reference(STENCIL_BASE);
+                pass.set_pipeline(base);
                 pass.draw(0..3, 0..1);
                 tally.call();
-                all(pass, |c| &c.push);
-                all(pass, |c| &c.cap);
+                all(pass, |c| &c.count, true);
+                all(pass, |c| &c.fill, false);
+                all(pass, |c| &c.cap, false);
+                all(pass, |c| &c.rest, false);
             }
             _ => {
                 pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
                 tris(pass, &res.tri, &m.tris);
+                tris(pass, &res.tri, &m.open_tris);
                 block_class(pass, &res.tri, TriClass::Opaque);
-                planned(pass, &res.tri_planned);
-                instanced(pass, &res.tri_instanced, &res.tri_instanced_flat);
+                planned(pass, &res.tri_planned, false);
+                instanced(pass, &res.tri_instanced, &res.tri_instanced_flat, false);
                 pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
                 tris(pass, &res.tri, &pv.tris);
+                tris(pass, &res.tri, &pv.open_tris);
             }
         }
         pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
@@ -3211,14 +3369,19 @@ impl Renderer {
             }
         }
         tris(pass, &res.tri_hl, &h.tris);
-        pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
-        lines(pass, &res.line, &m.lines);
-        pass.set_bind_group(0, scene_bind(sk, &res.bind), &[]);
-        lines(pass, &res.line, &sk.lines);
+        // Hidden edges before the visible ones, so a visible edge is drawn over them. An edge
+        // within a pixel of a nearer face's outline (a face seen edge on beside it) is hidden
+        // under part of its own width; drawn after, its light hidden copy covered the visible
+        // edge beside it there with a light line.
         pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
         lines(pass, &res.line_hidden, &m.hidden);
         pass.set_bind_group(0, scene_bind(h, &res.bind), &[]);
         lines(pass, &res.line_hidden, &h.hidden);
+        pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
+        lines(pass, &res.line, &m.lines);
+        pass.set_bind_group(0, scene_bind(sk, &res.bind), &[]);
+        lines(pass, &res.line, &sk.lines);
+        pass.set_bind_group(0, scene_bind(h, &res.bind), &[]);
         lines(pass, &res.line, &h.lines);
         lines(pass, &res.guide_line, &h.guide_lines);
         pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
@@ -3533,6 +3696,9 @@ pub fn uniform_bytes(cb: &Frame, w: f32, h: f32, linear: bool, reversed: bool) -
     v.extend([if reversed { 1.0 } else { 0.0 }, FACE_STEPS as f32, FACE_SLOPE, 0.0]);
     v.extend([cb.hover_tint[0], cb.hover_tint[1], cb.hover_tint[2], 0.0]);
     v.extend([cb.selection_tint[0], cb.selection_tint[1], cb.selection_tint[2], 0.0]);
+    for [r, g, b] in cb.hatch {
+        v.extend([r, g, b, 1.0]);
+    }
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
@@ -3697,6 +3863,7 @@ mod tests {
             access: None,
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
+            hatch: Default::default(),
             outline: false,
             eye: [0.0; 4],
             ao_radius: 0.0,
@@ -3983,6 +4150,7 @@ mod glass_tests {
             ssaa: 1.0,
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
+            hatch: Default::default(),
         };
         let texture = |format, usage, sample_count| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -4150,6 +4318,7 @@ mod glass_tests {
             access: None,
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
+            hatch: Default::default(),
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,

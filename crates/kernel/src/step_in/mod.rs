@@ -82,10 +82,75 @@ pub struct StepImport {
     pub tree: Vec<StepNode>,
     /// What could not be read (unsupported entities, faces left out…).
     pub warnings: Vec<String>,
+    /// The same, by kind and part, with what came in of the file's parts: for a summary in words.
+    pub report: ImportReport,
     /// FILE_SCHEMA (e.g. `AUTOMOTIVE_DESIGN`, `CONFIG_CONTROL_DESIGN`, `AP242_…`).
     pub schema: String,
     /// FILE_NAME originating system.
     pub system: String,
+}
+
+/// What an import warning is about, so a window can word a summary of them (the warning's
+/// text is the detail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueKind {
+    /// No body could be made of the part: it is not in the design.
+    NotImported,
+    /// No solid could be made of the part: it is shown as a mesh of its faces.
+    ShownAsMesh,
+    /// No solid could be made of the part: it came in as surfaces of its faces.
+    ImportedAsSurfaces,
+    /// A face of the part could not be read or made, and is left out.
+    FaceLeftOut,
+    /// The part's shell is not closed: it came in as an open body.
+    OpenBody,
+    /// Faces of the part could not be meshed and are not shown.
+    FacesNotShown,
+    /// SMLib refuses the part: modelling operations on it fail until it is repaired.
+    NeedsRepair,
+    /// Something was repaired on the way (edges split at a pole, faces turned, gaps covered).
+    Repaired,
+    /// The file as a whole: its assembly structure, its limits, its entity ids.
+    File,
+}
+
+/// One import warning: what it is about and the part it concerns.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImportIssue {
+    pub kind: IssueKind,
+    /// The STEP item of the part (`None`: the file as a whole).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<u64>,
+    /// The part's name in the file (empty: it has none).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub part: String,
+    /// Faces it concerns: one for a face left out, the count for faces not shown, else 0.
+    #[serde(default)]
+    pub faces: usize,
+    /// How many times it came (a part not imported says so at each of its instances).
+    pub times: usize,
+    /// The warning as [`StepImport::warnings`] words it.
+    pub detail: String,
+}
+
+/// What an import made of the file's parts, and its warnings by kind and part.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImportReport {
+    /// Parts (distinct solid items) the file places.
+    pub parts: usize,
+    /// Parts that came in as closed solids.
+    pub solids: usize,
+    /// In the order of [`StepImport::warnings`].
+    pub issues: Vec<ImportIssue>,
+}
+
+/// A warning kept by [`Reader::note`]: what it is about and how often it came.
+struct Noted {
+    kind: IssueKind,
+    item: Option<u64>,
+    faces: usize,
+    times: usize,
 }
 
 /// A solid the walk found, converted later.
@@ -189,7 +254,7 @@ fn frame_matrix(p: &solidcraft_step::geom::Placement) -> M4 {
 struct Reader {
     ex: Arc<Exchange>,
     units: HashMap<u64, Units>,
-    warnings: BTreeMap<String, usize>,
+    warnings: BTreeMap<String, Noted>,
     /// Representation → its items and context.
     reps: HashMap<u64, (Vec<u64>, Option<u64>)>,
     /// Plain representation relationships (same product, no placement).
@@ -225,6 +290,8 @@ struct Reader {
     visits: usize,
     /// Items whose meshing was checked.
     unmeshed_checked: HashSet<u64>,
+    /// Items sent into SMLib as an operation would send them, to say which need repair.
+    modelling_checked: HashSet<u64>,
     bodies: Vec<ImportedBody>,
     /// Solids the walk found, in file order, to be converted into bodies afterwards (so the
     /// conversion, the long part, can be done a piece at a time: [`StepReading`]).
@@ -266,6 +333,7 @@ impl Reader {
             node_items: HashSet::new(),
             visits: 0,
             unmeshed_checked: HashSet::new(),
+            modelling_checked: HashSet::new(),
             bodies: Vec::new(),
             plan: Vec::new(),
             batches: Vec::new(),
@@ -293,8 +361,20 @@ impl Reader {
         false
     }
 
+    /// A warning about the file as a whole.
     fn warn(&mut self, msg: impl Into<String>) {
-        *self.warnings.entry(msg.into()).or_default() += 1;
+        self.note(IssueKind::File, None, 0, msg);
+    }
+
+    /// A warning of `kind` about `item`'s part (`faces`: the faces it concerns), counted when it
+    /// comes again.
+    fn note(&mut self, kind: IssueKind, item: Option<u64>, faces: usize, msg: impl Into<String>) {
+        self.warnings.entry(msg.into()).or_insert(Noted { kind, item, faces, times: 0 }).times += 1;
+    }
+
+    /// The part's own name in the file (empty: it has none).
+    fn part_name(&self, item: u64) -> String {
+        self.ex.get(item).and_then(|e| e.params().first()).and_then(Param::as_str).unwrap_or("").trim().to_string()
     }
 
     fn index(&mut self) {
@@ -574,7 +654,7 @@ impl Reader {
     }
 
     fn label(&self, item: u64) -> String {
-        let name = self.ex.get(item).and_then(|e| e.params().first()).and_then(Param::as_str).unwrap_or("").trim().to_string();
+        let name = self.part_name(item);
         if name.is_empty() { format!("solid #{item}") } else { format!("solid '{name}'") }
     }
 
@@ -624,10 +704,22 @@ impl Reader {
                             self.warn(format!("more than {MAX_BODIES} bodies: the rest are left out"));
                             return;
                         }
-                        // The node lists the planned solid; it becomes a body index once converted.
-                        out.push(self.plan.len());
-                        self.plan.push(Planned { item, units: u, batch: id });
-                        *self.uses.entry(item).or_default() += 1;
+                        // The node lists the planned solids (a surface model's closed shells
+                        // beside its sheet are solids of their own, in the model's colour); each
+                        // becomes a body index once converted.
+                        for piece in solidcraft_step::topology::items(&self.ex, item) {
+                            if piece != item {
+                                if let Some(c) = self.colors.get(&item).copied() {
+                                    self.colors.entry(piece).or_insert(c);
+                                }
+                                if let Some(o) = self.opacity.get(&item).copied() {
+                                    self.opacity.entry(piece).or_insert(o);
+                                }
+                            }
+                            out.push(self.plan.len());
+                            self.plan.push(Planned { item: piece, units: u, batch: id });
+                            *self.uses.entry(piece).or_default() += 1;
+                        }
                     }
                 }
                 "MAPPED_ITEM" => {
@@ -672,45 +764,69 @@ impl Reader {
         let first = self.converted;
         // The next solids, across instances and parts, converted together: parts still to
         // orient are shared out between the workers. A part that comes back within the window
-        // waits for the next one, which places the orientation its first instance found.
-        let mut last = first + 1;
-        if !single {
-            let mut fresh: HashSet<u64> = self.plan.get(first).map(|p| p.item).into_iter().collect();
-            while let Some(p) = self.plan.get(last)
-                && last - first < MAX_WINDOW
-            {
-                if !self.oriented.contains_key(&p.item) && !fresh.insert(p.item) {
-                    break;
-                }
-                last += 1;
-            }
-        }
+        // is placed once its first instance is read, from the orientation that instance found.
+        let last = if single { first + 1 } else { (first + MAX_WINDOW).min(self.plan.len()) };
         self.converted = last;
         let ex = self.ex.clone();
+        // Each planned solid of the window, with its job (`None`: a later instance of a part an
+        // earlier job of the window reads, placed after it).
         let mut sources = Vec::new();
         let mut jobs = Vec::new();
+        let mut reading = HashSet::new();
         for i in first..last {
             self.made.push(None);
             let Some(p) = self.plan.get(i) else { continue };
             let (item, units) = (p.item, p.units);
+            let placement = self.batches.get(p.batch).map_or(IDENTITY, |b| b.m);
+            if reading.contains(&item) {
+                sources.push((i, item, placement, None));
+                continue;
+            }
             if let Some(again) = self.unreadable.get(&item) {
                 if let Some(msg) = again.clone() {
                     let label = self.label(item);
-                    self.warn(format!("{label}: not imported: {msg}"));
+                    self.note(IssueKind::NotImported, Some(item), 0, format!("{label}: not imported: {msg}"));
                 }
                 continue;
             }
             let source = match self.oriented.get(&item) {
                 Some(part) => parallel::Source::Oriented(part.clone()),
-                None => parallel::Source::Item { item, units },
+                None => {
+                    reading.insert(item);
+                    parallel::Source::Item { item, units }
+                }
             };
-            let placement = self.batches.get(p.batch).map_or(IDENTITY, |b| b.m);
-            sources.push((i, item));
+            sources.push((i, item, placement, Some(jobs.len())));
             jobs.push(parallel::Job { source, placement, check_mesh: !self.unmeshed_checked.contains(&item) });
         }
         // Reading and orienting new parts is shared out between the workers.
-        let prepared = parallel::bodies(&ex, &jobs, self.workers);
-        for ((i, item), made) in sources.into_iter().zip(prepared) {
+        let mut prepared: Vec<Option<_>> = parallel::bodies(&ex, &jobs, self.workers).into_iter().map(Some).collect();
+        for (i, item, placement, job) in sources {
+            let made = match job {
+                Some(j) => match prepared.get_mut(j).and_then(Option::take) {
+                    Some(made) => made,
+                    None => continue,
+                },
+                // A later instance of a part read in this window: as it would be in the next
+                // window, after its first instance.
+                None => {
+                    if let Some(again) = self.unreadable.get(&item) {
+                        if let Some(msg) = again.clone() {
+                            let label = self.label(item);
+                            self.warn(format!("{label}: not imported: {msg}"));
+                        }
+                        continue;
+                    }
+                    let source = match self.oriented.get(&item) {
+                        Some(part) => parallel::Source::Oriented(part.clone()),
+                        None => match self.plan.get(i) {
+                            Some(p) => parallel::Source::Item { item, units: p.units },
+                            None => continue,
+                        },
+                    };
+                    parallel::prepare(&ex, &parallel::Job { source, placement, check_mesh: !self.unmeshed_checked.contains(&item) })
+                }
+            };
             let Some(e) = ex.get(item) else { continue };
             let Some(batch) = self.plan.get(i).and_then(|p| self.batches.get(p.batch)) else { continue };
             let (m, path, product, instance) = (batch.m, batch.path.clone(), batch.product.clone(), batch.instance.clone());
@@ -720,14 +836,19 @@ impl Reader {
                     if let Some(failed) = read {
                         let label = self.label(item);
                         if let Some(why) = &part.refused {
-                            let kind = if part.body.is_mesh() { "shown as a mesh" } else { "imported as surfaces" };
-                            self.warn(format!("{label}: {kind}: {why}"));
+                            let kind = if part.body.is_mesh() { IssueKind::ShownAsMesh } else { IssueKind::ImportedAsSurfaces };
+                            let words = if part.body.is_mesh() { "shown as a mesh" } else { "imported as surfaces" };
+                            self.note(kind, Some(item), 0, format!("{label}: {words}: {why}"));
                         }
                         for f in &failed {
-                            self.warn(format!("{label}: {f}"));
+                            let (kind, faces, f) = match f {
+                                parallel::Note::LeftOut(f) => (IssueKind::FaceLeftOut, 1, f),
+                                parallel::Note::Repaired(f) => (IssueKind::Repaired, 0, f),
+                            };
+                            self.note(kind, Some(item), faces, format!("{label}: {f}"));
                         }
                         if !part.closed && part.refused.is_none() {
-                            self.warn(format!("{label}: imported as an open body (the shell is not closed)"));
+                            self.note(IssueKind::OpenBody, Some(item), 0, format!("{label}: imported as an open body (the shell is not closed)"));
                         }
                     }
                     if !self.once.contains(&item) {
@@ -738,7 +859,12 @@ impl Reader {
                     let name = if own.is_empty() { product.clone() } else { own };
                     // Faces the mesher gives up on (or that the budget cut short) are reported.
                     if self.unmeshed_checked.insert(item) && missing > 0 {
-                        self.warn(format!("solid '{name}': {missing} face(s) could not be meshed and are not shown"));
+                        self.note(
+                            IssueKind::FacesNotShown,
+                            Some(item),
+                            missing,
+                            format!("solid '{name}': {missing} face(s) could not be meshed and are not shown"),
+                        );
                     }
                     if let Some(slot) = self.made.get_mut(i) {
                         *slot = Some(self.bodies.len());
@@ -771,6 +897,15 @@ impl Reader {
                         }
                         None => body,
                     };
+                    // A part SMLib refuses cannot be modelled on: found now (its first instance,
+                    // sent as an operation would send it), not at the first operation.
+                    if self.modelling_checked.insert(item)
+                        && let Some(refused) = body.smlib_refusal()
+                    {
+                        let at = refused.face.map(|f| format!(" (face {})", f + 1)).unwrap_or_default();
+                        let msg = format!("solid '{name}': needs repair before it can be modelled: {}{at}", refused.why);
+                        self.note(IssueKind::NeedsRepair, Some(item), usize::from(refused.face.is_some()), msg);
+                    }
                     self.bodies.push(ImportedBody {
                         name,
                         body,
@@ -786,7 +921,7 @@ impl Reader {
                 }
                 Err(parallel::Failure { read, msg }) => {
                     let label = self.label(item);
-                    self.warn(format!("{label}: not imported: {msg}"));
+                    self.note(IssueKind::NotImported, Some(item), 0, format!("{label}: not imported: {msg}"));
                     // Later instances don't read the item again.
                     if !self.oriented.contains_key(&item) {
                         self.unreadable.insert(item, (!read).then_some(msg));
@@ -795,6 +930,27 @@ impl Reader {
             }
         }
         true
+    }
+
+    /// The warnings (worded as `warnings`, in their order) by kind and part, and how many of the
+    /// file's parts came in as closed solids.
+    fn report(&self, warnings: &[String]) -> ImportReport {
+        let parts = self.plan.iter().map(|p| p.item).collect::<HashSet<_>>().len();
+        let solids = self.bodies.iter().filter(|b| b.closed && b.refused.is_none()).map(|b| b.source_item).collect::<HashSet<_>>().len();
+        let issues = self
+            .warnings
+            .values()
+            .zip(warnings)
+            .map(|(n, detail)| ImportIssue {
+                kind: n.kind,
+                item: n.item,
+                part: n.item.map(|i| self.part_name(i)).unwrap_or_default(),
+                faces: n.faces,
+                times: n.times,
+                detail: detail.clone(),
+            })
+            .collect();
+        ImportReport { parts, solids, issues }
     }
 
     /// Planned-solid indices (a node's `bodies` after the walk) as body indices, leaving out
@@ -1167,13 +1323,14 @@ impl StepReading {
         if let Some(first) = ex.duplicates.first() {
             rd.warn(format!("{} entity ids are defined twice (first #{first}); the first definitions were used", ex.duplicates.len()));
         }
-        let warnings: Vec<String> = rd.warnings.iter().map(|(m, n)| if *n > 1 { format!("{m} (×{n})") } else { m.clone() }).collect();
+        let warnings: Vec<String> = rd.warnings.iter().map(|(m, n)| if n.times > 1 { format!("{m} (×{})", n.times) } else { m.clone() }).collect();
+        let report = rd.report(&warnings);
         if rd.bodies.is_empty() {
             let why = warnings.first().cloned().unwrap_or_else(|| "the file has no solids".into());
             return Err(KernelError::Failed(format!("STEP import: no bodies ({why})")));
         }
         let bodies = std::mem::take(&mut rd.bodies);
-        Ok(StepImport { bodies, tree, warnings, schema: ex.schemas.join(", "), system: ex.originating_system.clone() })
+        Ok(StepImport { bodies, tree, warnings, report, schema: ex.schemas.join(", "), system: ex.originating_system.clone() })
     }
 
     /// [`Self::finish`], and the import is cached for the next read of the same text.

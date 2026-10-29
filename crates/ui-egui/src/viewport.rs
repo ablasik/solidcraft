@@ -50,6 +50,12 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
+    /// The faces the modelling kernel refuses that the window points at (a failed operation's
+    /// message, a "needs repair" row under the pointer): ringed in the error colour. What this
+    /// frame asks for ([`crate::refused_part::ring`]) is drawn from the next one on, so the ring
+    /// goes when nothing asks for it any more.
+    pub(crate) refused_ring: Vec<(String, usize)>,
+    pub(crate) refused_ring_next: Vec<(String, usize)>,
     /// A drag on the handles of the drawing being placed (Insert SVG / DXF).
     pub(crate) insert_drag: Option<crate::insert_handles::Drag>,
     /// A drag on the handles of the Transform window's box.
@@ -445,6 +451,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
     app.preferences.cosmetic_threads.hash(&mut h);
+    app.preferences.section_hatch.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
     // Two themes may share a light/dark base while drawing different geometry colours.
@@ -920,6 +927,9 @@ struct BodyDraw {
     /// The render class of each face (opaque, glass or faded).
     face_classes: Vec<crate::gpu::TriClass>,
     faded: bool,
+    /// The body encloses a volume: only closed bodies take part in a section's crossing count
+    /// ([`crate::gpu::BlockBytes::closed`]).
+    closed: bool,
     /// Its faces are drawn elsewhere, from its plan on the GPU or as an instance of shared
     /// triangles (only its edges are built here).
     on_gpu: bool,
@@ -936,7 +946,7 @@ impl BodyDraw {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (std::sync::Arc::as_ptr(&self.mesh) as usize).hash(&mut h);
         self.place.iter().flatten().flatten().for_each(|v| v.to_bits().hash(&mut h));
-        (self.faded, self.on_gpu, shaded, edges, hidden_edges, self.slot_base, self.edge.0, self.hidden_edge.0).hash(&mut h);
+        (self.faded, self.closed, self.on_gpu, shaded, edges, hidden_edges, self.slot_base, self.edge.0, self.hidden_edge.0).hash(&mut h);
         h.finish()
     }
 
@@ -949,6 +959,7 @@ impl BodyDraw {
             }
             m.tri_face.get(ti).and_then(|f| self.face_classes.get(*f as usize)).copied().unwrap_or(crate::gpu::TriClass::Opaque)
         };
+        out.open_body(!self.closed);
         if shaded && !self.on_gpu {
             let corner = |k: u32| {
                 let i = k as usize;
@@ -1055,6 +1066,7 @@ fn build_block(draws: &[BodyDraw], shaded: bool, build: &impl Fn(&BodyDraw, &mut
 fn reindex_block(block: CachedBlock, draws: &[BodyDraw]) -> CachedBlock {
     use crate::gpu::TriClass;
     let mut runs: [Vec<std::ops::Range<u32>>; 3] = Default::default();
+    let mut closed = Vec::new();
     for (range, d) in block.ranges.iter().zip(draws) {
         // The triangles this body wrote (none when its faces are drawn from a plan or as an
         // instance), never more than its mesh has.
@@ -1069,6 +1081,9 @@ fn reindex_block(block: CachedBlock, draws: &[BodyDraw]) -> CachedBlock {
             let at = range.vertices.start.saturating_add(u32::try_from(j * 3).unwrap_or(u32::MAX));
             if let Some(list) = runs.get_mut(slot) {
                 crate::gpu::extend_runs(list, at);
+            }
+            if class == TriClass::Opaque && d.closed {
+                crate::gpu::extend_runs(&mut closed, at);
             }
         }
     }
@@ -1088,6 +1103,7 @@ fn reindex_block(block: CachedBlock, draws: &[BodyDraw]) -> CachedBlock {
     let bytes = std::sync::Arc::new(crate::gpu::BlockBytes {
         vertices: old.vertices.clone(),
         opaque: std::sync::Arc::new(opaque),
+        closed: std::sync::Arc::new(closed),
         glass: std::sync::Arc::new(glass),
         faded: std::sync::Arc::new(faded),
         lines: old.lines.clone(),
@@ -1156,7 +1172,10 @@ impl Instances {
                         self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default(),
                     ),
                 };
-                self.meshes.push((mesh.clone(), crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), look, levels }));
+                self.meshes.push((
+                    mesh.clone(),
+                    crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), look, levels, closed: b.is_closed() },
+                ));
                 self.by_mesh.insert((key, look), self.meshes.len() - 1);
                 self.meshes.len() - 1
             }
@@ -1303,11 +1322,12 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
             face_colors.push(slot);
             face_classes.push(class);
         }
+        let closed = b.is_closed();
         let class = plan_class(app, &face_classes);
         let planned = class.and_then(|class| drawn_plan(app, b, true).map(|plan| (plan, class)));
         let on_gpu = planned.is_some();
         if let Some((plan, class)) = planned {
-            sc.planned.push(crate::gpu::PlannedBody { plan, face_colors: face_colors.clone(), class });
+            sc.planned.push(crate::gpu::PlannedBody { plan, face_colors: face_colors.clone(), class, closed });
         }
         // Opaque, faded and see-through bodies alike, in one colour (faces of their own colour
         // are built as before).
@@ -1335,6 +1355,7 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
                 body_color: slots.body,
                 face_classes,
                 faded,
+                closed,
                 on_gpu: true,
                 slot_base: slots.faces,
                 edge: slots.edge,
@@ -1348,6 +1369,7 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
                 body_color: slots.body,
                 face_classes,
                 faded,
+                closed,
                 on_gpu,
                 slot_base: slots.faces,
                 edge: slots.edge,
@@ -1401,6 +1423,9 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
         let mut kept = app.viewport.section_index.lock().map(|mut k| std::mem::take(&mut *k)).unwrap_or_default();
         let mut made = std::collections::HashMap::with_capacity(kept.len());
         let normal = [n.x.to_bits(), n.y.to_bits(), n.z.to_bits()];
+        // The closed solid bodies the plane cuts and where it cuts them: their hatches by part.
+        let by_part = app.preferences.section_hatch == crate::prefs::SectionHatch::ByPart;
+        let mut cuts: Vec<(&str, Vec<(Vec3, Vec3)>)> = Vec::new();
         for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name)) {
             let mesh = b.mesh();
             let key = (std::sync::Arc::as_ptr(&mesh) as usize, normal);
@@ -1408,10 +1433,28 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
                 Some((_, index)) => index,
                 None => std::sync::Arc::new(solidcraft_engine::view::SectionIndex::new(&mesh, n)),
             };
-            for (a, c) in index.segments(&mesh, o) {
+            let segments = index.segments(&mesh, o);
+            for (a, c) in &segments {
                 sc.line(a.to_f32(), c.to_f32(), col, 1.8, false);
             }
             made.insert(key, (mesh, index));
+            let solid = b.is_closed() && !body_faded(app, b, &active_bodies) && s.doc.model_body_opacity(b) >= 0.999;
+            if by_part && solid && !segments.is_empty() {
+                cuts.push((b.name.as_str(), segments));
+            }
+        }
+        // Each cut body's hatch on all its palette entries (its colour, faces and placements).
+        let parts: Vec<solidcraft_engine::render::hatch::CutPart> = cuts
+            .iter()
+            .map(|(name, segments)| solidcraft_engine::render::hatch::CutPart { seed: solidcraft_engine::render::hatch::seed(name), segments })
+            .collect();
+        let hatches = solidcraft_engine::render::hatch::hatches(&parts, n);
+        let palette = std::sync::Arc::make_mut(&mut sc.palette);
+        for ((name, _), hatch) in cuts.iter().zip(hatches) {
+            let Some(slots) = arena.slots(name) else { continue };
+            for slot in (0..slots.face_capacity as usize).map(|f| slots.face(f)).chain([slots.body, slots.instance]) {
+                palette.set_hatch(slot, hatch);
+            }
         }
         if let Ok(mut k) = app.viewport.section_index.lock() {
             *k = made;
@@ -3015,6 +3058,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     crate::theme_files::color_key(&Tokens::get()).hash(&mut h);
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
+    app.viewport.refused_ring.hash(&mut h);
     app.origin_visible().hash(&mut h);
     app.picking_plane().hash(&mut h);
     app.preferences.reference_geometry_through_bodies.hash(&mut h);
@@ -3127,6 +3171,7 @@ impl HighlightInstances {
                     instances: Vec::new(),
                     look: crate::gpu::InstanceLook::Opaque,
                     levels: Vec::new(),
+                    closed: true,
                 });
                 self.by_mesh.insert(key, self.meshes.len() - 1);
                 self.meshes.len() - 1
@@ -3322,6 +3367,24 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         let r = size * 0.04;
         for d in [Vec3::X, Vec3::Y, Vec3::Z] {
             sc.line((p - d * r).to_f32(), (p + d * r).to_f32(), construction, 2.0, true);
+        }
+    }
+    // A face the modelling kernel refuses, while the window points at it: a ring round its edges
+    // in the error colour, over the shading (and dimmed where the model hides it), like the
+    // selection's outline.
+    for (body, face) in &app.viewport.refused_ring {
+        let Some(b) = st.body(body).filter(|_| app.session.body_visible(body)) else { continue };
+        // The face itself tinted (a face whose edges are two small circles still reads as one).
+        face_tris(&mut sc, &shown(b), *face, c4(t.error.gamma_multiply(0.35)), false);
+        let m = drawn_mesh(app, b);
+        let hidden = sc.color(c4(t.error.gamma_multiply(0.45)));
+        for (ei, e) in m.edges.iter().enumerate() {
+            if m.edge_faces.get(ei).is_some_and(|f| f.iter().any(|x| *x as usize == *face)) && m.edge_pickable(ei) {
+                edge_lines(&mut sc, e, t.error, t.error.gamma_multiply(0.5), 3.0, &edge_normals(&m, e));
+                for p in e.windows(2) {
+                    sc.hidden_line(p[0].to_f32(), p[1].to_f32(), hidden, 1.4);
+                }
+            }
         }
     }
     // Reference widgets follow zoom; the often much larger world-space feedback does not.
@@ -3894,6 +3957,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let c = t.body_selected;
                 [f32::from(c.r()) / 255.0, f32::from(c.g()) / 255.0, f32::from(c.b()) / 255.0]
             },
+            // The section hatch colours by part: the cap's, then the theme's others.
+            hatch: std::array::from_fn(|k| {
+                let c = if k == 0 { t.section_cap } else { t.section_hatch.get(k - 1).copied().unwrap_or(t.section_cap) };
+                let [r, g, b, _] = c.to_normalized_gamma_f32();
+                [r, g, b]
+            }),
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     }
@@ -5309,6 +5378,7 @@ pub(crate) fn scene_palette(dark: bool, mode: crate::theme::ColorVision) -> soli
         sketch_centerline: rgb(t.sketch_centerline),
         axes: t.axes().map(rgb),
         cap: rgb(t.section_cap),
+        hatch: t.section_hatch.map(rgb),
         isocurve: rgb(t.accent),
         analysis: t.analysis,
     }
@@ -5984,6 +6054,43 @@ mod tests {
         assert!(h.app.session.isocurves.is_empty() && h.app.tool.is_none());
         let after = build_scene(&h.app);
         assert_eq!(accent(&after.lines, &after), 0, "the curves go with the analysis");
+    }
+
+    /// Isocurve Analysis on a face a boss splits in two: both pieces lie on one plane, so their
+    /// curves are the same lines, straight across the boss (they were spaced over each piece's
+    /// own extent, so the two pieces' lines missed each other).
+    #[test]
+    fn isocurves_of_a_split_face_run_on_across_the_split() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 30, "center": [0, 0, 15]})).unwrap();
+        // Through the front face from bottom to top: the face is left in two pieces, x < -2 and x > 22.
+        h.app.run("solid.cylinder", json!({"radius": 12, "height": 50, "base": [10, -20, 0], "operation": "join"})).unwrap();
+        h.settle();
+        h.app.run("inspect.isocurve", json!({"faces": [[-16, -20, 15], [26, -20, 15]]})).unwrap();
+        let faces = h.app.session.isocurve_lines();
+        assert_eq!(faces.len(), 2, "{:?}", h.app.status);
+        // Each piece's lines up the face (x held) and across it (z held), by where they are held.
+        let held = |lines: &[solidcraft_engine::kernel::IsoLine], k: usize| {
+            let mut at: Vec<f64> = lines
+                .iter()
+                .filter_map(|l| {
+                    let (a, b) = (l.points.first()?, l.points.last()?);
+                    let (pa, pb) = ([a.x, a.y, a.z][k], [b.x, b.y, b.z][k]);
+                    ((pa - pb).abs() < 1e-9).then_some(pa)
+                })
+                .collect();
+            at.sort_by(f64::total_cmp);
+            at
+        };
+        for (k, axis) in [(0, "x"), (2, "z")] {
+            let (left, right) = (held(&faces[0], k), held(&faces[1], k));
+            assert!(left.len() >= 2 && !right.is_empty(), "{axis}: {left:?} {right:?}");
+            let step = left[1] - left[0];
+            for x in left.iter().chain(&right) {
+                let rung = (x - left[0]) / step;
+                assert!((rung - rung.round()).abs() < 1e-6, "{axis} = {x} is off the ladder {left:?} (step {step}); right piece {right:?}");
+            }
+        }
     }
 
     /// Bodies drawn from their display plans, evaluated on the GPU, look like the same bodies
@@ -7083,6 +7190,7 @@ mod tests {
                     ssaa: 1.0,
                     hover_tint: [0.0; 3],
                     selection_tint: [0.0; 3],
+                    hatch: Default::default(),
                 };
                 let t0 = std::time::Instant::now();
                 let mut encoder = device.create_command_encoder(&Default::default());

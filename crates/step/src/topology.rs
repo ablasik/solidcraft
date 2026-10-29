@@ -50,6 +50,7 @@ use crate::p21::{Entity, Exchange, Param};
 use crate::read::{R, Reader};
 use crate::units;
 
+mod frames;
 mod seams;
 mod swept;
 
@@ -248,9 +249,24 @@ pub fn read_solids_with(ex: &Exchange, trims: &dyn Trims) -> Solids {
 }
 
 fn read_solids_in(ex: &Exchange, trims: Option<&dyn Trims>) -> Solids {
-    let mut items: Vec<u64> = ex.entities.iter().filter(|(_, e)| SOLID_ITEMS.contains(&e.name())).map(|(id, _)| *id).collect();
-    items.sort_unstable();
-    let index = Index::new(ex);
+    let mut solids: Vec<u64> = ex.entities.iter().filter(|(_, e)| SOLID_ITEMS.contains(&e.name())).map(|(id, _)| *id).collect();
+    solids.sort_unstable();
+    let mut index = Index::new(ex);
+    // A surface model's closed shells read on their own sit where the model does.
+    let mut items = Vec::with_capacity(solids.len());
+    for solid in solids {
+        for piece in self::items(ex, solid) {
+            if piece != solid {
+                if let Some(c) = index.context.get(&solid).copied() {
+                    index.context.insert(piece, c);
+                }
+                if let Some(p) = index.product.get(&solid).cloned() {
+                    index.product.insert(piece, p);
+                }
+            }
+            items.push(piece);
+        }
+    }
     let mut out = Solids::default();
     let mut budget = MAX_FILE_FACES;
     let mut readers: HashMap<u64, (Reader<'_>, units::Context)> = HashMap::new();
@@ -334,7 +350,7 @@ fn read_with<'a>(
     let mut b = Builder::new(ex, reader, tolerance(&context), budget, trims);
     // The file's faces, edges, vertices and their geometry read into the builder.
     let topology = solidcraft_profile::span("import", "step.topology");
-    let (ids, kind) = item_shells(e)?;
+    let (ids, kind) = item_shells(ex, item)?;
     let mut shells = Vec::with_capacity(ids.len());
     let mut skipped = false;
     for s in ids {
@@ -362,7 +378,7 @@ pub struct FaceRead {
 /// as [`read_solid_with`] reads it, with its own edges and vertices (so its tolerances cover its
 /// own gaps only); a face that cannot be read on its own says why and the others are still read.
 pub fn read_faces_with(ex: &Exchange, item: u64, context: units::Context, trims: &dyn Trims) -> R<Vec<FaceRead>> {
-    let (shells, _) = item_shells(entity(ex, item)?)?;
+    let (shells, _) = item_shells(ex, item)?;
     let mut reader = Reader::new(ex, context.units);
     let mut budget = MAX_FILE_FACES;
     let mut out = Vec::new();
@@ -384,8 +400,31 @@ pub fn read_faces_with(ex: &Exchange, item: u64, context: units::Context, trims:
     Ok(out)
 }
 
+/// A surface model's shells the file calls closed and the others, in its order.
+fn model_shells(ex: &Exchange, shells: &[u64]) -> (Vec<u64>, Vec<u64>) {
+    shells.iter().partition(|s| ex.get(**s).is_some_and(|e| matches!(e.name(), "CLOSED_SHELL" | "ORIENTED_CLOSED_SHELL")))
+}
+
+/// The items a solid item is read as, each one body: the item itself, but for a surface model
+/// with both closed and open shells (a part with a sheet beside it) each closed shell on its own
+/// (a solid), then the model (its open shells, a sheet).
+pub fn items(ex: &Exchange, item: u64) -> Vec<u64> {
+    let shells = match ex.get(item) {
+        Some(e) if e.name() == "SHELL_BASED_SURFACE_MODEL" => {
+            e.params().get(1).and_then(Param::as_list).unwrap_or(&[]).iter().filter_map(Param::as_ref_id).collect()
+        }
+        _ => Vec::new(),
+    };
+    let (closed, open) = model_shells(ex, &shells);
+    if closed.is_empty() || open.is_empty() {
+        return vec![item];
+    }
+    closed.into_iter().chain([item]).collect()
+}
+
 /// The shells of a solid item (the outer shell first, then its voids), and what kind it is.
-fn item_shells(e: &Entity) -> R<(Vec<u64>, Kind)> {
+fn item_shells(ex: &Exchange, item: u64) -> R<(Vec<u64>, Kind)> {
+    let e = entity(ex, item)?;
     let p = e.params();
     match e.name() {
         "MANIFOLD_SOLID_BREP" => Ok((vec![rid(p.get(1), "outer shell")?], Kind::Solid)),
@@ -403,8 +442,12 @@ fn item_shells(e: &Entity) -> R<(Vec<u64>, Kind)> {
             if ids.is_empty() || ids.len() > brep::MAX_SHELLS {
                 return Err(format!("a surface model with {} shells", ids.len()));
             }
-            Ok((ids, Kind::Model))
+            // Its closed shells, where it has open ones too, are items of their own ([`items`]).
+            let (closed, open) = model_shells(ex, &ids);
+            Ok((if closed.is_empty() || open.is_empty() { ids } else { open }, Kind::Model))
         }
+        // A closed shell of a surface model that has open shells too ([`items`]).
+        "CLOSED_SHELL" | "ORIENTED_CLOSED_SHELL" => Ok((vec![item], Kind::Model)),
         n => Err(unsupported(n)),
     }
 }
@@ -468,6 +511,8 @@ struct FaceB {
     outer: Option<usize>,
     /// The face's normal is the surface's natural normal.
     forward: bool,
+    /// A round face's box on its label (`brep::form::extent`), once measured.
+    extent: Option<[[f64; 2]; 2]>,
 }
 
 struct Builder<'b, 'a> {
@@ -654,8 +699,11 @@ impl<'b, 'a> Builder<'b, 'a> {
         let curve = self.edge_geometry(rid(p.get(3), "edge geometry")?, 0)?;
         let (ps, pe) = (self.point(vs)?, self.point(ve)?);
         let closed = vs == ve;
-        let near = closed || v3(ps).dist(v3(pe)) <= self.tol;
-        let mapped = map_edge(&curve, ps, pe, same_sense, closed, near, self.tol).map_err(|m| format!("edge #{id}: {m}"))?;
+        // A full turn when the edge has one vertex, or two at one point. Two vertices apart bound
+        // the arc between them, however short: a 20.4 um arc between vertices a 20.5 um uncertainty
+        // does not tell apart is that arc, not a turn around its face.
+        let full = closed || ps == pe;
+        let mapped = map_edge(&curve, ps, pe, same_sense, closed, full, self.tol).map_err(|m| format!("edge #{id}: {m}"))?;
         if mapped.sense_mismatch {
             self.sense_mismatches += 1;
         }
@@ -827,7 +875,7 @@ impl<'b, 'a> Builder<'b, 'a> {
             }
         }
         let i = index(self.faces.len())?;
-        self.faces.push(FaceB { step: id, surface, loops, outer, forward: sense });
+        self.faces.push(FaceB { step: id, surface, loops, outer, forward: sense, extent: None });
         Ok((i, sense))
     }
 
@@ -895,6 +943,9 @@ impl<'b, 'a> Builder<'b, 'a> {
     fn finish(mut self, item: u64, name: String, shells: Vec<Vec<(u32, bool)>>, kind: Kind) -> R<Solid> {
         let _span = solidcraft_profile::span("import", "step.solid_record");
         let mut notes = Vec::new();
+        // A whole sphere bounded by one seam has its frame on that seam, before anything is
+        // measured on the frame.
+        self.seat_spheres_on_seams()?;
         let at_poles = self.split_at_poles()?;
         if at_poles > 0 {
             notes.push(format!("{at_poles} edges split where they pass through a face's pole"));
@@ -906,24 +957,33 @@ impl<'b, 'a> Builder<'b, 'a> {
         if self.sense_mismatches > 0 {
             notes.push(format!("{} edges run against their same_sense (read by their vertices)", self.sense_mismatches));
         }
+        // Round faces whose forms would run past one turn start on a quarter line of their
+        // frames, before their edges are labelled on them.
+        self.turn_frames()?;
         // Each edge's label and NURBS form: a circle about a revolved face's axis labelled on that
         // face's frame, so its form lies on the face's quarter grid.
+        // A circle round a torus face's tube is labelled from its tube start likewise.
         let mut frames: Vec<Vec<brep::Frame>> = vec![Vec::new(); self.edges.len()];
+        let mut tori: Vec<Vec<BSurface>> = vec![Vec::new(); self.edges.len()];
         for f in &self.faces {
             let Some(frame) = brep::form::frame_of(&f.surface) else { continue };
+            let torus = matches!(f.surface, BSurface::Torus { .. });
             for l in &f.loops {
                 if let LoopB::Edges(es) = l {
                     for (e, _) in es {
                         if let Some(slot) = frames.get_mut(*e as usize) {
                             slot.push(frame.clone());
                         }
+                        if torus && let Some(slot) = tori.get_mut(*e as usize) {
+                            slot.push(f.surface.clone());
+                        }
                     }
                 }
             }
         }
-        for (edge, fr) in self.edges.iter_mut().zip(&frames) {
+        for ((edge, fr), tr) in self.edges.iter_mut().zip(&frames).zip(&tori) {
             let (label, interval, form) =
-                brep::form::edge(&edge.curve, edge.interval, fr, self.tol).ok_or_else(|| unsupported("an arc of more than one turn"))?;
+                brep::form::edge_on(&edge.curve, edge.interval, fr, tr, self.tol).ok_or_else(|| unsupported("an arc of more than one turn"))?;
             (edge.curve, edge.interval, edge.form) = (label, interval, form);
         }
         // Each face's pcurves; a face whose loops disagree with its same_sense is turned over.
@@ -1192,6 +1252,23 @@ impl<'b, 'a> Builder<'b, 'a> {
         std::iter::once(outer).chain((0..face.loops.len()).filter(|l| *l != outer)).collect()
     }
 
+    /// A face's box on its label over its edge loops (`brep::form::extent`); `None` where the
+    /// boundary does not project onto it.
+    fn face_extent(&self, fi: usize) -> R<Option<[[f64; 2]; 2]>> {
+        let face = self.faces.get(fi).ok_or("face reference")?;
+        let mut boundary = Vec::with_capacity(face.loops.len());
+        for l in &face.loops {
+            let LoopB::Edges(es) = l else { continue };
+            let mut b = Vec::with_capacity(es.len());
+            for &(e, forward) in es {
+                let edge = self.edges.get(e as usize).ok_or("edge reference")?;
+                b.push((&edge.curve, edge.interval, forward));
+            }
+            boundary.push(b);
+        }
+        Ok(brep::form::extent(&face.surface, &boundary))
+    }
+
     /// The pcurves of a face's edge loops (in its edge-loop order), its domain, whether it was
     /// turned over, and its NURBS form. Picks the outer loop when the file
     /// marks none (or marks one that another loop encloses), and turns the face over when its
@@ -1216,17 +1293,12 @@ impl<'b, 'a> Builder<'b, 'a> {
         // boundary on its label; then every pcurve on the forms.
         let form = match brep::form::frame_of(&label) {
             Some(_) => {
-                let mut boundary = Vec::with_capacity(edge_loops.len());
-                for l in &edge_loops {
-                    let mut b = Vec::with_capacity(l.len());
-                    for &(e, forward) in l {
-                        let edge = self.edges.get(e as usize).ok_or("edge reference")?;
-                        b.push((&edge.curve, edge.interval, forward));
-                    }
-                    boundary.push(b);
-                }
-                let extent = brep::form::extent(&label, &boundary).ok_or_else(|| unsupported("a face whose boundary does not lie on its surface"))?;
-                Some(brep::form::surface(&label, extent).ok_or_else(|| unsupported("a face of more than one turn"))?)
+                let extent = match face.extent {
+                    Some(e) => Some(e),
+                    None => self.face_extent(fi)?,
+                };
+                let extent = extent.ok_or_else(|| unsupported("a face whose boundary does not lie on its surface"))?;
+                Some(brep::form::surface_within(&label, extent, tol).ok_or_else(|| unsupported("a face of more than one turn"))?)
             }
             None => None,
         };
@@ -1594,9 +1666,9 @@ fn turn(x: f64) -> f64 {
 }
 
 /// The edge from `ps` to `pe` on `curve`: its schema curve and interval (min → max) and which
-/// way it runs. `closed`: the same vertex at both ends; `near`: the ends coincide within the
-/// tolerance (a full turn on a periodic curve).
-fn map_edge(curve: &Curve, ps: P3, pe: P3, same_sense: bool, closed: bool, near: bool, tol: f64) -> R<Mapped> {
+/// way it runs. `closed`: the same vertex at both ends; `full`: the ends are one point (a full
+/// turn on a periodic curve).
+fn map_edge(curve: &Curve, ps: P3, pe: P3, same_sense: bool, closed: bool, full: bool, tol: f64) -> R<Mapped> {
     match curve {
         Curve::Line { origin, direction, magnitude } => {
             if closed {
@@ -1615,11 +1687,11 @@ fn map_edge(curve: &Curve, ps: P3, pe: P3, same_sense: bool, closed: bool, near:
             Ok(Mapped { curve: BCurve::Line { start, end }, interval: [0.0, hi - lo], with_step, sense_mismatch: with_step != same_sense })
         }
         Curve::Circle { position, radius } => {
-            conic(BCurve::Circle { frame: frame(position), radius: *radius }, position, [*radius; 2], ps, pe, same_sense, near)
+            conic(BCurve::Circle { frame: frame(position), radius: *radius }, position, [*radius; 2], ps, pe, same_sense, full)
         }
         Curve::Ellipse { position, semi_axis_1, semi_axis_2 } => {
             let radii = [*semi_axis_1, *semi_axis_2];
-            conic(BCurve::Ellipse { frame: frame(position), radii }, position, radii, ps, pe, same_sense, near)
+            conic(BCurve::Ellipse { frame: frame(position), radii }, position, radii, ps, pe, same_sense, full)
         }
         Curve::BSpline(b) => open_or_closed(map_bspline_curve(b)?, ps, pe, same_sense, closed, tol),
         Curve::Polyline(points) => {
@@ -1662,7 +1734,7 @@ fn open_conic(curve: &Curve, ps: P3, pe: P3, same_sense: bool, closed: bool, spl
 
 /// A circle or ellipse: the vertices' angles, the arc between them in the edge's sense (a full
 /// turn when they coincide).
-fn conic(curve: BCurve, position: &Placement, radii: [f64; 2], ps: P3, pe: P3, same_sense: bool, near: bool) -> R<Mapped> {
+fn conic(curve: BCurve, position: &Placement, radii: [f64; 2], ps: P3, pe: P3, same_sense: bool, full: bool) -> R<Mapped> {
     let y = position.y();
     let param = |p: P3| {
         let q = sub(p, position.origin);
@@ -1670,7 +1742,7 @@ fn conic(curve: BCurve, position: &Placement, radii: [f64; 2], ps: P3, pe: P3, s
     };
     let (ts, te) = (param(ps), param(pe));
     // Along the curve from `from` to `to`, increasing.
-    let span = |from: f64, to: f64| if near { TAU } else { turn(to - from) };
+    let span = |from: f64, to: f64| if full { TAU } else { turn(to - from) };
     let (lo, d) = if same_sense { (ts, span(ts, te)) } else { (te, span(te, ts)) };
     if !(d > 0.0) {
         return Err("a degenerate edge on a conic".into());

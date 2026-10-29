@@ -200,6 +200,7 @@ pub mod preview;
 mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
+pub(crate) mod refused_part;
 pub mod render_workspace;
 #[cfg(test)]
 mod revolve_edit_tests;
@@ -571,6 +572,8 @@ pub struct SolveApp {
     pub integrated_titlebar: bool,
     /// The desktop host installed native menus alongside the application bar controls.
     pub native_file_menu: bool,
+    /// Where the application bar puts search, Report a bug and the version (set by the host).
+    pub header: toolbar::HeaderLayout,
     /// Build bodies' display meshes on the CPU even where the GPU could (safe mode). Read by
     /// [`SolveApp::set_wgpu`].
     pub cpu_meshing: bool,
@@ -726,6 +729,7 @@ impl SolveApp {
             native_resize_border: false,
             integrated_titlebar: false,
             native_file_menu: false,
+            header: toolbar::HeaderLayout::DESKTOP,
             cpu_meshing: false,
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
@@ -1730,7 +1734,9 @@ impl SolveApp {
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();
             stand_up::offer(self, path, &before, Some(&r));
-            if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {
+            if let Some(summary) = timeline::import_status(self, &r) {
+                self.set_status(summary, false);
+            } else if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {
                 self.set_status(format!("imported with {} warning(s): {}", w.len(), w.first().and_then(Value::as_str).unwrap_or("")), false);
             }
         }
@@ -1922,6 +1928,15 @@ impl SolveApp {
         self.pending_fit = request;
     }
 
+    /// Frame `bounds` as Fit frames the selection, leaving the selection as it is.
+    pub(crate) fn frame_bounds(&mut self, bounds: solidcraft_engine::geom::Aabb3) {
+        let from = self.cam;
+        let to = self.fitted_bounds(from, &bounds);
+        self.pending_fit = None;
+        self.animate_to(to);
+        self.pending_fit = Some((from, bounds, true));
+    }
+
     /// Move the viewport to the camera a command asked for (`view.apply`): animated like a view
     /// change, or at once (control requests, so a screenshot right after shows it).
     pub fn follow_view_request(&mut self, animate: bool) {
@@ -1973,6 +1988,7 @@ impl SolveApp {
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
         frame_watch::begin(self);
+        refused_part::next_frame(self, ctx);
         file_picker::tick(self, ctx);
         dialogs_save_mesh::tick_wait(self, ctx);
         easyprint_ui::tick(self, ctx);

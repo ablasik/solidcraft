@@ -78,6 +78,46 @@ fn lines_polylines_and_splines_on_planes_are_their_points_mapped() {
     assert!(lift_error(&plane, &cubic, [0.5, 1.5], pc) <= 1e-7);
 }
 
+/// A G4 blend curve is one Bézier of degree 9 (five conditions at each end): on its sketch's
+/// plane its pcurve is its points mapped, and on the face extruded from it, of degree (9, 1),
+/// the kernel's own iso-line trims close the loop and lift onto the edges. Degree 9 was past the
+/// evaluator's old cap of 7, so both faces were refused ("a spline surface of degree (9, 1)").
+#[test]
+fn a_g4_blend_of_degree_9_and_the_face_extruded_from_it_get_exact_pcurves() {
+    let bezier = |z: f64| -> Vec<[f64; 3]> {
+        let along_x = (0..5).map(|k| [10. + k as f64, 0., z]);
+        let along_y = (5..10).map(|k| [20., k as f64 + 1., z]);
+        along_x.chain(along_y).collect()
+    };
+    let knots: Vec<f64> = [[0.; 10], [1.; 10]].concat();
+    let low = Curve::Spline { knots: knots.clone(), points: bezier(0.) };
+    let plane = Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] };
+    let pc = &pcurves(&plane, &one(&low, [0., 1.]), 1e-9).unwrap()[0][0];
+    let Curve2::Spline { knots: k, points } = pc else { panic!("a spline") };
+    assert_eq!((k, points.len()), (&knots, 10), "the curve's own knots and points");
+    assert!(lift_error(&plane, &low, [0., 1.], pc) <= 1e-12);
+
+    let (low_pts, high_pts) = (bezier(0.), bezier(10.));
+    let rows = low_pts.iter().zip(&high_pts).map(|(a, b)| vec![*a, *b]).collect();
+    let wall = Surface::Spline { u_knots: knots.clone(), v_knots: vec![0., 0., 1., 1.], points: rows };
+    let high = Curve::Spline { knots, points: high_pts };
+    let right = Curve::Line { start: [20., 10., 0.], end: [20., 10., 10.] };
+    let left = Curve::Line { start: [10., 0., 10.], end: [10., 0., 0.] };
+    let seg = |a: [f64; 2], b: [f64; 2]| Curve2::Spline { knots: vec![0., 0., 1., 1.], points: vec![a, b] };
+    let given = [seg([0., 0.], [1., 0.]), seg([1., 0.], [1., 1.]), seg([0., 1.], [1., 1.]), seg([0., 1.], [0., 0.])];
+    let edges = [(&low, true), (&right, true), (&high, false), (&left, true)];
+    let l: Vec<EdgeUse<'_>> = edges
+        .iter()
+        .zip(&given)
+        .enumerate()
+        .map(|(e, ((curve, forward), g))| EdgeUse { edge: e as u32, curve, interval: [0., 1.], forward: *forward, tolerance: 0.0, given: Some(g) })
+        .collect();
+    let pcs = pcurves_within(&wall, &[l], 1e-7, Some([[0., 1.], [0., 1.]])).unwrap();
+    for ((curve, _), pc) in edges.iter().zip(&pcs[0]) {
+        assert!(lift_error(&wall, curve, [0., 1.], pc) <= 1e-12, "{curve:?}");
+    }
+}
+
 /// A circle about the axis is a u-line: v fixed, u its angle plus a constant (minus where it
 /// turns the other way), on cylinders, cones, spheres and tori, in either direction.
 #[test]
@@ -95,7 +135,12 @@ fn circles_about_the_axis_are_u_lines() {
         (Surface::Cone { frame: about_z(o, false), radius_at_origin: 2., half_angle: half }, 4., 2. + 4. * half.tan(), 4.),
         (Surface::Sphere { frame: about_z(o, false), radius: 5. }, 3., 4., 3f64.atan2(4.)),
         (Surface::Sphere { frame: about_z(o, false), radius: 5. }, -3., 4., (-3f64).atan2(4.)),
-        (Surface::Torus { frame: about_z(o, false), major_radius: 10., minor_radius: 2. }, 2f64.sqrt(), 10. - 2f64.sqrt(), 0.75 * PI),
+        (
+            Surface::Torus { frame: about_z(o, false), major_radius: 10., minor_radius: 2., tube_start: 0.0 },
+            2f64.sqrt(),
+            10. - 2f64.sqrt(),
+            0.75 * PI,
+        ),
     ];
     for (surface, h, r, v) in cases {
         for down in [false, true] {
@@ -326,7 +371,7 @@ fn a_seam_from_pole_to_pole_encloses_the_whole_sphere() {
 fn a_torus_bounded_by_its_seams_spans_both_periods() {
     let frames = [about_z([0.; 3], false), frame([1., 2., 3.], [0., 0.6, 0.8], [0., -0.8, 0.6])];
     for sf in frames {
-        let torus = Surface::Torus { frame: sf.clone(), major_radius: 10., minor_radius: 2. };
+        let torus = Surface::Torus { frame: sf.clone(), major_radius: 10., minor_radius: 2., tube_start: 0.0 };
         let ax = crate::brep::eval::Axes::new(&sf);
         let p = |v: Vec3| [v.x, v.y, v.z];
         // The outer equator (v = 0, u from 0) and the tube circle at u = 0 (v from 0, upwards).
@@ -398,7 +443,7 @@ fn a_seam_on_a_spline_closed_in_u_gets_pcurves_a_period_apart() {
     // Each surface and circle on its NURBS form (`form`), as SolidCraft's builders give them.
     let on = |c: &Curve, iv: [f64; 2]| crate::brep::form::curve(c, iv).unwrap();
     // The torus band: the tube's quarter from its outer equator to its top.
-    let torus = Surface::Torus { frame: about_z([0.; 3], false), major_radius: big, minor_radius: small };
+    let torus = Surface::Torus { frame: about_z([0.; 3], false), major_radius: big, minor_radius: small, tube_start: 0.0 };
     let (band, _) = crate::brep::form::surface(&torus, [full, [0., FRAC_PI_2]]).unwrap();
     let outer = on(&Curve::Circle { frame: about_z([0.; 3], false), radius: big + small }, full);
     let top = on(&Curve::Circle { frame: about_z([0., 0., small], false), radius: big }, full);
@@ -606,7 +651,7 @@ fn hostile_records_give_errors() {
     };
     assert!(pcurves(&cylinder, &one(&touching, [0., 1.]), 1e-6).is_err());
     // Extreme but valid: a torus as wide as the schema allows and thin as it allows.
-    let torus = Surface::Torus { frame: about_z([0.; 3], false), major_radius: 1e12, minor_radius: 1e-12 };
+    let torus = Surface::Torus { frame: about_z([0.; 3], false), major_radius: 1e12, minor_radius: 1e-12, tube_start: 0.0 };
     let far = Curve::Circle { frame: about_z([0.; 3], false), radius: 1e12 };
     let _ = pcurves(&torus, &one(&far, [0., 1.]), 1e-6);
 }

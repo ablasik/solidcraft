@@ -8,7 +8,10 @@
 //! frame therefore has the same parameter at the same angle, whatever quarters it spans: a circle
 //! edge's form and its cylinder's form agree along it, so its pcurve is a straight line in (u, v).
 //! A form spans the quarters its interval needs (at most five for one turn), so an arc across the
-//! frame's x axis has a form like any other.
+//! frame's x axis has a form like any other. A face of five would cover part of its surface twice:
+//! its frame is turned about its axis first ([`turned`], [`turn_quarters`]), so that it starts on
+//! a quarter line and its form spans four; a torus face's tube likewise starts from its tube start
+//! ([`tube_turned`], [`tube_quarters`]).
 //!
 //! A circle or ellipse is the arcs (an ellipse scaled by its radii, which keeps it exact: its
 //! parameter is the eccentric angle). A cylinder or cone is the arcs times a degree-1 line along the
@@ -50,11 +53,18 @@ pub fn angle(s: f64) -> f64 {
     q * FRAC_PI_2 + quarter_psi(s - q)
 }
 
-/// The quarters an angle interval needs: the first one and how many.
-fn quarters([a0, a1]: [f64; 2]) -> Option<(f64, usize)> {
+/// The quarters an angle interval needs: the first one and how many. An end within `reach` (an
+/// angle) of a quarter's end is on it: a face whose boundary lies within its tolerance of a
+/// quarter's end needs no part of the quarter past it.
+fn quarters([a0, a1]: [f64; 2], reach: f64) -> Option<(f64, usize)> {
     if !(a0.is_finite() && a1.is_finite() && a1 > a0 && a1 - a0 <= TAU * (1.0 + 1e-9)) {
         return None;
     }
+    let on_end = |a: f64| {
+        let end = (a / FRAC_PI_2).round() * FRAC_PI_2;
+        if (a - end).abs() <= reach { end } else { a }
+    };
+    let (a0, a1) = (on_end(a0), on_end(a1));
     let q0 = quarter_of(a0);
     let q1 = (a1 / FRAC_PI_2 - SLACK).ceil();
     let n = (q1 - q0).max(1.0) as usize;
@@ -63,13 +73,14 @@ fn quarters([a0, a1]: [f64; 2]) -> Option<(f64, usize)> {
 
 /// A face's quarters along an angle direction and its domain there: a whole turn is exactly
 /// four quarters from the one it starts in (the form closes on itself, so it is periodic and the
-/// face's seam uses lie a period apart), anything less the quarters it needs.
-fn face_quarters(a: [f64; 2]) -> Option<((f64, usize), [f64; 2])> {
+/// face's seam uses lie a period apart), anything less the quarters it needs ([`quarters`], ends
+/// within `reach` of a quarter's end on it).
+fn face_quarters(a: [f64; 2], reach: f64) -> Option<((f64, usize), [f64; 2])> {
     if a[1] - a[0] >= TAU * (1.0 - 1e-9) {
         let q0 = quarter_of(a[0]);
         return Some(((q0, 4), [q0, q0 + 4.0]));
     }
-    let grid = quarters(a)?;
+    let grid = quarters(a, reach)?;
     Some((grid, params(a, grid)))
 }
 
@@ -78,6 +89,61 @@ fn face_quarters(a: [f64; 2]) -> Option<((f64, usize), [f64; 2])> {
 fn params([a0, a1]: [f64; 2], (q0, n): (f64, usize)) -> [f64; 2] {
     let end = q0 + n as f64;
     [param(a0).clamp(q0, end), param(a1).clamp(q0, end)]
+}
+
+/// Equal arcs from angle `a0` to `a1` (less than a turn), as few as keep each within a quarter:
+/// their knot vector (0 at `a0`, one more at each arc's end) and control points (as
+/// [`arcs`]). A form on them is not on the quarter grid: for a face whose angle range needs the
+/// four quarters of a turn (or five) without being a turn, which on the grid would be a form that
+/// closes on itself (or overlaps itself) around a face that does not.
+fn arcs_between(a0: f64, a1: f64) -> Option<(Vec<f64>, Vec<([f64; 2], f64)>)> {
+    let span = a1 - a0;
+    if !(a0.is_finite() && span > 0.0 && span < TAU) {
+        return None;
+    }
+    let n = ((span / FRAC_PI_2) - 1e-9).ceil().max(1.0) as usize;
+    let phi = span / n as f64;
+    let w = (0.5 * phi).cos();
+    let at = |a: f64| [a.cos(), a.sin()];
+    let mut pts = Vec::with_capacity(2 * n + 1);
+    let mut knots = vec![0.0; 3];
+    for k in 0..n {
+        let start = a0 + phi * k as f64;
+        if k == 0 {
+            pts.push((at(start), 1.0));
+        }
+        let mid = at(start + 0.5 * phi);
+        pts.push(([mid[0] / w, mid[1] / w], w));
+        pts.push((at(start + phi), 1.0));
+        let end = (k + 1) as f64;
+        knots.extend(if k + 1 < n { vec![end; 2] } else { vec![end; 3] });
+    }
+    Some((knots, pts))
+}
+
+/// The arcs of a face's angle range `a` and its domain on them: the quarter grid's
+/// ([`face_quarters`]), or with `own` and a range short of a turn, arcs of its own from its start
+/// ([`arcs_between`], the domain all of them).
+fn face_arcs(a: [f64; 2], reach: f64, own: bool) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
+    if own && a[1] - a[0] < TAU * (1.0 - 1e-9) {
+        // Past each end by `reach` (while that stays short of a turn): the face's boundary, which
+        // lies off the surface by as much, then stays on the form.
+        let pad = reach.max(0.0).min(0.25 * (TAU * (1.0 - 1e-9) - (a[1] - a[0])));
+        let (a0, a1) = (a[0] - pad, a[1] + pad);
+        let made = arcs_between(a0, a1)?;
+        let n = made.0.last().copied()?;
+        let phi = (a1 - a0) / n;
+        // The form parameter at angle `t`: its arc, plus the arc's own parameter there (as
+        // `quarter_u`, for an arc of `phi`).
+        let at = |t: f64| {
+            let k = ((t - a0) / phi).floor().clamp(0.0, n - 1.0);
+            let psi = (t - a0 - k * phi).clamp(0.0, phi);
+            k + 0.5 * (1.0 + (0.5 * psi - 0.25 * phi).tan() / (0.25 * phi).tan())
+        };
+        return Some((made, [at(a[0]), at(a[1])]));
+    }
+    let (grid, d) = face_quarters(a, reach)?;
+    Some((arcs(grid.0, grid.1), d))
 }
 
 /// Quarter arcs from quarter `q0`, `n` of them: their knot vector (in form parameter) and their
@@ -130,7 +196,7 @@ pub fn curve(c: &Curve, [t0, t1]: [f64; 2]) -> Option<(Curve, [f64; 2])> {
 
 fn conic(frame: &Frame, [rx, ry]: [f64; 2], t: [f64; 2]) -> Option<(Curve, [f64; 2])> {
     let (o, x, y, _) = axes(frame)?;
-    let grid = quarters(t)?;
+    let grid = quarters(t, 0.0)?;
     let (knots, pts) = arcs(grid.0, grid.1);
     let homogeneous = pts.iter().map(|([c, s], w)| hom(o + x * (rx * c) + y * (ry * s), *w)).collect();
     Some((Curve::RationalSpline { knots, homogeneous }, params(t, grid)))
@@ -139,9 +205,117 @@ fn conic(frame: &Frame, [rx, ry]: [f64; 2], t: [f64; 2]) -> Option<(Curve, [f64;
 /// The NURBS form of a cylinder, cone, sphere or torus face over `domain` (in the label's
 /// parameters: angles, and the height along the axis of a cylinder or cone) and the domain in the
 /// form's parameters; `None` for another kind, or a domain of more than one turn.
-pub fn surface(s: &Surface, [u, v]: [[f64; 2]; 2]) -> Option<(Surface, [[f64; 2]; 2])> {
-    let (grid, fu) = face_quarters(u)?;
-    let (u_knots, ring) = arcs(grid.0, grid.1);
+pub fn surface(s: &Surface, domain: [[f64; 2]; 2]) -> Option<(Surface, [[f64; 2]; 2])> {
+    surface_within(s, domain, 0.0)
+}
+
+/// The angles `tolerance` (mm) makes along a face's two directions ([`surface_within`]): on the
+/// widest circle of the face about the axis (over `v`, the height of a cylinder or cone), and on
+/// a sphere's meridian or a torus's tube.
+fn reaches(s: &Surface, v: [f64; 2], tolerance: f64) -> (f64, f64) {
+    // The angle `tolerance` makes on a circle of `radius`.
+    let reach = |radius: f64| if tolerance > 0.0 && radius > 0.0 && radius.is_finite() { tolerance / radius } else { 0.0 };
+    match s {
+        Surface::Cylinder { radius, .. } => (reach(radius.abs()), 0.0),
+        Surface::Cone { radius_at_origin, half_angle, .. } => {
+            let slope = half_angle.tan();
+            (reach(v.iter().map(|h| (radius_at_origin + h * slope).abs()).fold(0.0, f64::max)), 0.0)
+        }
+        Surface::Sphere { radius, .. } => (reach(radius.abs()), reach(radius.abs())),
+        Surface::Torus { major_radius, minor_radius, .. } => (reach(major_radius.abs() + minor_radius.abs()), reach(minor_radius.abs())),
+        _ => (0.0, 0.0),
+    }
+}
+
+/// How many quarters a cylinder, cone, sphere or torus face over `[u, v]` (its box on the label,
+/// as for [`surface_within`]) spans about the axis on its frame's quarter grid: five when the face
+/// does not start on a quarter line and more than three quarters are left to it. A face of less
+/// than one turn then has a form past one turn (a NURBS that covers part of its surface twice); a
+/// whole turn has a form of four quarters from the one it starts in, which ends short of the
+/// face's seam, so the seam's second use lies off the form. [`turned`] puts its start on a quarter
+/// line. `None` for another surface.
+pub fn turn_quarters(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64) -> Option<usize> {
+    if !matches!(s, Surface::Cylinder { .. } | Surface::Cone { .. } | Surface::Sphere { .. } | Surface::Torus { .. }) {
+        return None;
+    }
+    Some(quarters(u, reaches(s, v, tolerance).0)?.1)
+}
+
+/// A cylinder, cone, sphere or torus with its frame turned by `angle` about its own axis (its x
+/// and y axes turned right-handed about z): the same surface, its angle parameter `angle` less at
+/// every point. `None` for another surface.
+pub fn turned(s: &Surface, angle: f64) -> Option<Surface> {
+    let turn = |f: &Frame| -> Option<Frame> {
+        let (o, x, _, z) = axes(f)?;
+        let (sin, cos) = angle.sin_cos();
+        let nx = x * cos + z.cross(x) * sin;
+        let ny = z.cross(nx);
+        Some(Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] })
+    };
+    Some(match s {
+        Surface::Cylinder { frame, radius } => Surface::Cylinder { frame: turn(frame)?, radius: *radius },
+        Surface::Cone { frame, radius_at_origin, half_angle } => {
+            Surface::Cone { frame: turn(frame)?, radius_at_origin: *radius_at_origin, half_angle: *half_angle }
+        }
+        Surface::Sphere { frame, radius } => Surface::Sphere { frame: turn(frame)?, radius: *radius },
+        Surface::Torus { frame, major_radius, minor_radius, tube_start } => {
+            Surface::Torus { frame: turn(frame)?, major_radius: *major_radius, minor_radius: *minor_radius, tube_start: *tube_start }
+        }
+        _ => return None,
+    })
+}
+
+/// How many quarters a torus face over `[u, v]` (its box on the label, as for
+/// [`surface_within`]) spans along its tube on the label's quarter grid ([`turn_quarters`] for
+/// the tube angle): five when the face does not start on a quarter line of the tube and more
+/// than three quarters are left to it. [`tube_turned`] puts its start on one. `None` for another
+/// surface.
+pub fn tube_quarters(s: &Surface, [_, v]: [[f64; 2]; 2], tolerance: f64) -> Option<usize> {
+    if !matches!(s, Surface::Torus { .. }) {
+        return None;
+    }
+    Some(face_quarters(v, reaches(s, v, tolerance).1)?.0.1)
+}
+
+/// A torus with its tube start moved on by `angle`: the same surface, its tube angle parameter
+/// `angle` less at every point. `None` for another surface.
+pub fn tube_turned(s: &Surface, angle: f64) -> Option<Surface> {
+    let Surface::Torus { frame, major_radius, minor_radius, tube_start } = s else { return None };
+    // Kept within one turn either way, as a record's tube start is.
+    let start = tube_start + angle;
+    let start = if start.abs() > TAU { start % TAU } else { start };
+    Some(Surface::Torus { frame: frame.clone(), major_radius: *major_radius, minor_radius: *minor_radius, tube_start: start })
+}
+
+/// [`surface`] for a face whose boundary lies within `tolerance` (mm) of its surface: where the
+/// domain ends within `tolerance` of a quarter's end (the angle that far along the widest circle
+/// of the face in that direction), the form ends there too. A face's box is the extent of its
+/// boundary's points ([`extent`]), which may run past a quarter's end by as much as its edges lie
+/// off the surface; the form then covers no quarter for that alone (a torus face of half a tube
+/// would otherwise go round the whole tube).
+pub fn surface_within(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Option<(Surface, [[f64; 2]; 2])> {
+    surface_on(s, domain, tolerance, false)
+}
+
+/// The NURBS form of a cylinder, cone, sphere or torus face over `domain` (as [`surface`]) whose
+/// angles run on arcs of the face's own from where it starts, not on its frame's quarter grid,
+/// wherever its range is short of a turn: the same surface, exactly, but a form that never
+/// closes on itself around a face that does not (a torus face round 250° of its tube needs all
+/// four quarters of the grid, a form SMLib does not take for a torus); each angle runs past the
+/// face's ends by the angle `tolerance` (mm) makes, so a boundary that far off stays on the
+/// form. Its circles' forms then no
+/// longer share its parameter, so its pcurves are not lines: Repair Part rebuilds a refused face
+/// on it and has SMLib make them.
+pub fn surface_on_own_arcs(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Option<(Surface, [[f64; 2]; 2])> {
+    match s {
+        Surface::Cylinder { .. } | Surface::Cone { .. } | Surface::Sphere { .. } | Surface::Torus { .. } => surface_on(s, domain, tolerance, true),
+        _ => None,
+    }
+}
+
+fn surface_on(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64, own: bool) -> Option<(Surface, [[f64; 2]; 2])> {
+    let (reach_u, reach_v) = reaches(s, v, tolerance);
+    let ((u_knots, ring), fu) = face_arcs(u, reach_u, own)?;
     // The ring of arcs times a profile `(control, weight)` mapped to (radial, axial) about the
     // frame: a rational tensor product, its weights the products.
     let net = |f: &Frame, profile: &[([f64; 2], f64)], at: &dyn Fn([f64; 2]) -> (f64, f64)| -> Option<Vec<Vec<[f64; 4]>>> {
@@ -173,15 +347,16 @@ pub fn surface(s: &Surface, [u, v]: [[f64; 2]; 2]) -> Option<(Surface, [[f64; 2]
             Some((Surface::RationalSpline { u_knots, v_knots: vec![v[0], v[0], v[1], v[1]], homogeneous }, [fu, v]))
         }
         Surface::Sphere { frame, radius } => {
-            let vgrid = quarters(v)?;
+            let vgrid = quarters(v, reach_v)?;
             let (v_knots, meridian) = arcs(vgrid.0, vgrid.1);
             let homogeneous = net(frame, &meridian, &|[c, s]| (radius * c, radius * s))?;
             Some((Surface::RationalSpline { u_knots, v_knots, homogeneous }, [fu, params(v, vgrid)]))
         }
-        Surface::Torus { frame, major_radius, minor_radius } => {
-            let (vgrid, fv) = face_quarters(v)?;
-            let (v_knots, tube) = arcs(vgrid.0, vgrid.1);
-            let homogeneous = net(frame, &tube, &|[c, s]| (major_radius + minor_radius * c, minor_radius * s))?;
+        Surface::Torus { frame, major_radius, minor_radius, tube_start } => {
+            let ((v_knots, tube), fv) = face_arcs(v, reach_v, own)?;
+            // The tube's arcs turned on by its start (a rotation of the control points, exact).
+            let (ts, tc) = tube_start.sin_cos();
+            let homogeneous = net(frame, &tube, &|[c, s]| (major_radius + minor_radius * (c * tc - s * ts), minor_radius * (s * tc + c * ts)))?;
             Some((Surface::RationalSpline { u_knots, v_knots, homogeneous }, [fu, fv]))
         }
         Surface::PlacedRevolution { profile, origin, axis, matrix, forward } => {
@@ -189,7 +364,7 @@ pub fn surface(s: &Surface, [u, v]: [[f64; 2]; 2]) -> Option<(Surface, [[f64; 2]
             // zero (the profile): (a + ib)(c + is) for each point's radial (a, b) in the frame and
             // each arc control point (c, s), weights multiplied; then the matrix.
             let (angles, along) = if *forward { (v, u) } else { (u, v) };
-            let (ring_grid, fa) = face_quarters(angles)?;
+            let (ring_grid, fa) = face_quarters(angles, 0.0)?;
             let (a_knots, arcs_r) = arcs(ring_grid.0, ring_grid.1);
             let (p_knots, h) = profile_nurbs(profile, Some(along))?;
             let fp = match profile.as_ref() {
@@ -240,6 +415,46 @@ pub fn on_frame(c: &Curve, [t0, t1]: [f64; 2], frame: &Frame, tol: f64) -> Optio
     let shift = x.dot(ny).atan2(x.dot(nx));
     let relabel = Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] };
     Some((Curve::Circle { frame: relabel, radius: *radius }, [t0 + shift, t1 + shift]))
+}
+
+/// A circle edge round a torus's tube (in a plane through the axis, centred on the ring, of the
+/// tube's radius, all within `tol`): the same circle, its angle measured from the tube direction
+/// at the torus's tube start (its y axis taken so the circle keeps its own direction), and its
+/// interval shifted to match, so its form lies on the torus's quarter grid along the tube. `None`
+/// for another circle or surface.
+pub fn on_tube(c: &Curve, [t0, t1]: [f64; 2], torus: &Surface, tol: f64) -> Option<(Curve, [f64; 2])> {
+    let (Curve::Circle { frame: own, radius }, Surface::Torus { frame, major_radius, minor_radius, tube_start }) = (c, torus) else {
+        return None;
+    };
+    let (o, x, _, z) = axes(own)?;
+    let (fo, _, _, fz) = axes(frame)?;
+    // The ring's direction at the circle's centre, and the centre on the ring.
+    let d = o - fo;
+    let radial = (d - fz * d.dot(fz)).normalized()?;
+    let on_ring = (o - (fo + radial * *major_radius)).len() <= tol;
+    if !(on_ring && (radius - minor_radius).abs() <= tol && z.dot(fz).abs() <= 1e-9 && z.dot(radial).abs() <= 1e-9) {
+        return None;
+    }
+    let (s, cs) = tube_start.sin_cos();
+    let nx = (radial * cs + fz * s).normalized()?;
+    let ny = z.cross(nx);
+    let shift = x.dot(ny).atan2(x.dot(nx));
+    let relabel = Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] };
+    Some((Curve::Circle { frame: relabel, radius: *radius }, [t0 + shift, t1 + shift]))
+}
+
+/// Whether a circle round a torus's tube that is about `frame`'s axis (within `tol`) has one
+/// quarter grid on both: its angle from `frame` ([`on_frame`]) and from the tube start
+/// ([`on_tube`]) differ by whole quarters to rounding, so its form and both faces' lie on one
+/// grid. `None` when it is not such a circle.
+pub fn tube_on_grid(c: &Curve, interval: [f64; 2], frame: &Frame, torus: &Surface, tol: f64) -> Option<bool> {
+    let (Curve::Circle { frame: a, .. }, _) = on_frame(c, interval, frame, tol)? else { return None };
+    let (Curve::Circle { frame: b, .. }, _) = on_tube(c, interval, torus, tol)? else { return None };
+    let (_, ax, _, _) = axes(&a)?;
+    let (_, bx, by, _) = axes(&b)?;
+    let turn = ax.dot(by).atan2(ax.dot(bx));
+    let off = turn - (turn / FRAC_PI_2).round() * FRAC_PI_2;
+    Some(off.abs() <= 1e-9)
 }
 
 /// The frame of a cylinder, cone, sphere or torus, or of a placed revolution (its axis, angle
@@ -306,7 +521,24 @@ pub fn edge<'a>(
     frames: impl IntoIterator<Item = &'a Frame>,
     tol: f64,
 ) -> Option<(Curve, [f64; 2], Option<(Curve, [f64; 2])>)> {
-    let (label, iv) = frames.into_iter().find_map(|f| on_frame(c, interval, f, tol)).unwrap_or_else(|| (c.clone(), interval));
+    edge_on(c, interval, frames, &[], tol)
+}
+
+/// [`edge`], with the torus faces the edge bounds: a circle round one of their tubes that is
+/// about none of `frames`' axes is labelled from that torus's tube start ([`on_tube`]), so its
+/// form lies on the face's quarter grid along the tube.
+pub fn edge_on<'a>(
+    c: &Curve,
+    interval: [f64; 2],
+    frames: impl IntoIterator<Item = &'a Frame>,
+    tori: &[Surface],
+    tol: f64,
+) -> Option<(Curve, [f64; 2], Option<(Curve, [f64; 2])>)> {
+    let (label, iv) = frames
+        .into_iter()
+        .find_map(|f| on_frame(c, interval, f, tol))
+        .or_else(|| tori.iter().find_map(|t| on_tube(c, interval, t, tol)))
+        .unwrap_or_else(|| (c.clone(), interval));
     let form = match label {
         Curve::Circle { .. } | Curve::Ellipse { .. } => Some(curve(&label, iv)?),
         _ => None,

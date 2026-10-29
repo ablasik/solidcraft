@@ -73,8 +73,9 @@ pub struct ModelBody {
     /// [`kernel::measure`] of `body` (with the body it was measured on), worked out once and
     /// shared by clones: inspecting a design again measures only the bodies that changed.
     measured: Arc<OnceLock<(Body, kernel::Result<kernel::BodyMeasure>)>>,
-    /// [`Body::is_surface`] of `body` (with the body it was measured on), worked out once and
-    /// shared by clones.
+    /// Whether `body` is open (with the body it was measured on): a B-rep one a surface body
+    /// ([`Body::is_surface`]), a mesh one with a side only one triangle has
+    /// ([`Body::is_closed_mesh`]); worked out once and shared by clones.
     surface: Arc<OnceLock<(Body, bool)>>,
     /// [`ModelBody::iso_lines`] worked out so far, shared by clones.
     iso: Arc<std::sync::Mutex<IsoLines>>,
@@ -110,10 +111,22 @@ impl ModelBody {
 
     /// A surface body: some shell does not close ([`Body::is_surface`]), worked out once.
     pub fn is_surface(&self) -> bool {
-        match self.surface.get_or_init(|| (self.body.clone(), self.body.is_surface())) {
+        !self.body.is_mesh() && self.is_open()
+    }
+
+    /// The body encloses a volume: a solid whose shells all close ([`ModelBody::is_surface`]),
+    /// or a mesh body every side of which two triangles share ([`Body::is_closed_mesh`]).
+    /// Worked out once.
+    pub fn is_closed(&self) -> bool {
+        !self.is_open()
+    }
+
+    fn is_open(&self) -> bool {
+        let open = |b: &Body| if b.is_mesh() { !b.is_closed_mesh() } else { b.is_surface() };
+        match self.surface.get_or_init(|| (self.body.clone(), open(&self.body))) {
             (measured, s) if measured.same(&self.body) => *s,
             // The body was replaced in this cell's holder since: look again.
-            _ => self.body.is_surface(),
+            _ => open(&self.body),
         }
     }
 
@@ -334,8 +347,9 @@ impl ModelBody {
         self.mesh.get().cloned()
     }
 
-    /// The isoparametric curves of face `face` for Isocurve Analysis: `count` each way across
-    /// the face, exact and cut to its trims ([`kernel::iso_grid`]), their points at the chord
+    /// The isoparametric curves of face `face` for Isocurve Analysis: spaced by `count` on the
+    /// face's surface (so faces on one surface share them), exact and cut to its trims
+    /// ([`kernel::iso_grid`]), their points at the chord
     /// tolerance of the viewport's display quality. Worked out once per face, count and display
     /// quality, and shared by every clone of this body (timeline snapshots, world states). A mesh
     /// body has no surfaces, so none.
@@ -719,6 +733,8 @@ pub struct EvalCache {
 struct CachedEval {
     error: Option<String>,
     warning: Option<String>,
+    import_report: Option<Arc<kernel::ImportReport>>,
+    repair: Option<Arc<kernel::RepairReport>>,
     ms: f64,
     state: Arc<ModelState>,
     /// What the state costs, worked out once when it was stored (see
@@ -924,6 +940,13 @@ pub struct FeatureResult {
     pub name: String,
     pub error: Option<String>,
     pub warning: Option<String>,
+    /// An Import feature's warnings by kind and part, with what came in of the file's parts
+    /// (`warning` is the first of them as the kernel words them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import_report: Option<Arc<kernel::ImportReport>>,
+    /// What a Repair Part feature changed, face by face (the command's reply says it).
+    #[serde(skip)]
+    pub repair: Option<Arc<kernel::RepairReport>>,
     pub ms: f64,
     pub skipped: bool,
     /// Not evaluated on the document's current inputs: a feature at or after a sketch shown live
@@ -1854,6 +1877,8 @@ impl Model {
                     name: f.name.clone(),
                     error: None,
                     warning: None,
+                    import_report: None,
+                    repair: None,
                     ms: 0.0,
                     skipped: true,
                     stale: false,
@@ -1889,6 +1914,8 @@ impl Model {
                     name: f.name.clone(),
                     error: c.error,
                     warning: c.warning,
+                    import_report: c.import_report,
+                    repair: c.repair,
                     ms: c.ms,
                     skipped: false,
                     stale: false,
@@ -1922,6 +1949,8 @@ impl Model {
                 b.made = crate::lineage::Made::Before;
             }
             let mut warning = None;
+            let mut import_report = None;
+            let mut repair = None;
             // Face references by name: move each face point onto its named face (on the body the
             // feature names, when it names one and the face is there).
             let renamed;
@@ -1945,7 +1974,8 @@ impl Model {
             let r = match frame_error.or(bad_param) {
                 Some(e) => Err(kernel::KernelError::Failed(e)),
                 None => kernel::guard(&f.name, || {
-                    eval_feature(doc, &vals, f, &mut next, &mut warning).map_err(|e| kernel::KernelError::Failed(e.to_string()))
+                    eval_feature(doc, &vals, f, &mut next, &mut warning, &mut import_report, &mut repair)
+                        .map_err(|e| kernel::KernelError::Failed(e.to_string()))
                 }),
             };
             if r.is_ok() {
@@ -1997,7 +2027,15 @@ impl Model {
                 Err(e) => Some(e.to_string().trim_start_matches("the operation failed: ").to_string()),
             };
             if !self.no_cache {
-                let e = CachedEval { error: error.clone(), warning: warning.clone(), ms, bytes: state.added_bytes(&before), state: state.clone() };
+                let e = CachedEval {
+                    error: error.clone(),
+                    warning: warning.clone(),
+                    import_report: import_report.clone(),
+                    repair: repair.clone(),
+                    ms,
+                    bytes: state.added_bytes(&before),
+                    state: state.clone(),
+                };
                 if let Some(k) = &self.kept.0 {
                     k.put(key, &e);
                 }
@@ -2011,6 +2049,8 @@ impl Model {
                 name: f.name.clone(),
                 error,
                 warning,
+                import_report,
+                repair,
                 ms,
                 skipped: false,
                 stale: false,
@@ -6200,7 +6240,15 @@ fn chamfer_with(
     })
 }
 
-fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
+fn eval_feature(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    f: &Feature,
+    st: &mut ModelState,
+    warning: &mut Option<String>,
+    import_report: &mut Option<Arc<kernel::ImportReport>>,
+    repair: &mut Option<Arc<kernel::RepairReport>>,
+) -> Result<()> {
     // Its tools meet bodies in other placements where those are shown (#3383).
     let _frames = ToolFrames::install(doc, f, st);
     match &f.kind {
@@ -6982,6 +7030,30 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             *target = result;
             Ok(())
         }
+        FeatureKind::Repair { body, gap, patch_holes } => {
+            let gap = val(vals, gap, Kind::Length)?;
+            let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let (repaired, report) = kernel::repair(&source.body, &kernel::RepairOptions { gap, patch_holes: *patch_holes })?;
+            let repaired = repaired.with_color(source.body.color());
+            let result = ModelBody::new(source.name.clone(), repaired, source.feature);
+            let mut left: Vec<String> =
+                report.refused.iter().map(|r| format!("SMLib still refuses face {} ({:?}): {}", r.face + 1, r.surface, r.why)).collect();
+            left.extend(
+                report
+                    .holes
+                    .iter()
+                    .filter(|h| !h.patched)
+                    .map(|h| h.why.clone().unwrap_or_else(|| format!("a hole of {} edges is left open", h.edges.len()))),
+            );
+            if !left.is_empty() {
+                *warning = Some(left.join("; "));
+            }
+            let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            *target = result;
+            *repair = Some(Arc::new(report));
+            Ok(())
+        }
         FeatureKind::MeshImport { meshes, .. } => {
             for (k, (name, b)) in mesh_bodies(meshes)?.into_iter().enumerate() {
                 let name = copy_body_name(st, f, k, &name);
@@ -7004,6 +7076,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let shown: Vec<&str> = imp.warnings.iter().take(3).map(String::as_str).collect();
                 let more = if n > 3 { format!(" (+{} more)", n - 3) } else { String::new() };
                 *warning = Some(format!("{}{more}", shown.join("; ")));
+                *import_report = Some(Arc::new(imp.report.clone()));
             }
             Ok(())
         }

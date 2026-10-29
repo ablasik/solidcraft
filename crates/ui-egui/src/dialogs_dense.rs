@@ -114,54 +114,143 @@ const FILLET_TYPES: [(&str, &str); 5] = [
 const FILLET_CORNERS: [(Continuity, &str); 2] =
     [(Continuity::G1, "ui.fillet_corner_tangent_tip"), (Continuity::G2, "ui.fillet_corner_curvature_tip")];
 
-/// The default setback of a smooth-patch corner, as a multiple of the radius.
-const SETBACK_FACTOR: &str = "1.5";
+/// The default setback of a smooth-patch corner, as a multiple of the radius (the kernel's), as
+/// the messages show it.
+fn setback_factor() -> String {
+    solidcraft_engine::doc::kernel::DEFAULT_SETBACK_FACTOR.to_string()
+}
 
 /// The Corners row's hover text: a line for each choice.
 fn fillet_corner_tip() -> String {
-    FILLET_CORNERS.map(|(_, tip)| crate::i18n::format(tip, &[("factor", SETBACK_FACTOR)])).join("\n")
+    let factor = setback_factor();
+    FILLET_CORNERS.map(|(_, tip)| crate::i18n::format(tip, &[("factor", &factor)])).join("\n")
+}
+
+/// What `solid.fillet` does with a radius too large for the faces beside an edge (`fit`): stop
+/// and say so (the default), round every edge with the largest radius that fits, or keep the
+/// radius and narrow it only where the faces run out.
+const FILLET_FITS: [(&str, &str); 3] = [("ui.fillet_fit_exact", "exact"), ("ui.fillet_fit_reduce", "reduce"), ("ui.fillet_fit_taper", "taper")];
+
+/// Which fillet options apply together, exactly as `solid.fillet` takes them (`fillet` in
+/// crates/engine/src/cmd/features.rs):
+///
+/// | Type          | If too large (`fit`)    | Corners (`corner`)                  | Setback (`setbacks`) |
+/// |---------------|-------------------------|-------------------------------------|----------------------|
+/// | Constant      | exact, reduce or taper  | tangent; curvature with exact only  | with curvature only  |
+/// | any other     | exact (not sent)        | tangent (not sent)                  | none                 |
+///
+/// The dialog shows an option's row only where it applies and sends the option only then, and a
+/// choice that rules another out puts that one back to its default ([`settle_fillet_options`]).
+pub(super) fn fillet_option_applies(extra: &serde_json::Map<String, Value>, key: &str) -> bool {
+    let constant = extra.get("type").and_then(Value::as_str).is_none_or(|t| t == "constant");
+    let exact = extra.get("fit").and_then(Value::as_str).is_none_or(|fit| fit == "exact");
+    match key {
+        "fit" => constant,
+        "corner" | "setbacks" => constant && exact,
+        _ => true,
+    }
+}
+
+/// After `changed` (`fit` or `corner`) took a new value, the options it rules out back to their
+/// defaults: a fitted radius (`fit` reduce or taper) takes tangent corners, a curvature corner
+/// takes the exact radius. A type other than Constant clears both ([`choose_fillet_type`]).
+fn settle_fillet_options(extra: &mut serde_json::Map<String, Value>, changed: &str, setback: &mut Option<String>) {
+    let fitted = extra.get("fit").and_then(Value::as_str).is_some_and(|fit| fit != "exact");
+    let patch = extra.get("corner").and_then(Value::as_str) == Some("g2");
+    match changed {
+        "fit" if fitted => {
+            extra.remove("corner");
+            extra.remove("setbacks");
+            *setback = None;
+        }
+        "corner" if patch => {
+            extra.remove("fit");
+        }
+        _ => {}
+    }
 }
 
 /// A fillet's Corners row (`corner`) and, with a smooth patch, its Setback (`setbacks`, one
-/// distance for every corner). Shown only while the edges have a corner where three or more
-/// rounded edges meet, or the fillet already has a smooth patch; a patch takes Constant radius
-/// and Exact fit.
+/// distance for every corner), for a Constant radius fillet. Shown only while the edges have a
+/// corner where three or more rounded edges meet, or the fillet already has a smooth patch.
 fn fillet_corner_rows(
     ui: &mut egui::Ui,
     s: &solidcraft_engine::Session,
     extra: &mut serde_json::Map<String, Value>,
     inputs: &[selection::SelInput],
-    rtype: usize,
-    setback: &mut String,
+    radius: &str,
+    setback: &mut Option<String>,
 ) -> bool {
+    let items = selection::items(inputs, 0);
+    let corners = fillet_corners(s, items);
     let patch = extra.get("corner").and_then(Value::as_str) == Some("g2");
-    if !patch && fillet_corners(s, selection::items(inputs, 0)).is_empty() {
+    if !patch && corners.is_empty() {
         return false;
     }
-    let exact = extra.get("fit").and_then(Value::as_str).is_none_or(|fit| fit == "exact");
     let mut enter = false;
-    ui.add_enabled_ui(rtype == 0 && exact, |ui| {
-        let mut corner = if patch { Continuity::G2 } else { Continuity::G1 };
-        ui_kit::continuity_row_explained(ui, "ui.corners", "fi_corner", &mut corner, &FILLET_CORNERS.map(|(g, _)| g), &fillet_corner_tip());
-        if (corner == Continuity::G2) != patch {
-            if corner == Continuity::G2 {
-                extra.insert("corner".into(), json!(Continuity::G2.as_str()));
-            } else {
-                extra.remove("corner");
-            }
+    let mut corner = if patch { Continuity::G2 } else { Continuity::G1 };
+    ui_kit::continuity_row_explained(ui, "ui.corners", "fi_corner", &mut corner, &FILLET_CORNERS.map(|(g, _)| g), &fillet_corner_tip());
+    if (corner == Continuity::G2) != patch {
+        if corner == Continuity::G2 {
+            extra.insert("corner".into(), json!(Continuity::G2.as_str()));
+        } else {
+            extra.remove("corner");
         }
-        if extra.get("corner").and_then(Value::as_str) == Some("g2") {
-            ui.scope(|ui| {
-                let hint = crate::i18n::format("ui.fillet_setback_hint", &[("factor", SETBACK_FACTOR)]);
-                enter |= hint_row(ui, "ui.fillet_setback", setback, &hint);
-            })
-            .response
-            .on_hover_text(crate::i18n::format("ui.fillet_setback_tip", &[("factor", SETBACK_FACTOR)]));
+        settle_fillet_options(extra, "corner", setback);
+    }
+    if extra.get("corner").and_then(Value::as_str) == Some("g2") {
+        let factor = setback_factor();
+        let length = |text: &str| crate::length_input::eval(&s.doc, text, solidcraft_engine::doc::expr::Kind::Length).ok().filter(|v| v.is_finite());
+        let r = length(radius).filter(|r| *r > 0.0);
+        // Not typed, the field shows the command's default as a length, following the radius.
+        let default = r.map(|r| crate::length_input::shown(&s.doc, solidcraft_engine::doc::kernel::DEFAULT_SETBACK_FACTOR * r));
+        let shown = setback.clone().or(default).unwrap_or_default();
+        // A setback at or below the least the kernel takes there is flagged before OK.
+        let least = r.and_then(|r| crate::dialogs::fillet_least_setback(ui.ctx(), s, items, &corners, r));
+        let warning = least
+            .filter(|least| length(&shown).is_some_and(|v| v <= least * (1.0 + 1e-9)))
+            .map(|least| crate::i18n::format("ui.fillet_setback_least", &[("least", &crate::length_input::shown(&s.doc, least))]));
+        let mut text = shown.clone();
+        let row = ui.scope(|ui| {
+            let hint = crate::i18n::format("ui.fillet_setback_hint", &[("factor", &factor)]);
+            ui_kit::checked_row(ui, "ui.fillet_setback", &mut text, &hint, warning.as_deref())
+        });
+        row.response.on_hover_text(crate::i18n::format("ui.fillet_setback_tip", &[("factor", &factor)]));
+        let (accepted, field) = row.inner;
+        enter |= accepted;
+        if text != shown {
+            *setback = Some(text);
         }
-    })
-    .response
-    .on_disabled_hover_text(tr("ui.fillet_corner_needs_constant"));
+        // Emptied and left, the field goes back to the default.
+        if setback.as_deref().is_some_and(|t| t.trim().is_empty()) && !field.has_focus() {
+            *setback = None;
+        }
+    }
     enter
+}
+
+/// A Constant radius fillet's "If too large" row (`fit`), with the radius a reduced fillet used.
+fn fillet_fit_rows(app: &SolveApp, ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, setback: &mut Option<String>) {
+    let t = Tokens::get();
+    let before = extra.get("fit").cloned();
+    let row = ui.scope(|ui| form_row(ui, "ui.fillet_fit", |ui| extra_choice(ui, extra, "fi_fit", "fit", &FILLET_FITS)));
+    row.response.on_hover_text(tr("ui.fillet_fit_tip"));
+    let fit = row.inner;
+    if extra.get("fit") != before.as_ref() {
+        settle_fillet_options(extra, "fit", setback);
+    }
+    if fit == 1
+        && let Some((lo, hi)) = app.preview.applied
+    {
+        form_row(ui, "Applied Radius", |ui| {
+            let shown = if hi > lo {
+                format!("{} – {}", crate::prefs::show_mm_bare(app, lo), crate::prefs::show_mm(app, hi, 1))
+            } else {
+                crate::prefs::show_mm(app, lo, 1)
+            };
+            ui.label(RichText::new(shown).color(t.warning));
+        });
+    }
 }
 
 /// The most instances a solid pattern makes in one direction (the document's own limit).
@@ -414,8 +503,11 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                     }
                     response
                 })
-                .on_hover_text(tr("ui.fillet_type_tip"));
-                enter |= fillet_corner_rows(ui, &app.session, &mut d.extra, &d.inputs, rtype, setback);
+                .on_hover_text(tr("ui.fillet_type_choices_tip"));
+                if rtype == 0 {
+                    enter |= fillet_corner_rows(ui, &app.session, &mut d.extra, &d.inputs, radius, setback);
+                    fillet_fit_rows(app, ui, &mut d.extra, setback);
+                }
             }
             if *chamfer && *ctype == 1 {
                 enter |= expr_row(ui, "Distance 2", distance2);
@@ -427,103 +519,70 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                 form_row(ui, "Flip", |ui| check(ui, flip));
             }
             ui_kit::section(ui, "fillet_options", "Options", true, |ui| {
-                ui_kit::checkbox_grid(ui, &mut [("Tangent Chain", chain), ("Preview", &mut d.preview_enabled)], 2);
+                ui.scope(|ui| ui_kit::checkbox_grid(ui, &mut [("Tangent Chain", chain), ("Preview", &mut d.preview_enabled)], 2))
+                    .response
+                    .on_hover_text(tr("ui.fillet_options_tip"));
             });
-            if !*chamfer {
-                ui.add_enabled_ui(matches!(rtype, 2 | 4), |ui| {
-                    ui_kit::section(ui, "variable_radius", "Variable Radius", false, |ui| {
-                        if !matches!(rtype, 2 | 4) {
-                            ui.add_enabled(false, egui::Label::new(tr("Choose Variable radius or Spline in Type.")).wrap());
-                        }
-                        if rtype == 2 {
-                            form_row(ui, "End Radius", |ui| {
-                                enter |= extra_field(ui, &mut d.extra, "radius2", &length_default(&app.session, "1"));
-                            });
-                            // Which end of the first edge takes the start radius.
-                            form_row(ui, "Swap Ends", |ui| {
-                                extra_check(ui, &mut d.extra, "swap_ends");
-                            });
-                            // Radii between the ends: position along the edge (from the start end)
-                            // and radius.
-                            let mut mids = mid_points(&d.extra);
-                            let mut remove = None;
-                            for (k, (position, r)) in mids.iter_mut().enumerate() {
-                                form_row(ui, "Mid Radius", |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui_kit::fraction_field(ui, position)
-                                            .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
-                                        let width = (ui.available_width() - t.space_24 - t.space_4).max(0.0);
-                                        ui.allocate_ui_with_layout(vec2(width, t.space_24), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            enter |= field(ui, r);
-                                        });
-                                        if ui_kit::button(ui, "×", ui_kit::Button::Small).on_hover_text(tr("Remove this point")).clicked() {
-                                            remove = Some(k);
-                                        }
-                                    });
-                                });
-                            }
-                            if let Some(k) = remove {
-                                mids.remove(k);
-                            }
-                            form_row(ui, "", |ui| {
-                                if ui_kit::button(ui, tr("Add Mid Radius"), ui_kit::Button::Normal).clicked() && mids.len() < 20 {
-                                    let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
-                                    mids.push((t.min(0.99), radius.clone()));
-                                }
-                            });
-                            d.extra.insert("mid".into(), json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
-                            // How the radius runs between the radii: smoothly, or straight.
-                            let was = d.extra.get("smooth").and_then(Value::as_bool).unwrap_or(false);
-                            let mut smooth = was;
-                            ui_kit::checkbox_grid(ui, &mut [("ui.fillet_smooth_radius", &mut smooth)], 1);
-                            if smooth != was {
-                                d.extra.insert("smooth".into(), json!(smooth));
-                            }
-                        }
-                        if rtype == 4 {
-                            // The radius along the edge as a B-spline: its control radii from the
-                            // start end, also dragged by their handles on the edge.
-                            form_row(ui, "Swap Ends", |ui| {
-                                extra_check(ui, &mut d.extra, "swap_ends");
-                            });
-                            let mut radii = spline_radii(&mut d.extra, radius);
-                            let n = radii.len();
-                            for (k, r) in radii.iter_mut().enumerate() {
-                                enter |= expr_row(ui, if k + 1 == n { "End Radius" } else { "Control Radius" }, r);
-                            }
-                            d.extra.insert("radii".into(), json!(radii));
-                        }
-                    });
-                })
-                .response
-                .on_disabled_hover_text(tr("Choose Variable radius or Spline in Type."));
-                ui_kit::section(ui, "fillet_advanced", "Advanced", false, |ui| {
-                    let constant = rtype == 0;
-                    ui.add_enabled_ui(constant, |ui| {
-                        let fit = form_row(ui, "Radius Fit", |ui| {
-                            extra_choice(
-                                ui,
-                                &mut d.extra,
-                                "fi_fit",
-                                "fit",
-                                &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
-                            )
+            // The radii along the edge, for the two types that take them.
+            if !*chamfer && matches!(rtype, 2 | 4) {
+                ui_kit::section(ui, "variable_radius", "Variable Radius", true, |ui| {
+                    if rtype == 2 {
+                        form_row(ui, "End Radius", |ui| {
+                            enter |= extra_field(ui, &mut d.extra, "radius2", &length_default(&app.session, "1"));
                         });
-                        if fit == 1
-                            && let Some((lo, hi)) = app.preview.applied
-                        {
-                            form_row(ui, "Applied Radius", |ui| {
-                                let shown = if hi > lo {
-                                    format!("{} – {}", crate::prefs::show_mm_bare(app, lo), crate::prefs::show_mm(app, hi, 1))
-                                } else {
-                                    crate::prefs::show_mm(app, lo, 1)
-                                };
-                                ui.label(RichText::new(shown).color(t.warning));
+                        // Which end of the first edge takes the start radius.
+                        form_row(ui, "Swap Ends", |ui| {
+                            extra_check(ui, &mut d.extra, "swap_ends");
+                        });
+                        // Radii between the ends: position along the edge (from the start end)
+                        // and radius.
+                        let mut mids = mid_points(&d.extra);
+                        let mut remove = None;
+                        for (k, (position, r)) in mids.iter_mut().enumerate() {
+                            form_row(ui, "Mid Radius", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui_kit::fraction_field(ui, position)
+                                        .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
+                                    let width = (ui.available_width() - t.space_24 - t.space_4).max(0.0);
+                                    ui.allocate_ui_with_layout(vec2(width, t.space_24), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        enter |= field(ui, r);
+                                    });
+                                    if ui_kit::button(ui, "×", ui_kit::Button::Small).on_hover_text(tr("Remove this point")).clicked() {
+                                        remove = Some(k);
+                                    }
+                                });
                             });
                         }
-                    });
-                    if !constant {
-                        ui.label(RichText::new(tr("ui.fillet_fit_needs_constant")).color(t.text_dim).size(t.font_small));
+                        if let Some(k) = remove {
+                            mids.remove(k);
+                        }
+                        form_row(ui, "", |ui| {
+                            if ui_kit::button(ui, tr("Add Mid Radius"), ui_kit::Button::Normal).clicked() && mids.len() < 20 {
+                                let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
+                                mids.push((t.min(0.99), radius.clone()));
+                            }
+                        });
+                        d.extra.insert("mid".into(), json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
+                        // How the radius runs between the radii: smoothly, or straight.
+                        let was = d.extra.get("smooth").and_then(Value::as_bool).unwrap_or(false);
+                        let mut smooth = was;
+                        ui_kit::checkbox_grid(ui, &mut [("ui.fillet_smooth_radius", &mut smooth)], 1);
+                        if smooth != was {
+                            d.extra.insert("smooth".into(), json!(smooth));
+                        }
+                    }
+                    if rtype == 4 {
+                        // The radius along the edge as a B-spline: its control radii from the
+                        // start end, also dragged by their handles on the edge.
+                        form_row(ui, "Swap Ends", |ui| {
+                            extra_check(ui, &mut d.extra, "swap_ends");
+                        });
+                        let mut radii = spline_radii(&mut d.extra, radius);
+                        let n = radii.len();
+                        for (k, r) in radii.iter_mut().enumerate() {
+                            enter |= expr_row(ui, if k + 1 == n { "End Radius" } else { "Control Radius" }, r);
+                        }
+                        d.extra.insert("radii".into(), json!(radii));
                     }
                 });
             }
@@ -1147,17 +1206,69 @@ mod tests {
     }
 
     #[test]
-    fn advanced_controls_map_to_fit() {
+    fn if_too_large_maps_to_fit() {
         let mut h = fillet_harness();
-        assert!(scenario::handle_at("dialog:Radius Fit").is_none(), "Advanced starts collapsed");
-        h.step(&json!({"click":{"handle":"dialog:section:Advanced"}})).unwrap();
-        assert!(scenario::handle_at("dialog:Corner").is_none(), "the corner is no longer an advanced choice");
-        choose(&mut h, "Radius Fit", "Reduce to Fit");
+        assert!(scenario::handle_at("dialog:section:Advanced").is_none(), "no Advanced section: its one row sits with Type");
+        choose(&mut h, "ui.fillet_fit", "ui.fillet_fit_reduce");
         assert_eq!(parameters(&h)["fit"], json!("reduce"));
-        choose(&mut h, "Radius Fit", "Taper to Fit");
+        choose(&mut h, "ui.fillet_fit", "ui.fillet_fit_taper");
         assert_eq!(parameters(&h)["fit"], json!("taper"));
-        choose(&mut h, "Radius Fit", "Exact");
+        choose(&mut h, "ui.fillet_fit", "ui.fillet_fit_exact");
         assert!(parameters(&h).get("fit").is_none());
+        choose(&mut h, "Type", "Chord length");
+        assert!(scenario::handle_at("dialog:ui.fillet_fit").is_none(), "a fitted radius is for Constant radius only");
+    }
+
+    /// The dialog follows the option model (`fillet_option_applies`): through every type, fit and
+    /// corner choice, in either order, each option it shows is one the others allow, and the
+    /// command it builds is never refused for its options (`solid.fillet` runs it on a copy of
+    /// the design). A choice that rules another out resets that one, visibly.
+    #[test]
+    fn no_reachable_fillet_option_state_is_refused_for_its_options() {
+        let refused_for_options = |e: &str| e.contains("take a constant radius") || e.contains("is built for") || e.contains("are built for");
+        // Each distinct command is run once.
+        let ran = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let check = |h: &Harness, what: &str| {
+            let p = parameters(h);
+            let constant = p.get("type").is_none_or(|t| t == "constant");
+            let exact = p.get("fit").is_none_or(|f| f == "exact");
+            assert!(constant || p.get("fit").is_none(), "{what}: fit without Constant radius: {p}");
+            assert!(constant && exact || (p.get("corner").is_none() && p.get("setbacks").is_none()), "{what}: a curvature corner with {p}");
+            assert_eq!(scenario::handle_at("dialog:ui.fillet_fit").is_some(), constant, "{what}: If too large shows exactly with Constant radius");
+            assert_eq!(scenario::handle_at("dialog:ui.corners").is_some(), constant, "{what}: Corners shows exactly with Constant radius");
+            if !ran.borrow_mut().insert(p.to_string()) {
+                return;
+            }
+            let mut copy = solidcraft_engine::Session::new((*h.app.session.doc).clone());
+            if let Err(e) = copy.execute("solid.fillet", &p) {
+                assert!(!refused_for_options(&e.to_string()), "{what}: {p} refused for its options: {e}");
+            }
+        };
+        for (label, _) in FILLET_TYPES {
+            for (fit, _) in FILLET_FITS {
+                for corner_first in [false, true] {
+                    let mut h = fillet_harness();
+                    set_edges(&mut h, 3);
+                    let what = format!("{label}, {fit}, corner first: {corner_first}");
+                    if corner_first {
+                        choose(&mut h, "ui.corners", Continuity::G2.label_id());
+                        check(&h, &what);
+                        choose(&mut h, "ui.fillet_fit", fit);
+                        if fit != "ui.fillet_fit_exact" {
+                            assert!(parameters(&h).get("corner").is_none(), "{what}: a fitted radius puts Corners back to Tangent");
+                        }
+                    } else {
+                        choose(&mut h, "ui.fillet_fit", fit);
+                        check(&h, &what);
+                        choose(&mut h, "ui.corners", Continuity::G2.label_id());
+                        assert!(parameters(&h).get("fit").is_none(), "{what}: a curvature corner puts If too large back to Stop");
+                    }
+                    check(&h, &what);
+                    choose(&mut h, "Type", label);
+                    check(&h, &what);
+                }
+            }
+        }
     }
 
     /// The three edges of the sample's corner at (10, 0, 5): top front, top right and upright.
@@ -1176,7 +1287,7 @@ mod tests {
     }
 
     /// Corners shows only once three rounded edges meet at a corner; Curvature (a smooth patch) writes
-    /// `corner: g2`, its Setback (empty for the command's 1.5 × radius) goes to that corner as
+    /// `corner: g2`, its Setback (untouched: the command's 1.5 × radius) goes to that corner as
     /// `setbacks`, and Tangent (a rolling ball) writes neither.
     #[test]
     fn corners_row_follows_the_selection_and_maps_to_corner_and_setbacks() {
@@ -1198,19 +1309,91 @@ mod tests {
         assert!(p.get("setbacks").is_none(), "an empty Setback leaves the command's default: {p}");
         assert!(scenario::handle_at("dialog:ui.fillet_setback").is_some());
         if let Some(Dialog { kind: Kind::Fillet { setback, .. }, .. }) = h.app.dialog.as_mut() {
-            *setback = "3 mm".into();
+            *setback = Some("3 mm".into());
         }
         assert_eq!(parameters(&h)["setbacks"], json!([{"vertex": [10.0, 0.0, 5.0], "distance": "3 mm"}]));
         choose(&mut h, "ui.corners", Continuity::G1.label_id());
         let p = parameters(&h);
         assert!(p.get("corner").is_none() && p.get("setbacks").is_none(), "{p}");
         assert!(scenario::handle_at("dialog:ui.fillet_setback").is_none());
-        // Another type clears the patch; the row stays, disabled, saying why in its hover text.
+        // Another type clears the patch and hides the row: its corners are the rolling ball's.
         choose(&mut h, "ui.corners", Continuity::G2.label_id());
         choose(&mut h, "Type", "Chord length");
         let p = parameters(&h);
         assert!(p.get("corner").is_none() && p.get("setbacks").is_none(), "{p}");
-        assert!(scenario::handle_at("dialog:ui.corners").is_some());
+        assert!(scenario::handle_at("dialog:ui.corners").is_none());
+    }
+
+    /// Setback shows the command's default as an editable length that follows the radius until
+    /// one is typed (and sends none), keeps a typed one through radius changes, and flags one at
+    /// or below the least setback the kernel takes there (the radius, at this square corner)
+    /// before OK; a setback past it builds.
+    #[test]
+    fn setback_shows_its_default_keeps_a_typed_value_and_flags_one_too_small() {
+        let mut h = fillet_harness();
+        set_edges(&mut h, 3);
+        choose(&mut h, "ui.corners", Continuity::G2.label_id());
+        let radius = |h: &mut Harness, r: &str| {
+            if let Some(Dialog { kind: Kind::Fillet { radius, .. }, .. }) = h.app.dialog.as_mut() {
+                *radius = r.into();
+            }
+            h.frames(3);
+        };
+        let shown = |h: &Harness| {
+            let tree = h.output.accesskit_update.as_ref().unwrap();
+            let label = crate::i18n::tr_label("ui.fillet_setback");
+            tree.nodes.iter().find(|(_, n)| n.label() == Some(label)).and_then(|(_, n)| n.value()).unwrap_or_default().to_string()
+        };
+        let typed = |h: &Harness| match &h.app.dialog.as_ref().unwrap().kind {
+            Kind::Fillet { setback, .. } => setback.clone(),
+            other => panic!("{other:?}"),
+        };
+        let flagged = || scenario::rect_of("dialog:caption:ui.fillet_setback").is_some();
+        let type_setback = |h: &mut Harness, text: &str| {
+            h.step(&json!({"click":{"handle":"dialog:ui.fillet_setback"}})).unwrap();
+            h.step(&json!({"key":"A","cmd":true})).unwrap();
+            h.step(&json!({"text": text})).unwrap();
+            h.frames(3);
+        };
+        radius(&mut h, "2 mm");
+        assert_eq!((shown(&h), typed(&h)), ("3 mm".to_string(), None), "the default, 1.5 × the radius, as a length");
+        assert!(!flagged() && parameters(&h).get("setbacks").is_none(), "an untouched default sends none");
+        radius(&mut h, "3 mm");
+        assert_eq!(shown(&h), "4.5 mm", "untouched, it follows the radius");
+        radius(&mut h, "2 mm");
+        type_setback(&mut h, "1.5 mm");
+        assert_eq!(typed(&h).as_deref(), Some("1.5 mm"));
+        radius(&mut h, "2.5 mm");
+        assert_eq!(shown(&h), "1.5 mm", "typed, it stays as typed");
+        radius(&mut h, "2 mm");
+        assert!(flagged(), "1.5 mm is not past the least, the 2 mm radius");
+        let mut copy = solidcraft_engine::Session::new((*h.app.session.doc).clone());
+        let refused = copy.execute("solid.fillet", &parameters(&h)).unwrap_err().to_string();
+        assert!(refused.contains("setback must be more than the radius (2 mm)"), "the kernel refuses what the field flags: {refused}");
+        assert_eq!(
+            crate::dialogs::fillet_plain_error(&refused, true),
+            Some(crate::dialogs::FilletRefusal::InField),
+            "the field says it, not again under the dialog"
+        );
+        let least = crate::dialogs::fillet_least_setback(
+            &h.ctx,
+            &h.app.session,
+            &h.app.dialog.as_ref().unwrap().inputs[0].items,
+            &[Vec3::new(10.0, 0.0, 5.0)],
+            2.0,
+        );
+        assert!(least.is_some_and(|l| (l - 2.0).abs() < 1e-9), "{least:?}");
+        assert_eq!(crate::length_input::shown(&h.app.session.doc, least.unwrap()), "2 mm", "the message's least");
+        type_setback(&mut h, "2 mm");
+        assert!(flagged(), "the least itself is refused too");
+        type_setback(&mut h, "3 mm");
+        assert!(!flagged(), "past the least");
+        let p = parameters(&h);
+        assert_eq!(p["setbacks"], json!([{"vertex": [10.0, 0.0, 5.0], "distance": "3 mm"}]));
+        let mut copy = solidcraft_engine::Session::new((*h.app.session.doc).clone());
+        copy.execute("solid.fillet", &p).unwrap();
+        let st = crate::open_meshing::session_world(&copy);
+        assert!(st.bodies.iter().all(|b| b.body.validity().is_empty()), "a 3 mm setback on 2 mm rounds builds");
     }
 
     /// No visible label of the fillet dialog names a continuity by its code (G0 … G3): the words
@@ -1229,11 +1412,8 @@ mod tests {
         let mut h = fillet_harness();
         set_edges(&mut h, 3);
         choose(&mut h, "ui.corners", Continuity::G2.label_id());
-        for section in ["Variable Radius", "Advanced"] {
-            h.step(&json!({"click":{"handle":format!("dialog:section:{section}")}})).unwrap();
-        }
         h.frames(3);
-        assert!(scenario::handle_at("dialog:ui.fillet_setback").is_some() && scenario::handle_at("dialog:Radius Fit").is_some());
+        assert!(scenario::handle_at("dialog:ui.fillet_setback").is_some() && scenario::handle_at("dialog:ui.fillet_fit").is_some());
         let tree = h.output.accesskit_update.as_ref().unwrap();
         let labels: Vec<String> = tree.nodes.iter().flat_map(|(_, node)| [node.label(), node.value()]).flatten().map(str::to_string).collect();
         assert!(labels.iter().any(|l| l == "Curvature"), "{labels:?}");
@@ -1246,9 +1426,9 @@ mod tests {
     #[test]
     fn a_saved_smooth_patch_reopens_with_its_setback() {
         for (setbacks, field) in [
-            (json!([{"vertex": [0, 0, 0], "distance": 7}]), "7"),
+            (json!([{"vertex": [0, 0, 0], "distance": 7}]), Some("7")),
             // Named near the vertex, as the command allows, rather than at it.
-            (json!([{"vertex": [0.1, 0.1, 0], "distance": 7}]), ""),
+            (json!([{"vertex": [0.1, 0.1, 0], "distance": 7}]), None),
         ] {
             let mut h = Harness::new();
             // The command's own smooth-patch corner: a 20 mm box, its three edges at the origin.
@@ -1265,7 +1445,7 @@ mod tests {
             h.app.edit_feature(id);
             h.frames(3);
             let d = h.app.dialog.as_ref().unwrap();
-            assert!(matches!(&d.kind, Kind::Fillet { setback, .. } if setback == field), "{:?}", d.kind);
+            assert!(matches!(&d.kind, Kind::Fillet { setback, .. } if setback.as_deref() == field), "{:?}", d.kind);
             assert_eq!(d.extra.get("corner"), Some(&json!("g2")));
             for (command, params) in apply_commands(&h.app, d).unwrap() {
                 crate::dialogs::roll_marker(&mut h.app, None).unwrap();
@@ -1289,9 +1469,7 @@ mod tests {
         assert_eq!(parameters(&h), original);
         assert!(scenario::handle_at("dialog:End Radius").is_none());
         choose(&mut h, "Type", "Variable radius");
-        assert!(scenario::handle_at("dialog:End Radius").is_none(), "the section stays collapsed after a type choice");
-        h.step(&json!({"click":{"handle":"dialog:section:Variable Radius"}})).unwrap();
-        assert!(scenario::handle_at("dialog:End Radius").is_some());
+        assert!(scenario::handle_at("dialog:End Radius").is_some(), "the section shows, open, once its type is chosen");
         assert!(
             scenario::handle_at("dialog:ui.fillet_smooth_radius").is_some(),
             "Smooth radius change is a supported variable-radius option even before adding a middle radius"

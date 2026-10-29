@@ -70,6 +70,13 @@ pub struct FacePlan {
     pub triangles: Vec<[u32; 3]>,
 }
 
+impl FacePlan {
+    /// Triangle `t` is on this face's own nodes (the evaluated mesh keeps only those).
+    fn has_nodes(&self, t: &[u32; 3]) -> bool {
+        t.iter().all(|&i| (i as usize) < self.uv.len())
+    }
+}
+
 /// A body's display tessellation, ready to evaluate.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TessPlan {
@@ -98,9 +105,8 @@ impl TessPlan {
                 out.positions.push(p);
                 out.normals.push(if f.flip { -n } else { n });
             }
-            let n = f.uv.len();
             for t in &f.triangles {
-                if t.iter().all(|&i| (i as usize) < n) {
+                if f.has_nodes(t) {
                     let at = |i: u32| u32::try_from(base + i as usize).unwrap_or(u32::MAX);
                     out.triangles.push([at(t[0]), at(t[1]), at(t[2])]);
                     out.tri_face.push(f.face);
@@ -110,6 +116,20 @@ impl TessPlan {
         out.edges = self.edges.clone();
         out.edge_faces = self.edge_faces.clone();
         out
+    }
+
+    /// Which of the body's `faces` faces have triangles in [`TessPlan::evaluate`]'s mesh,
+    /// without evaluating it.
+    pub fn faces_with_triangles(&self, faces: usize) -> Vec<bool> {
+        let mut has = vec![false; faces];
+        for f in &self.faces {
+            if f.triangles.iter().any(|t| f.has_nodes(t))
+                && let Some(h) = has.get_mut(f.face as usize)
+            {
+                *h = true;
+            }
+        }
+        has
     }
 
     /// Vertices across all faces.
@@ -494,46 +514,55 @@ pub(crate) fn span_of(knots: &[f64], p: usize, n: usize, t: f64) -> usize {
     k
 }
 
+/// The non-zero basis functions of degree `p` on span `span` (NURBS Book A2.2): element `j` is
+/// `N_{span−p+j}`.
+fn basis_funs(knots: &[f64], span: usize, p: usize, t: f64) -> Option<[f64; W]> {
+    if p >= W {
+        return None;
+    }
+    let kn = |i: usize| knots.get(i).copied();
+    let mut n = [0.0f64; W];
+    n[0] = 1.0;
+    for j in 1..=p {
+        let mut saved = 0.0;
+        for (r, nr) in n.iter_mut().enumerate().take(j) {
+            // right[r + 1] and left[j − r] of A2.2.
+            let right = kn(span + r + 1)? - t;
+            let left = t - kn((span + 1 + r).checked_sub(j)?)?;
+            let den = right + left;
+            let temp = if den != 0.0 { *nr / den } else { 0.0 };
+            *nr = saved + right * temp;
+            saved = left * temp;
+        }
+        n[j] = saved;
+    }
+    Some(n)
+}
+
 /// Non-zero basis functions of degree `p` on span `span` and their first derivatives
-/// (NURBS Book A2.3 with n = 1). `ders[0][j]` is `N_{span−p+j}`, `ders[1][j]` its derivative.
+/// (NURBS Book eq. 2.7, from the degree p − 1 functions on the same span). `ders[0][j]` is
+/// `N_{span−p+j}`, `ders[1][j]` its derivative. One-dimensional tables, as the GPU twin keeps
+/// them, so a high degree costs its own work only.
 pub(crate) fn basis_ders(knots: &[f64], span: usize, p: usize, t: f64) -> Option<[[f64; W]; 2]> {
     if p == 0 || p >= W {
         return None;
     }
     let kn = |i: usize| knots.get(i).copied();
-    // ndu[j][r]: basis values (upper triangle incl. diagonal), knot differences (lower).
-    let mut ndu = [[0.0f64; W]; W];
-    let (mut left, mut right) = ([0.0f64; W], [0.0f64; W]);
-    ndu[0][0] = 1.0;
-    for j in 1..=p {
-        left[j] = t - kn((span + 1).checked_sub(j)?)?;
-        right[j] = kn(span + j)? - t;
-        let mut saved = 0.0;
-        for r in 0..j {
-            ndu[j][r] = right[r + 1] + left[j - r];
-            let temp = if ndu[j][r] != 0.0 { ndu[r][j - 1] / ndu[j][r] } else { 0.0 };
-            ndu[r][j] = saved + right[r + 1] * temp;
-            saved = left[j - r] * temp;
-        }
-        ndu[j][j] = saved;
-    }
-    let mut ders = [[0.0f64; W]; 2];
-    for j in 0..=p {
-        ders[0][j] = ndu[j][p];
-    }
-    // First derivative: p·(N_{r,p−1}/(u_{r+p}−u_r) − N_{r+1,p−1}/(u_{r+p+1}−u_{r+1})).
+    let lower = basis_funs(knots, span, p - 1, t)?;
+    let mut ders = [basis_funs(knots, span, p, t)?, [0.0f64; W]];
+    // N'_{i,p} = p·(N_{i,p−1}/(u_{i+p}−u_i) − N_{i+1,p−1}/(u_{i+p+1}−u_{i+1})), i = span − p + r.
     for r in 0..=p {
         let mut d = 0.0;
         if r >= 1 {
-            let den = ndu[p][r - 1];
+            let den = kn(span + r)? - kn((span + r).checked_sub(p)?)?;
             if den != 0.0 {
-                d += ndu[r - 1][p - 1] / den;
+                d += lower[r - 1] / den;
             }
         }
         if r < p {
-            let den = ndu[p][r];
+            let den = kn(span + r + 1)? - kn((span + r + 1).checked_sub(p)?)?;
             if den != 0.0 {
-                d -= ndu[r][p - 1] / den;
+                d -= lower[r] / den;
             }
         }
         ders[1][r] = d * p as f64;
@@ -772,5 +801,19 @@ mod tests {
         assert_eq!(m.triangles, vec![[0, 1, 2]]);
         assert_eq!(m.tri_face, vec![3]);
         assert!(m.normals.iter().all(|n| close(*n, -Vec3::Z, 1e-12)));
+        // Faces with triangles, counted without evaluating, are the faces the mesh has: not a
+        // face whose only triangle is off its nodes, nor one with none, nor one out of range.
+        let mut plan = plan;
+        let only = |face: u32, triangles: Vec<[u32; 3]>| FacePlan { face, uv: vec![[0.0, 0.0]; 3], triangles, ..Default::default() };
+        plan.faces.extend([only(0, vec![[0, 1, 9]]), only(1, vec![]), only(2, vec![[2, 1, 0]]), only(7, vec![[0, 1, 2]])]);
+        let has = plan.faces_with_triangles(5);
+        let mut evaluated = vec![false; 5];
+        for f in plan.evaluate().tri_face {
+            if let Some(h) = evaluated.get_mut(f as usize) {
+                *h = true;
+            }
+        }
+        assert_eq!(has, evaluated);
+        assert_eq!(has, vec![false, false, true, true, false]);
     }
 }

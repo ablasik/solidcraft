@@ -220,8 +220,12 @@ fn one_face(surface: Surface, domain: [[f64; 2]; 2], edges: Vec<(Curve, [f64; 2]
 /// at u = 0, a seam used twice, each on its form.
 fn closed_band() -> Brep {
     let (big, small) = (5., 1.);
-    let torus =
-        Surface::Torus { frame: Frame { origin: [0., 0., 0.], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] }, major_radius: big, minor_radius: small };
+    let torus = Surface::Torus {
+        frame: Frame { origin: [0., 0., 0.], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] },
+        major_radius: big,
+        minor_radius: small,
+        tube_start: 0.0,
+    };
     let about = |z: f64| Frame { origin: [0., 0., z], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] };
     let quarter = Curve::Circle { frame: Frame { origin: [big, 0., 0.], x_axis: [1., 0., 0.], y_axis: [0., 0., 1.] }, radius: small };
     one_face(
@@ -788,7 +792,7 @@ fn analytic_records_are_unbounded_with_independent_frames() {
         Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: 0.2 },
         Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: -0.2 },
         Surface::Sphere { frame: f.clone(), radius: 2. },
-        Surface::Torus { frame: f.clone(), major_radius: 4., minor_radius: 1. },
+        Surface::Torus { frame: f.clone(), major_radius: 4., minor_radius: 1., tube_start: 0.0 },
     ];
     // A cone narrowing along z (a negative half angle, as SMLib makes them) lies below its apex.
     let apex = 2. / 0.2f64.tan();
@@ -815,7 +819,7 @@ fn analytic_records_are_unbounded_with_independent_frames() {
     assert!(frame(&bad, &mut Budget(0)).is_err());
     assert!(interval(&[2., 1.], UNBOUNDED).is_err());
     assert!(radius(f64::NAN).is_err());
-    assert!(surface(&Surface::Torus { frame: a_frame(), major_radius: 1., minor_radius: 2. }, 0, &mut Budget(0)).is_err());
+    assert!(surface(&Surface::Torus { frame: a_frame(), major_radius: 1., minor_radius: 2., tube_start: 0.0 }, 0, &mut Budget(0)).is_err());
 }
 
 /// A cylinder face round its axis with a hole beside its seam: the seam at 350 degrees (so its
@@ -883,7 +887,7 @@ fn analytic_partials_are_the_derivatives_of_the_order_below() {
         Surface::Cylinder { frame: f.clone(), radius: 3. },
         Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: 0.3 },
         Surface::Sphere { frame: f.clone(), radius: 4. },
-        Surface::Torus { frame: f.clone(), major_radius: 5., minor_radius: 1.5 },
+        Surface::Torus { frame: f.clone(), major_radius: 5., minor_radius: 1.5, tube_start: 0.0 },
     ];
     let (u, v, h) = (0.8, 0.4, 1e-4);
     let close = |a: crate::Vec3, b: crate::Vec3, tol: f64| a.dist(b) <= tol * (1.0 + a.len().max(b.len()));
@@ -904,4 +908,46 @@ fn analytic_partials_are_the_derivatives_of_the_order_below() {
             }
         }
     }
+}
+
+#[test]
+fn a_form_on_arcs_of_its_own_is_the_surface_and_does_not_close_around_an_open_face() {
+    // A torus face round 280° of its tube: on the quarter grid it needs all four quarters, a form
+    // that closes on itself; on arcs of its own it starts where the face does and stops past
+    // where it ends.
+    let torus = Surface::Torus { frame: a_frame(), major_radius: 5., minor_radius: 1.5, tube_start: 0. };
+    let label = [[0.3, 1.2], [-2.9, 2.0]];
+    let tube = |s: &Surface| match s {
+        Surface::RationalSpline { v_knots, .. } => (v_knots.first().copied().unwrap(), v_knots.last().copied().unwrap()),
+        _ => panic!("not a NURBS: {s:?}"),
+    };
+    let (grid, _) = form::surface(&torus, label).unwrap();
+    assert_eq!(tube(&grid), (-2.0, 2.0), "the grid's form is the whole tube");
+    let tol = 1e-3;
+    let (own, domain) = form::surface_on_own_arcs(&torus, label, tol).unwrap();
+    let (v0, v1) = tube(&own);
+    assert_eq!((v0, v1), (0.0, 4.0));
+    let (label_at, own_at) = (eval::SurfaceEval::new(&torus).unwrap(), eval::SurfaceEval::new(&own).unwrap());
+    let u = domain[0][0];
+    assert!(own_at.point([u, v0]).unwrap().dist(own_at.point([u, v1]).unwrap()) > 0.1, "the form does not close");
+    // Every point of the form is on the torus: (√(x² + y²) − R)² + z² = r² in its frame.
+    for i in 0..=8 {
+        for j in 0..=12 {
+            let uv = [domain[0][0] + (domain[0][1] - domain[0][0]) * i as f64 / 8., v0 + (v1 - v0) * j as f64 / 12.];
+            let p = own_at.point(uv).unwrap() - crate::Vec3::new(1., 2., 3.);
+            let off = ((p.x.hypot(p.y) - 5.).powi(2) + p.z.powi(2)).sqrt() - 1.5;
+            assert!(off.abs() < 1e-12, "{uv:?}: {off}");
+        }
+    }
+    // Its domain is the face's: the corners land where the label's do, the form past them by the
+    // angle the tolerance makes.
+    for (a, b) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+        let (p, q) = (label_at.point([label[0][a], label[1][b]]).unwrap(), own_at.point([domain[0][a], domain[1][b]]).unwrap());
+        assert!(p.dist(q) < 1e-9, "corner {a}{b}: {p:?} vs {q:?}");
+    }
+    assert!(domain[1][0] > v0 && domain[1][1] < v1, "{domain:?}");
+    // A whole turn stays on the grid (periodic), and a plane has no form.
+    let (whole, _) = form::surface_on_own_arcs(&torus, [[0.3, 1.2], [-FRAC_PI_2, -FRAC_PI_2 + TAU]], tol).unwrap();
+    assert_eq!(tube(&whole), (-1.0, 3.0));
+    assert!(form::surface_on_own_arcs(&Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] }, label, tol).is_none());
 }

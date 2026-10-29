@@ -225,7 +225,105 @@ pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
 pub fn fillet_setback(body: &Body, edges: &[Vec3], radius: f64, setbacks: &[(Vec3, f64)]) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "fillet_setback");
     body.require_brep("fillet")?;
+    setbacks_reach(body, edges, radius, setbacks)?;
     crate::blend_smlib::fillet_setback(body, edges, radius, setbacks).and_then(|b| closed(body, b))
+}
+
+/// Refuses a setback that does not reach past where its corner's rounds meet without one
+/// ([`setback_minimum`]), naming the least it must exceed, at a corner where every edge is one
+/// of `edges` (the others are SMLib's to refuse). SMLib fails there with its own status
+/// (smlib_blend_setback): its patch does not join contact lines that already cross.
+fn setbacks_reach(body: &Body, edges: &[Vec3], radius: f64, setbacks: &[(Vec3, f64)]) -> Result<()> {
+    let faces = Faces::of(body)?;
+    let (picked, _) = crate::blend_smlib::picked_edges(body, edges)?;
+    let picked: BTreeSet<usize> = picked.into_iter().collect();
+    for (at, distance) in setbacks {
+        let Some(v) = corner_vertex(body, &faces, *at) else { continue };
+        let all_rounded = (0..faces.rec.edges.len())
+            .filter(|e| faces.rec.edges.get(*e).is_some_and(|x| !x.uses.is_empty() && x.vertices.contains(&v)))
+            .all(|e| picked.contains(&e));
+        if !all_rounded {
+            continue;
+        }
+        let Some(least) = setback_minimum(&faces, v, radius) else { continue };
+        if *distance <= least * (1.0 + 1e-9) {
+            let p = faces.point(v).unwrap_or(*at);
+            let shown = format!("{:.4}", least).trim_end_matches('0').trim_end_matches('.').to_string();
+            let why =
+                if (least - radius).abs() <= radius * 1e-9 { format!("more than the radius ({shown} mm)") } else { format!("more than {shown} mm") };
+            return Err(KernelError::Invalid(format!(
+                "the setback must be {why} at the corner ({:.3}, {:.3}, {:.3}): the rounds' contact lines meet {shown} mm from it along its edges, \
+                 and the corner's patch starts past that",
+                p.x, p.y, p.z
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The least setback the corner at the vertex nearest `at` takes with rounds of `radius`
+/// ([`setback_minimum`]): a setback there must be more than this, or [`fillet_setback`] and
+/// [`fillet_g2_corners`] refuse it. `None` where no vertex is near `at`, or at a corner whose
+/// least SMLib decides (one with a curved face or edge).
+pub fn fillet_least_setback(body: &Body, at: Vec3, radius: f64) -> Result<Option<f64>> {
+    body.require_brep("fillet")?;
+    let faces = Faces::of(body)?;
+    Ok(corner_vertex(body, &faces, at).and_then(|v| setback_minimum(&faces, v, radius)))
+}
+
+/// The vertex a setback at `at` names: the nearest, within the reach the setbacks take.
+fn corner_vertex(body: &Body, faces: &Faces, at: Vec3) -> Option<u32> {
+    let reach = body.size() * 0.05 + 1e-3;
+    (0..faces.rec.vertices.len())
+        .filter_map(|v| u32::try_from(v).ok())
+        .filter_map(|v| faces.point(v).map(|p| (p.dist(at), v)))
+        .filter(|(d, _)| *d <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, v)| v)
+}
+
+/// The least setback a corner of rounds of `radius` at `vertex` takes: on each face at the
+/// corner, the contact lines (rails) of the two rounded edges beside it cross, and a setback
+/// must reach past that crossing along both edges (smlib_blend_setback). A rail lies
+/// r tan(psi / 2) from its edge, psi the angle between the outward normals of the edge's two
+/// faces (r on faces square to each other); the rails of edges at angle alpha on a face, d1 and
+/// d2 from them, cross (d2 + d1 cos alpha) / sin alpha along the first edge from the vertex.
+/// Exact for planar faces and straight edges; `None` for a corner with any other (left to SMLib)
+/// or one it cannot read.
+fn setback_minimum(faces: &Faces, vertex: u32, radius: f64) -> Option<f64> {
+    let at: Vec<usize> =
+        (0..faces.rec.edges.len()).filter(|e| faces.rec.edges.get(*e).is_some_and(|x| !x.uses.is_empty() && x.vertices.contains(&vertex))).collect();
+    if at.len() < 3 {
+        return None;
+    }
+    // Each edge's direction away from the vertex and its rail's distance from it.
+    let mut away = Vec::with_capacity(at.len());
+    let mut rail = Vec::with_capacity(at.len());
+    for e in &at {
+        let [a, b] = faces.rec.edges.get(*e)?.vertices;
+        if a == b || !faces.straight(*e) {
+            return None;
+        }
+        let (pa, pb) = faces.ends(*e)?;
+        away.push(if a == vertex { (pb - pa).normalized()? } else { (pa - pb).normalized()? });
+        let [f, g]: [u32; 2] = faces.faces_of(*e).into_iter().collect::<Vec<_>>().try_into().ok()?;
+        let cos = faces.plane_normal(f as usize)?.dot(faces.plane_normal(g as usize)?).clamp(-1.0, 1.0);
+        rail.push(radius * (cos.acos() / 2.0).tan());
+    }
+    let mut least: f64 = 0.0;
+    let around: BTreeSet<u32> = at.iter().flat_map(|e| faces.faces_of(*e)).collect();
+    for f in around {
+        let beside: Vec<usize> = (0..at.len()).filter(|i| at.get(*i).is_some_and(|e| faces.faces_of(*e).contains(&f))).collect();
+        let [i, j] = beside[..] else { return None };
+        let cos = away.get(i)?.dot(*away.get(j)?).clamp(-1.0, 1.0);
+        let sin = (1.0 - cos * cos).sqrt();
+        if sin <= 1e-9 {
+            return None;
+        }
+        let (di, dj) = (*rail.get(i)?, *rail.get(j)?);
+        least = least.max((dj + di * cos) / sin).max((di + dj * cos) / sin);
+    }
+    (least.is_finite() && least > 0.0).then_some(least)
 }
 
 /// [`fillet`] whose corners where three or more rounded edges meet are G2 patches
@@ -298,6 +396,7 @@ pub fn fillet_g2_corners(body: &Body, edges: &[Vec3], radius: f64, setbacks: &[(
         }
     }
     let set_back: Vec<(Vec3, f64)> = corners.iter().copied().zip(distance).collect();
+    setbacks_reach(body, edges, radius, &set_back)?;
     let open = crate::blend_smlib::fillet_setback_open(body, edges, radius, &set_back)?;
     let mut patches = Vec::with_capacity(open.holes.len());
     for hole in &open.holes {
@@ -528,20 +627,58 @@ pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, fl
 /// a round cannot pass from one side of the faces to the other, so it ends at that vertex.
 /// Picks that find no edge are refused.
 pub fn tangent_chain(body: &Body, picks: &[Vec3]) -> Result<Vec<Vec3>> {
-    /// Edges meeting at an angle below this continue one another.
-    const TANGENT_DEGREES: f64 = 0.5;
     if picks.is_empty() || picks.len() > 1000 || picks.iter().any(|p| !p.is_finite()) {
         return Err(KernelError::Invalid("select 1…1000 edges by finite points".into()));
     }
     let rec = Faces::of(body)?;
     let (seeds, hidden) = crate::blend_smlib::picked_edges(body, picks)?;
-    let mut chain: Vec<usize> = Vec::new();
+    let mut picked: Vec<usize> = Vec::new();
     for e in seeds {
-        if !chain.contains(&e) {
-            chain.push(e);
+        if !picked.contains(&e) {
+            picked.push(e);
         }
     }
-    let picked = chain.len();
+    let chain = chain_of(&rec, &picked, &hidden);
+    let mut out = picks.to_vec();
+    for e in chain.into_iter().skip(picked.len()) {
+        out.push(edge_middle(&rec, e).ok_or_else(|| KernelError::Failed("a point on a chain edge".into()))?);
+    }
+    Ok(out)
+}
+
+/// Edges meeting at an angle below this continue one another; faces meeting at an angle below
+/// it meet tangentially.
+const TANGENT_DEGREES: f64 = 0.5;
+
+/// The point halfway along edge `e`.
+fn edge_middle(rec: &Faces, e: usize) -> Option<Vec3> {
+    let edge = rec.rec.edges.get(e)?;
+    CurveEval::new(edge.parameters()).ok().and_then(|c| c.point(0.5 * (edge.interval[0] + edge.interval[1])))
+}
+
+/// How far from a face's surface a point may lie for its normal there.
+fn normal_reach(rec: &Faces) -> f64 {
+    rec.rec.tolerance.max(1e-7) * 10.0
+}
+
+/// Whether edge `e`'s two faces meet tangentially (within [`TANGENT_DEGREES`]) at its start: a
+/// smooth edge, with no corner to blend.
+fn smooth_join(rec: &Faces, e: usize) -> bool {
+    let cos = TANGENT_DEGREES.to_radians().cos();
+    let accept = normal_reach(rec);
+    let faces: Vec<u32> = rec.faces_of(e).into_iter().collect();
+    let (Some(&a), Some(&b), Some((p, _))) = (faces.first(), faces.get(1), rec.ends(e)) else { return false };
+    match (rec.normal_at(a as usize, p, accept), rec.normal_at(b as usize, p, accept)) {
+        (Some(na), Some(nb)) => faces.len() == 2 && na.dot(nb) > cos,
+        _ => false,
+    }
+}
+
+/// `seeds` (edges in the record's order, each once), then every other edge that continues one
+/// of them tangentially, as [`tangent_chain`] follows them; `hidden` marks the edges a pick
+/// passes over.
+fn chain_of(rec: &Faces, seeds: &[usize], hidden: &[bool]) -> Vec<usize> {
+    let mut chain = seeds.to_vec();
     // The unit direction edge `e` leaves its end `v` in.
     let leaving = |e: usize, v: u32| -> Option<Vec3> {
         let [a, b] = rec.rec.edges.get(e)?.vertices;
@@ -551,16 +688,7 @@ pub fn tangent_chain(body: &Body, picks: &[Vec3]) -> Result<Vec<Vec3>> {
         if a == v { rec.tangent(e, false) } else { rec.tangent(e, true).map(|t| t * -1.0) }
     };
     let cos = TANGENT_DEGREES.to_radians().cos();
-    let accept = rec.rec.tolerance.max(1e-7) * 10.0;
-    // Whether edge `e`'s two faces meet tangentially at its start.
-    let smooth = |e: usize| -> bool {
-        let faces: Vec<u32> = rec.faces_of(e).into_iter().collect();
-        let (Some(&a), Some(&b), Some((p, _))) = (faces.first(), faces.get(1), rec.ends(e)) else { return false };
-        match (rec.normal_at(a as usize, p, accept), rec.normal_at(b as usize, p, accept)) {
-            (Some(na), Some(nb)) => faces.len() == 2 && na.dot(nb) > cos,
-            _ => false,
-        }
-    };
+    let accept = normal_reach(rec);
     // Whether edge `e` is convex at its end `v` (its faces meet at less than 180° inside the
     // body): the direction into its second face, square to it, points against its first face's
     // outward normal. A face lies to the left of its loop seen from its surface's natural normal.
@@ -587,7 +715,7 @@ pub fn tangent_chain(body: &Body, picks: &[Vec3]) -> Result<Vec<Vec3>> {
             let Some(d) = leaving(e, v) else { continue };
             for (f, other) in rec.rec.edges.iter().enumerate() {
                 let passed_over = hidden.get(f).copied().unwrap_or(false);
-                if passed_over || chain.contains(&f) || other.uses.len() < 2 || !other.vertices.contains(&v) || smooth(f) {
+                if passed_over || chain.contains(&f) || other.uses.len() < 2 || !other.vertices.contains(&v) || smooth_join(rec, f) {
                     continue;
                 }
                 let turns_over = matches!((convex(e, v), convex(f, v)), (Some(a), Some(b)) if a != b);
@@ -597,16 +725,37 @@ pub fn tangent_chain(body: &Body, picks: &[Vec3]) -> Result<Vec<Vec3>> {
             }
         }
     }
-    let mut out = picks.to_vec();
-    for e in chain.into_iter().skip(picked) {
-        let edge = rec.rec.edges.get(e).ok_or_else(|| KernelError::Failed("a chain edge".into()))?;
-        let mid = CurveEval::new(edge.parameters())
-            .ok()
-            .and_then(|c| c.point(0.5 * (edge.interval[0] + edge.interval[1])))
-            .ok_or_else(|| KernelError::Failed("a point on a chain edge".into()))?;
-        out.push(mid);
+    chain
+}
+
+/// Refuses blending exactly `edges` (the record's edges `picks` took, in order) where SMLib has
+/// no blend to build: an edge whose faces meet tangentially (a smooth edge, nothing to round),
+/// and an edge that runs on tangentially into an edge left out (SMLib rounds a tangent chain
+/// as one sequence; it has no end for a blend at a vertex where its edge continues smoothly,
+/// and fails building the blend's face there). [`tangent_chain`] gives the whole chain.
+pub(crate) fn refuse_unblendable(body: &Body, picks: &[Vec3], edges: &[usize], hidden: &[bool]) -> Result<()> {
+    let rec = Faces::of(body)?;
+    let at = |i: usize| picks.get(i).map(|p| format!("({:.3}, {:.3}, {:.3})", p.x, p.y, p.z)).unwrap_or_default();
+    for (i, &e) in edges.iter().enumerate() {
+        if smooth_join(&rec, e) {
+            return Err(KernelError::Invalid(format!("the edge at {} is smooth: its faces meet tangentially, so there is nothing to round", at(i))));
+        }
     }
-    Ok(out)
+    let mut seeds: Vec<usize> = Vec::new();
+    for &e in edges {
+        if !seeds.contains(&e) {
+            seeds.push(e);
+        }
+    }
+    let chain = chain_of(&rec, &seeds, hidden);
+    if let Some(&next) = chain.get(seeds.len()) {
+        let p = edge_middle(&rec, next).map(|p| format!(" ({:.3}, {:.3}, {:.3})", p.x, p.y, p.z)).unwrap_or_default();
+        return Err(KernelError::Invalid(format!(
+            "a picked edge continues tangentially into the edge at{p}, which is not blended with it: a blend cannot end where its \
+             edge runs on smoothly, so blend its tangent chain too (tangent_chain: true)"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
