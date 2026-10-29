@@ -410,6 +410,7 @@ fn offscreen(
     resources.insert(Renderer::new(&device, target, compute));
     let none = || Arc::new(Mutex::new(None));
     let cb = ViewportCallback(Frame {
+        product_lights: None,
         product,
         key: 1,
         slot: Arc::new(Mutex::new(Some(scene))),

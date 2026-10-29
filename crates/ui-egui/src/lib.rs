@@ -1036,6 +1036,10 @@ impl SolveApp {
         }
         let t0 = now_ms();
         let revision = self.session.revision;
+        if matches!(id, "render.lights.solo" | "render.lights.mute") {
+            render_workspace::light::validate_visibility(self, &params)?;
+        }
+        let params = if matches!(id, "render.start" | "render.preflight") { render_workspace::light::filter_request(self, params)? } else { params };
         let selected_before = self.session.selection.clone();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string()).and_then(|reply| {
             render_workspace::apply_command(self, id, &reply)?;
@@ -1065,6 +1069,14 @@ impl SolveApp {
             } else {
                 render_workspace::RenderSelection::Object(self.session.selection.clone())
             };
+        }
+        if let Ok(v) = &done {
+            if matches!(id, "render.lights.solo" | "render.lights.mute") {
+                render_workspace::light::apply_visibility(self, id, v);
+            }
+            if matches!(id, "render.lights.set" | "render.lights.add" | "render.lights.duplicate" | "render.lights.remove") {
+                render_workspace::light::edited(self, &params, v);
+            }
         }
         done
     }
@@ -1123,11 +1135,18 @@ impl SolveApp {
                 let selected = match v.get("kind").and_then(Value::as_str) {
                     Some("environment") => RenderSelection::Environment,
                     Some("wear") => RenderSelection::Wear,
+                    Some("lighting") => {
+                        render_workspace::select_lighting(self);
+                        RenderSelection::Lighting
+                    }
                     Some("output") => RenderSelection::Output,
                     Some("sampling") => RenderSelection::Sampling,
                     Some("effects") => RenderSelection::Effects,
                     Some("check") => RenderSelection::Check,
-                    Some("light") => RenderSelection::Light(v.get("id").and_then(Value::as_str).unwrap_or_default().into()),
+                    Some("light") => {
+                        render_workspace::select_lighting(self);
+                        RenderSelection::Light(v.get("id").and_then(Value::as_str).unwrap_or_default().into())
+                    }
                     Some("shot") => RenderSelection::Shot(v.get("id").and_then(Value::as_str).unwrap_or_default().into()),
                     _ => RenderSelection::Nothing,
                 };

@@ -209,7 +209,7 @@ pub struct MenuState {
     submenu: Option<usize>,
     submenu_key: Option<usize>,
     /// When the pointer came to rest on another row while a flyout was open (it closes the
-    /// flyout after [`SUBMENU_CLOSE_DELAY`]).
+    /// flyout after [`crate::ui_kit::SUBMENU_CLOSE_DELAY`]).
     submenu_leave: Option<f64>,
     /// The radial ring is shown (viewport menus).
     pub radial: bool,
@@ -271,9 +271,6 @@ const DIRS: usize = 8;
 /// Half axes of the ring of radial items.
 const RX: f32 = crate::ui_kit::RADIAL_RADIUS;
 const RY: f32 = crate::ui_kit::RADIAL_RADIUS;
-/// Seconds the pointer rests on another row before an open flyout closes: a path to the flyout
-/// that crosses a neighbouring row keeps it open.
-const SUBMENU_CLOSE_DELAY: f64 = 0.3;
 
 // ---------------------------------------------------------------------------------------------
 // What the menus offer
@@ -2184,7 +2181,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             // Appearance keeps its direct editor action as well as hover shortcuts.
                             if item.enabled && row.clicked() && item.id == "ui.appearance" {
                                 picked = Some(item.clone());
-                            } else if item.enabled && ((row.hovered() && ctx.input(|i| i.pointer.delta() != Vec2::ZERO)) || row.clicked()) {
+                            } else if item.enabled && (crate::ui_kit::Menu::flyout_hover(&row) || row.clicked()) {
                                 if app.menu.submenu != Some(k) {
                                     app.menu.submenu_key = None;
                                 }
@@ -2204,16 +2201,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // (#6657). A pointer that is still (the flyout opened with the keys) leaves it open.
     let moved = ctx.input(|i| i.pointer.delta() != Vec2::ZERO);
     if app.menu.submenu.is_some() && other_row && (moved || app.menu.submenu_leave.is_some()) {
-        let now = ctx.input(|i| i.time);
-        let since = *app.menu.submenu_leave.get_or_insert(now);
-        let left = SUBMENU_CLOSE_DELAY - (now - since);
-        if left <= 0.0 || !left.is_finite() {
+        if crate::ui_kit::Menu::flyout_leaving(ctx, &mut app.menu.submenu_leave) {
             app.menu.submenu = None;
             app.menu.submenu_key = None;
-            app.menu.submenu_leave = None;
             submenu_row = None;
-        } else {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
         }
     } else {
         app.menu.submenu_leave = None;

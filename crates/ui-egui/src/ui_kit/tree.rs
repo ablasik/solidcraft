@@ -76,6 +76,7 @@ pub(crate) struct RowResp {
     pub(crate) secondary: Option<Pos2>,
     pub(crate) fold: bool,
     pub(crate) eye: bool,
+    pub(crate) eye_rect: Option<Rect>,
     pub(crate) radio: bool,
     /// The row's [`Row::action`] button was clicked.
     pub(crate) action: bool,
@@ -200,6 +201,7 @@ pub(crate) fn tree_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         // Hidden or faded rows keep main's dimming, with the rounded suppression asset.
         icons::paint_icon(ui.painter(), er, if vis { "eye" } else { "suppress" }, if vis && !row.dim { 0.85 } else { DIM_ICON_OPACITY });
         out.eye = resp.clicked() && click_on == 2;
+        out.eye_rect = Some(eye_r.intersect(ui.clip_rect()));
         crate::scenario::publish_handle(&format!("eye:{}", row.label), er.center());
     }
     if !row.compact {

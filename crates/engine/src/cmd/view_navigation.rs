@@ -69,7 +69,7 @@ CommandSpec::new("view.render_inspector", "Render Inspector", render_inspector)
 CommandSpec::new("view.render_select", "Render selection", crate::checked!("view.render_select", render_select))
     .contract(&RENDER_SELECT).output(output_schema_for::<RenderSelect>)
     .icon("select").noundo().doc_only()
-    .params("kind: nothing|environment|light|shot|output|wear|sampling|effects|check; id?: bounded nonempty string for light/shot → validated transient Browser focus; never edits the design or opens a dialog"),
+    .params("kind: nothing|environment|lighting|light|shot|output|wear|sampling|effects|check; id?: bounded nonempty string for light/shot → validated transient Browser focus; never edits the design or opens a dialog"),
 CommandSpec::new("view.render_stage", "Render Stage", render_stage)
     .icon("render_scene").noundo().doc_only()
     .params("stage: look|light|frame|output → {stage}; per-document UI state, never edits or evaluates the design; headless validation only"),
@@ -1191,6 +1191,7 @@ fn render_browser_focus_validates_without_document_changes_or_evaluation() {
         json!({"kind":"nothing"}),
         json!({"kind":"environment"}),
         json!({"kind":"wear"}),
+        json!({"kind":"lighting"}),
         json!({"kind":"light","id":"sun:0"}),
         json!({"kind":"shot","id":"Hero"}),
         json!({"kind":"output"}),
@@ -1216,12 +1217,18 @@ fn render_browser_focus_validates_without_document_changes_or_evaluation() {
         json!({"kind":"sampling","id":"extra"}),
         json!({"kind":"effects","id":"extra"}),
         json!({"kind":"check","id":"extra"}),
+        json!({"kind":"lighting","id":"extra"}),
         json!({"kind":"environment","extra":true}),
     ] {
         assert!(session.execute("view.render_select", &request).is_err(), "{request}");
     }
     assert!(std::sync::Arc::ptr_eq(&doc, &session.doc));
     assert_eq!(before, (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty()));
+    let description = session.execute("engine.describe", &json!({"command":"view.render_select"})).unwrap();
+    for key in ["input", "output"] {
+        assert!(description[key].is_object());
+        assert!(description[key].to_string().contains("\"lighting\""));
+    }
 }
 
 #[cfg(test)]

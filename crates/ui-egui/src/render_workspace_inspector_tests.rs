@@ -2350,6 +2350,17 @@ fn output_children_select_their_editor_with_all_sections_in_design_order() {
             ),
         ] {
             let handle = if kind == "output" { "render:tree:output".to_string() } else { format!("render:tree:output:{kind}") };
+            // The capped Browser can publish rows below its clip after Lights adds more entries.
+            // Reveal the Output group before exercising each real child-row click.
+            h.frames(3);
+            let browser = crate::scenario::rect_of("browser:card").unwrap();
+            let header = crate::scenario::rect_of("render:browser:header").unwrap();
+            h.call("ui.scroll", json!({"x":browser.center().x,"y":(header.bottom()+browser.bottom())/2.0,"delta":-2000}));
+            h.frames(20);
+            let browser = crate::scenario::rect_of("browser:card").unwrap();
+            let header = crate::scenario::rect_of("render:browser:header").unwrap();
+            let target = crate::scenario::handle_at(&handle).unwrap();
+            assert!(browser.shrink(Tokens::get().space_8).contains(target) && target.y > header.bottom(), "{handle} is outside the visible Browser");
             h.step(&json!({"click":{"handle":handle}})).unwrap();
             h.frames(3);
             assert_eq!(h.app.render_workspace.view.selection, selection);

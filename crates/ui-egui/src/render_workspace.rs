@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use egui::{Color32, Sense};
 use serde_json::json;
 use solidcraft_engine::doc::render_settings::RenderSetup;
-use solidcraft_engine::render::job::{ImageHost, Integrator, LightingPreset, PreviewInfo, RaytraceOptions};
+#[cfg(test)]
+use solidcraft_engine::render::job::LightingPreset;
+use solidcraft_engine::render::job::{ImageHost, Integrator, PreviewInfo, RaytraceOptions};
 use solidcraft_engine::render::{
     Availability, Camera, ExecutorDescriptor, ExecutorId, ProductScene, RenderLimits, RenderMode, RenderOperation, RenderProfile, RenderRequest,
     ScratchLayout,
@@ -41,6 +43,8 @@ mod library;
 
 #[path = "render_ui/assign.rs"]
 pub(crate) mod assign;
+#[path = "render_workspace_light.rs"]
+pub(crate) mod light;
 
 #[path = "render_workspace_materials.rs"]
 mod materials;
@@ -271,6 +275,7 @@ pub enum RenderSelection {
     Object(Vec<solidcraft_engine::Sel>),
     Environment,
     Wear,
+    Lighting,
     /// Method/type/index identity until named light commands provide persistent IDs.
     Light(String),
     Shot(String),
@@ -290,11 +295,16 @@ pub(crate) fn selection_editor(app: &mut SolveApp, selection: &RenderSelection) 
     };
 }
 
+pub(crate) fn select_lighting(app: &mut SolveApp) {
+    app.render_workspace.view.inspector.page = inspector::Page::Lighting;
+}
+
 /// Small per-document editor state; GPU uploads and host capabilities stay outside tabs.
 #[derive(Clone, Debug)]
 pub struct ViewState {
     pub(crate) assign: assign::State,
     pub(crate) frame: shot::Frame,
+    lights: light::View,
     job_shot: Option<String>,
     save_shot_name: Option<String>,
     pub name: String,
@@ -358,6 +368,7 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             assign: assign::State::default(),
+            lights: Default::default(),
             job_shot: None,
             frame: Default::default(),
             save_shot_name: None,
@@ -793,6 +804,10 @@ fn image_params(app: &SolveApp) -> Result<serde_json::Value, String> {
 
 /// Pure request construction is shared with offline setup editing; host checks stay above.
 fn image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
+    light::filter_request(app, raw_image_request(app)?)
+}
+
+fn raw_image_request(app: &SolveApp) -> Result<serde_json::Value, String> {
     cpu::validate_progressive_image(app)?;
     if !setups::has_runtime_inputs(app) {
         return Ok(json!({"settings":setups::snapshot(app)?}));
@@ -897,6 +912,7 @@ fn cpu_sampling_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
 }
 
+#[cfg(test)]
 fn cpu_lighting_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.label(app.tr("render.cpu_lighting"));
     let presets = [
@@ -1962,6 +1978,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         let slot = app.render_workspace.slot.clone();
         let callback = ViewportCallback(Frame {
+            product_lights: Some(light::preview(app)?),
             product: true,
             key,
             slot: slot.clone(),
