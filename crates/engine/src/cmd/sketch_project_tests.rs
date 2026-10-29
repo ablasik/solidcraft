@@ -452,10 +452,11 @@ fn tilted_circles_project_to_exact_ellipses_and_splines_stay_splines() {
     run(&mut s, "sketch.create", json!({"plane": "XY", "offset": -10}));
     // The base circle (centred at the origin) seen from above.
     let r = run(&mut s, "sketch.project", json!({"refs": [{"edge": [0, 5, 0]}]}));
-    // One seam half: exact conics (rational quadratic arcs).
+    // The rim is one closed circle edge: an exact ellipse, x semi-axis 5·cos 45° (the tilt), y 5.
     let si = inspect(&mut s);
     let c = si["curves"].as_array().unwrap().iter().find(|c| c["id"] == r["links"][0]["curves"][0]).unwrap().clone();
-    assert_eq!(c["type"], "conic", "{c}");
+    assert_eq!(c["type"], "ellipse", "{c}");
+    assert!((c["minor_radius"].as_f64().unwrap() - 5.0 * std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9, "{c}");
     let st = s.model.state();
     let sk = &st.sketch(s.active_sketch.unwrap()).unwrap().sketch;
     for ci in sk.link_curves(r["links"][0]["link"].as_str().unwrap()) {
@@ -465,7 +466,7 @@ fn tilted_circles_project_to_exact_ellipses_and_splines_stay_splines() {
             assert!((e - 1.0).abs() < 1e-9, "{q:?}");
         }
     }
-    // The whole face (both halves of its rim, plus its seam) gives the full ellipse.
+    // The whole face (its rim, plus its seam) gives the full ellipse.
     let r = run(&mut s, "sketch.project", json!({"refs": [{"face": [0, 0, 0]}]}));
     let si = inspect(&mut s);
     let types: Vec<String> = r["links"][0]["curves"]
@@ -708,11 +709,18 @@ fn a_face_engraved_with_text_projects_its_letters_exactly_and_extrudes() {
     assert!(r.error.is_none(), "{r:?}");
     let face = before - volume(&mut s);
     assert!((face - taken).abs() < 1e-6 * before, "{face} {taken}");
-    // Its sketch got the letters as Bézier pieces.
+    // Its sketch got the letters as their exact pieces: the outline's quadratic Béziers, which are
+    // parabolic arcs, come in as conics (or as control-point splines).
     let st = s.model.state();
     let sketch = &st.sketches.last().unwrap().sketch;
-    let pieces =
-        sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
+    let pieces = sketch
+        .curves
+        .iter()
+        .filter(|c| {
+            c.link.is_some()
+                && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. } | solidcraft_sketch::CurveKind::Conic { .. })
+        })
+        .count();
     assert!(pieces > 100, "{pieces}");
 }
 
@@ -730,12 +738,23 @@ fn a_face_sketch_saved_with_fitted_letters_reopens_and_builds_the_same() {
         let r = s.model.result(id).unwrap();
         assert!(r.error.is_none(), "{name}: {:?}", r.error);
     }
-    // The build that saved it measured 5916.018831 mm³.
-    assert!((volume - 5916.018830904924).abs() < 1e-3, "{volume}");
+    // The 30 x 20 x 10 block less the "S" 1 deep (its profile's exact area, Sketch2's smaller
+    // region) and the r 2 circle 3 deep, clear of the letter: 5916.010767. (The build that saved
+    // it measured 5916.018831, 8e-3 off; SMLib's integral is within 1e-8 of the closed form.)
+    let letter = s.model.state().sketches.iter().find(|k| k.name == "Sketch2").unwrap().profiles.iter().map(|p| p.area).fold(f64::INFINITY, f64::min);
+    let want = 6000.0 - letter - 3.0 * std::f64::consts::PI * 4.0;
+    assert!((volume - want).abs() < 1e-8 * 6000.0, "{volume} vs {want}");
+    // The letter's exact pieces in the face's link: its quadratic Béziers, as conics (or splines).
     let st = s.model.state();
     let sketch = &st.sketches.last().unwrap().sketch;
-    let pieces =
-        sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
+    let pieces = sketch
+        .curves
+        .iter()
+        .filter(|c| {
+            c.link.is_some()
+                && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. } | solidcraft_sketch::CurveKind::Conic { .. })
+        })
+        .count();
     assert!(pieces > 0, "{pieces}");
 }
 
@@ -812,6 +831,21 @@ fn intersect_curves(steps: &[(&str, Value)], plane: Value) -> std::result::Resul
     Ok(linked_curves(&inspect(&mut s)))
 }
 
+/// The lines among `curves` as an outline: each line's ends rounded and the lower first, the lines
+/// sorted. A section's chains are walked from either end (the mesh's triangle order picks which),
+/// so a line's direction says nothing about the cut.
+fn outline(curves: &[Value]) -> Vec<[f64; 4]> {
+    let mut ends: Vec<[f64; 4]> = line_ends(curves)
+        .into_iter()
+        .map(|e| {
+            let e = e.map(f64::round);
+            if [e[2], e[3]] < [e[0], e[1]] { [e[2], e[3], e[0], e[1]] } else { e }
+        })
+        .collect();
+    ends.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ends
+}
+
 fn line_ends(curves: &[Value]) -> Vec<[f64; 4]> {
     let at = |c: &Value, k: &str, i: usize| c[k][i].as_f64().unwrap_or(f64::NAN);
     curves
@@ -827,10 +861,8 @@ fn line_ends(curves: &[Value]) -> Vec<[f64; 4]> {
 fn intersect_keeps_its_exact_cuts() {
     let block = [("solid.box", json!({"length": 40, "width": 30, "height": 20}))];
     for offset in [10, 0] {
-        let mut ends = line_ends(&intersect_curves(&block, json!({"plane": "XY", "offset": offset})).unwrap());
-        ends.iter_mut().for_each(|e| *e = e.map(|v| v.round()));
-        ends.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(ends, vec![[0.0, 0.0, 40.0, 0.0], [0.0, 30.0, 0.0, 0.0], [40.0, 0.0, 40.0, 30.0], [40.0, 30.0, 0.0, 30.0]], "offset {offset}");
+        let ends = outline(&intersect_curves(&block, json!({"plane": "XY", "offset": offset})).unwrap());
+        assert_eq!(ends, vec![[0.0, 0.0, 0.0, 30.0], [0.0, 0.0, 40.0, 0.0], [0.0, 30.0, 40.0, 30.0], [40.0, 0.0, 40.0, 30.0]], "offset {offset}");
     }
     for (steps, plane, radius) in [
         (vec![("solid.cylinder", json!({"base": [0, 0, 0], "radius": 7, "height": 30}))], json!({"plane": "XY", "offset": 12}), 7.0),
@@ -839,11 +871,25 @@ fn intersect_keeps_its_exact_cuts() {
         let c = intersect_curves(&steps, plane).unwrap();
         assert!(c.len() == 1 && c[0]["type"] == "circle" && (c[0]["radius"].as_f64().unwrap() - radius).abs() < 1e-4, "{c:?}");
     }
+    // The tilted cylinder's cut is an ellipse the section leaves as the mesh's segments, as many
+    // as the tessellation crosses (21 on truck's mesh, 20 on SMLib's): each end on the cylinder
+    // within the section's own reach of the surface, the display tolerance (a thousandth of the
+    // mesh's size, doc::project::fit_segments), which the old pin of one end to 1e-4 assumed of
+    // one mesh.
     let tilted = [("solid.cylinder", json!({"base": [0, 0, 0], "radius": 5, "height": 40, "axis": [1, 0, 1]}))];
-    let ends = line_ends(&intersect_curves(&tilted, json!({"plane": "XY", "offset": 10})).unwrap());
-    assert_eq!(ends.len(), 21);
-    let first = [2.941, -0.2891, 3.3932, -1.7819];
-    assert!(ends[0].iter().zip(first).all(|(a, b)| (a - b).abs() < 1e-4), "{:?}", ends[0]);
+    let curves = intersect_curves(&tilted, json!({"plane": "XY", "offset": 10})).unwrap();
+    let ends = line_ends(&curves);
+    assert!(ends.len() == curves.len() && ends.len() >= 16, "{curves:?}");
+    let axis = solidcraft_geom::Vec3::new(1.0, 0.0, 1.0).normalized().unwrap();
+    // The cylinder's box: its axis 40 along (1, 0, 1)/√2 and its ends' discs of radius 5 span
+    // (40 + 2·5)/√2 in x and z and 10 in y.
+    let span = 50.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let reach = 1e-3 * (2.0 * span * span + 100.0).sqrt();
+    for e in &ends {
+        for p in [solidcraft_geom::Vec3::new(e[0], e[1], 10.0), solidcraft_geom::Vec3::new(e[2], e[3], 10.0)] {
+            assert!(((p - axis * p.dot(axis)).len() - 5.0).abs() < reach, "{p:?}");
+        }
+    }
 }
 
 /// A plane crossing a curved face's rim cuts it on the surface, not on the mesh's chord: a
@@ -870,8 +916,6 @@ fn intersect_crosses_a_curved_face_on_the_surface() {
 #[test]
 fn intersect_on_a_top_face_gives_its_outline() {
     let block = [("solid.box", json!({"length": 40, "width": 30, "height": 20}))];
-    let mut ends = line_ends(&intersect_curves(&block, json!({"plane": "XY", "offset": 20})).unwrap());
-    ends.iter_mut().for_each(|e| *e = e.map(|v| v.round()));
-    ends.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    assert_eq!(ends, vec![[0.0, 0.0, 40.0, 0.0], [0.0, 30.0, 0.0, 0.0], [40.0, 0.0, 40.0, 30.0], [40.0, 30.0, 0.0, 30.0]]);
+    let ends = outline(&intersect_curves(&block, json!({"plane": "XY", "offset": 20})).unwrap());
+    assert_eq!(ends, vec![[0.0, 0.0, 0.0, 30.0], [0.0, 0.0, 40.0, 0.0], [0.0, 30.0, 40.0, 30.0], [40.0, 0.0, 40.0, 30.0]]);
 }

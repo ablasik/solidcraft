@@ -2642,9 +2642,6 @@ fn analysis_uniform(app: &SolveApp) -> [f32; 8] {
     solidcraft_gpu::view::analysis_uniform(app.session.analysis.map(|a| a.mode()), crate::access::map(app).as_ref())
 }
 
-/// While Draft, Accessibility or Curvature Map analysis is on, what each of its colours means and
-/// the values it stands for, at the bottom left of the viewport (#973). The colours alone don't
-/// say, and with colour vision loss they can be hard to tell apart.
 /// Why the model cannot be placed, across the bottom of the viewport, while it cannot: the
 /// viewport then shows no placed bodies (see `open_meshing::session_world`).
 fn placement_note(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
@@ -2654,6 +2651,9 @@ fn placement_note(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     painter.text(pos2(rect.center().x, rect.bottom() - 24.0), Align2::CENTER_BOTTOM, text, FontId::proportional(t.font_button), t.error);
 }
 
+/// While Draft, Accessibility or Curvature Map analysis is on, what each of its colours means and
+/// the values it stands for, at the bottom left of the viewport (#973). The colours alone don't
+/// say, and with colour vision loss they can be hard to tell apart.
 fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     use solidcraft_engine::SurfaceAnalysis as A;
     let t = Tokens::get();
@@ -3967,7 +3967,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     }
     let overlay_rect = crate::shell::bottom_overlay_rect(app, rect);
-    analysis_legend(app, &painter, rect);
+    analysis_legend(app, &painter, overlay_rect);
     placement_note(app, &painter, overlay_rect);
     crate::frame_rate::paint(app, ui, &painter, overlay_rect);
 
@@ -6999,7 +6999,10 @@ mod tests {
         for style in 0..4 {
             app.ui.visual_style = style;
             let scene = build_scene(&app).merged();
-            let lines = if style == 1 { 0 } else { 24 * crate::gpu::LINE_SIZE };
+            // Twelve edges per placed box, in the saved mesh's pieces: no side longer than a fifth
+            // of the 30 mm diagonal, so the eight 20 mm edges in four and the four 10 mm ones in
+            // two, 40 segments.
+            let lines = if style == 1 { 0 } else { 2 * 40 * crate::gpu::LINE_SIZE };
             assert_eq!(scene.lines.len(), lines, "style {style}: twelve edges per placed box");
             assert_eq!(scene.hidden.len(), if style == 3 { lines } else { 0 });
             assert_eq!(scene.tris.is_empty(), style == 2, "wireframe draws only the edges");
@@ -8301,6 +8304,21 @@ mod tests {
         app
     }
 
+    /// A Ø20 × 20 cylinder whose wall and rims are each in two halves: a circle drawn as two
+    /// half arcs, extruded (one wall face per arc). SMLib's own cylinder has one wall and one
+    /// edge per rim; a rim or wall in pieces comes from a profile like this one or an import.
+    fn split_cylinder_app() -> SolveApp {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("sketch.create", &json!({"plane": "XY"})).unwrap();
+        s.execute("sketch.arc.three_point", &json!({"start": [10, 0], "end": [-10, 0], "through": [0, 10]})).unwrap();
+        s.execute("sketch.arc.three_point", &json!({"start": [-10, 0], "end": [10, 0], "through": [0, -10]})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        s.execute("solid.extrude", &json!({"distance": 20})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.set_origin_shown(false);
+        app
+    }
+
     /// Moving the pointer across a face keeps its highlight (a scanned mesh is one face of
     /// millions of triangles): only another face, edge or plane builds it again.
     #[test]
@@ -8639,9 +8657,13 @@ mod tests {
                 })
             })
             .unwrap();
-        assert!(mesh.seams[crease], "the fixture must exercise the coarse seam false positive");
+        // Truck's coarse seam fit took this crease for a seam between pieces of one surface;
+        // the seam flags now compare the exact surfaces (`topo::seam_flags`). Either way the
+        // certified crease is sharp, drawn in wireframe and picked. Its kink of a millionth is
+        // too close to tangent to show in the shading (`smooth_edges::Join`: smooth and a
+        // measured crease at once), so the shaded view leaves it out.
         assert!(mesh.sharp_edges[crease]);
-        assert!(mesh.shaded_edge_visible(crease));
+        assert!(mesh.edge_visible(crease) && !mesh.shaded_edge_visible(crease));
         assert!(mesh.edge_pickable(crease));
         assert!(mesh.edge_faces[crease].iter().any(|f| mesh.surface_patch(*f as usize).len() == 1));
         let mid = polyline_mid(&mesh.edges[crease]);
@@ -8657,7 +8679,7 @@ mod tests {
 
     #[test]
     fn circular_items_measure_as_whole_rims_and_surfaces() {
-        let mut app = cylinder_app();
+        let mut app = split_cylinder_app();
         let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
@@ -8738,7 +8760,7 @@ mod tests {
 
     #[test]
     fn circular_rim_hover_click_and_dialog_pick_include_both_halves() {
-        let mut app = cylinder_app();
+        let mut app = split_cylinder_app();
         let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
@@ -8785,7 +8807,7 @@ mod tests {
 
     #[test]
     fn curved_face_hover_selection_and_dialogs_cross_the_seam() {
-        let mut app = cylinder_app();
+        let mut app = split_cylinder_app();
         let st = app.session.world_state().unwrap();
         let b = &st.bodies[0];
         let m = b.mesh();
@@ -9470,7 +9492,8 @@ mod tests {
     fn cosmetic_threads_use_depth_tested_lines_and_keep_selection_and_wireframe() {
         let mut s = solidcraft_engine::Session::default();
         s.execute("solid.cylinder", &json!({"radius":3,"height":10})).unwrap();
-        s.execute("solid.thread", &json!({"face":[3,0,5],"designation":"M6","length":5})).unwrap();
+        // A pick in the middle of a face free at both ends names the end the thread starts from.
+        s.execute("solid.thread", &json!({"face":[3,0,5],"designation":"M6","length":5,"from":[3,0,0]})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
         let count = |sc: GpuScene| {
             sc.merged()

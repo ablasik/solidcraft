@@ -31,7 +31,9 @@ fn cylinder_measures_match_analytic() {
     let a = 2.0 * PI * 225.0 + 2.0 * PI * 15.0 * 50.0;
     assert!(rel(m.volume, v) < 5e-4, "{} vs {v}", m.volume);
     assert!(rel(m.area, a) < 5e-4, "{} vs {a}", m.area);
-    assert_eq!((m.merged.faces, m.merged.edges, m.merged.vertices), (3, 2, 2), "{:?}", m.merged);
+    // Two closed circles and the side's seam (the ladder's count: each whole curve once, and each
+    // cylinder's seam); a vertex on each circle.
+    assert_eq!((m.merged.faces, m.merged.edges, m.merged.vertices), (3, 3, 2), "{:?}", m.merged);
     assert_eq!(m.merged.face_types.get("cylinder"), Some(&1));
 }
 
@@ -463,6 +465,21 @@ fn tapered_extrudes() {
     assert!(rel(m.volume, v) < 5e-4, "{} vs {v}", m.volume);
     assert!(m.bbox.max.z < 1e-6 && m.bbox.min.z > -10.0 - 1e-6, "{:?}", m.bbox);
     assert!(extrude_tapered(&Plane::XY, &c, 10.0, 1.0, -60f64.to_radians(), crate::DraftCorner::default()).is_err(), "closes the profile");
+    // The square with a 10 × 10 square hole, 30 up, 5° inward: every wall leans in toward the
+    // material's outside, so the outer frustum narrows and the hole's widens; the solid is the
+    // one frustum less the other, with each wall a face of its own (four out, four in, two caps).
+    let t = 5f64.to_radians().tan();
+    let hole = Loop2::polygon(&[Vec2::new(-5.0, -5.0), Vec2::new(-5.0, 5.0), Vec2::new(5.0, 5.0), Vec2::new(5.0, -5.0)]);
+    let ring = Region2 { outer: sq.outer.clone(), holes: vec![hole] };
+    let b = extrude_tapered(&Plane::XY, &ring, 30.0, 1.0, -5f64.to_radians(), crate::DraftCorner::default()).unwrap();
+    let frustum = |a0: f64, a1: f64| 30.0 / 3.0 * (a0 * a0 + a1 * a1 + a0 * a1);
+    let v = frustum(40.0, 40.0 - 60.0 * t) - frustum(10.0, 10.0 + 60.0 * t);
+    let m = measure(&b).unwrap();
+    assert!(rel(m.volume, v) < 1e-6, "{} vs {v}", m.volume);
+    assert_eq!(m.merged.faces, 10);
+    // At 30° the hole would grow past the outer wall: refused, saying why.
+    let e = extrude_tapered(&Plane::XY, &ring, 30.0, 1.0, -30f64.to_radians(), crate::DraftCorner::default()).unwrap_err();
+    assert!(e.to_string().contains("hole"), "{e}");
 }
 
 /// A slot (two lines and two half-circles, tangent) tapered inward: every edge moves in by
@@ -986,13 +1003,16 @@ fn sphere_booleans() {
     let s = sphere(Vec3::ZERO, 15.0).unwrap();
     let m = measure(&s).unwrap();
     assert!(rel(m.volume, 4.0 / 3.0 * PI * 3375.0) < 1e-3, "{}", m.volume);
-    assert_eq!((m.merged.faces, m.merged.edges), (1, 0));
+    // One spherical face, closed along its seam from pole to pole.
+    assert_eq!((m.merged.faces, m.merged.edges), (1, 1));
     // A ball cut out of the top face of a slab (oracle 14).
     let b = box_solid(Vec3::new(-25.0, -25.0, -20.0), Vec3::new(25.0, 25.0, 0.0)).unwrap();
     let c = boolean(&b, &s, BoolOp::Cut).unwrap().unwrap();
     let m = measure(&c).unwrap();
     assert!(rel(m.volume, 50.0 * 50.0 * 20.0 - 2.0 / 3.0 * PI * 3375.0) < 1e-3, "{}", m.volume);
-    assert_eq!((m.merged.faces, m.merged.edges, m.merged.vertices), (7, 13, 9));
+    // The box's 6 faces and the sphere's; its 12 edges, the rim circle and the sphere's seam down
+    // to its pole; its 8 corners, the rim's vertex and the pole.
+    assert_eq!((m.merged.faces, m.merged.edges, m.merged.vertices), (7, 14, 10));
 }
 
 #[test]
@@ -1949,7 +1969,7 @@ fn fillet_mixed_arc_and_line_joint_preserves_both_section_radii() {
             if !mitres.insert(id) {
                 continue;
             }
-            let curve = solidcraft_geom::brep::eval::CurveEval::new(&edge.curve).unwrap();
+            let curve = solidcraft_geom::brep::eval::CurveEval::new(edge.parameters()).unwrap();
             let [lo, hi] = edge.interval;
             for i in 0..=257 {
                 let p = curve.point(lo + (hi - lo) * f64::from(i) / 257.0).unwrap();
