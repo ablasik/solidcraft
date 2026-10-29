@@ -833,6 +833,8 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
         entries.insert(0, Item::heading("Shared child: edits affect all copies of its parent"));
     }
     let bodies = app.session.occurrence_bodies(path, true).unwrap_or_default();
+    // The component's menu asks its first placement; this row may be another one.
+    let movable = !placement.grounded && app.session.held_by_rigid_group(placement.occurrence).is_none();
     for item in &mut entries {
         match item.id.as_str() {
             "ui.activate" => {
@@ -846,11 +848,13 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
             }
             "ui.moveOccurrence" => {
                 item.params = Some(json!({"occurrence": placement.occurrence, "path": path}));
-                item.enabled = !placement.grounded && app.session.held_by_rigid_group(placement.occurrence).is_none();
+                item.enabled = movable;
             }
             "ui.properties" => item.params = Some(json!({"occurrence": placement.occurrence, "path": path})),
             "ui.turnUpAxis" => {
+                item.enabled = movable;
                 for child in &mut item.children {
+                    child.enabled = movable;
                     if let Some(params) = child.params.as_mut() {
                         params["occurrence"] = json!(placement.occurrence);
                     }
