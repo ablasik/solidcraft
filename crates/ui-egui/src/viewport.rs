@@ -767,6 +767,25 @@ fn drawn_mesh(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody) -> std::syn
     if current() == DisplayQuality::Normal { b.mesh() } else { b.plan_mesh().unwrap_or_else(|| b.mesh()) }
 }
 
+/// The move a Move dialog's earlier types made to body `name`, if it is one they moved
+/// (`dialogs_move::chained`): its edges, faces and centres are shown where that move puts them.
+fn chain_of(chain: Option<&(Vec<String>, solidcraft_engine::doc::Mat)>, name: &str) -> Option<solidcraft_engine::doc::Mat> {
+    chain.filter(|(names, _)| names.iter().any(|n| n == name)).map(|(_, c)| *c)
+}
+
+/// `mesh` moved by `chain`, or as it is without one.
+fn carried_mesh(
+    chain: Option<solidcraft_engine::doc::Mat>,
+    mesh: std::sync::Arc<solidcraft_engine::geom::Mesh>,
+) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
+    let Some(c) = chain else { return mesh };
+    let mut m = (*mesh).clone();
+    m.positions.iter_mut().for_each(|p| *p = solidcraft_engine::doc::apply_point(&c, *p));
+    m.normals.iter_mut().for_each(|n| *n = solidcraft_engine::doc::apply_vector(&c, *n));
+    m.edges.iter_mut().flatten().for_each(|p| *p = solidcraft_engine::doc::apply_point(&c, *p));
+    std::sync::Arc::new(m)
+}
+
 /// How long (ms) the camera must stand still before display refinements are chosen and swapped in.
 const REFINE_STILL_MS: f64 = 200.0;
 
@@ -1981,10 +2000,19 @@ pub(crate) fn round_pick_feedback(app: &SolveApp) -> (Vec<(Vec3, Vec3)>, Vec<Vec
     let Some(inp) = d.active_input() else { return (Vec::new(), centres) };
     let s = &app.session;
     let hovered = app.viewport.hover.as_ref().and_then(|h| d.candidate(s, h));
+    let chained = crate::dialogs_move::chained(app);
+    let carry = |body: &str, p: Vec3, dir: Vec3| match chain_of(chained.as_ref(), body) {
+        Some(c) => (solidcraft_engine::doc::apply_point(&c, p), solidcraft_engine::doc::apply_vector(&c, dir)),
+        None => (p, dir),
+    };
     if inp.accept == crate::selection::AXIS_PICKS {
         let bb = view_bounds(app);
         for sel in hovered.iter().chain(inp.items.iter()) {
-            if let Some((o, dir)) = crate::dialogs::round_axis(s, sel)
+            let body = match sel {
+                Sel::Edge { body, .. } | Sel::Face { body, .. } => body.as_str(),
+                _ => "",
+            };
+            if let Some((o, dir)) = crate::dialogs::round_axis(s, sel).map(|(o, dir)| carry(body, o, dir))
                 && !lines.iter().any(|(_, _, q, e)| q.dist(o) < 1e-9 && e.cross(dir).len() < 1e-9)
             {
                 let (a, b) = axis_span(app, &bb, o, dir);
@@ -1996,7 +2024,7 @@ pub(crate) fn round_pick_feedback(app: &SolveApp) -> (Vec<(Vec3, Vec3)>, Vec<Vec
         if (matches!(sel, Sel::Vertex { .. }) || d.edge_is_centre(inp))
             && let Some((c, ..)) = crate::dialogs::edge_circle(s, body, *index)
         {
-            centres.push(c);
+            centres.push(carry(body, c, Vec3::Z).0);
         }
     }
     (lines.into_iter().map(|(a, b, ..)| (a, b)).collect(), centres)
@@ -2299,6 +2327,28 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let s = &app.session;
     let st = crate::open_meshing::shown_world(app);
     let bounds = body_bounds(app, &st);
+    // Bodies a Move dialog's earlier types moved are picked where they stand, as the preview
+    // draws them: their mesh placed, and their box, moved on by that move.
+    let chained = crate::dialogs_move::chained(app);
+    let carry = |b: &solidcraft_engine::doc::ModelBody| chain_of(chained.as_ref(), &b.name);
+    let placed = |b: &solidcraft_engine::doc::ModelBody| {
+        let (m, place) = b.mesh_in_place();
+        (m, carry(b).map_or(place, |c| solidcraft_engine::doc::mat_mul(&c, &place)))
+    };
+    let body_box = |i: usize, b: &solidcraft_engine::doc::ModelBody| {
+        let (_, bb) = bounds.get(i)?;
+        let Some(c) = carry(b) else { return Some(*bb) };
+        let mut moved = solidcraft_engine::geom::Aabb3::EMPTY;
+        for k in 0..8 {
+            let corner = Vec3::new(
+                if k & 1 == 0 { bb.min.x } else { bb.max.x },
+                if k & 2 == 0 { bb.min.y } else { bb.max.y },
+                if k & 4 == 0 { bb.min.z } else { bb.max.z },
+            );
+            moved.add(solidcraft_engine::doc::apply_point(&c, corner));
+        }
+        Some(moved)
+    };
     let mut hits = Vec::new();
     let (o, d) = proj.ray(pos);
     // MID is an idle sketch selection target. Tools and dialogs keep their existing picks.
@@ -2440,9 +2490,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             continue;
         }
         // Bodies whose box the ray misses (or enters behind the best hit so far) are skipped.
-        if let Some((_, bb)) = bounds.get(i) {
+        if let Some(bb) = body_box(i, b) {
             let pad = bb.diagonal() * 1e-6 + 1e-9;
-            match ray_box(o, d, bb, pad) {
+            match ray_box(o, d, &bb, pad) {
                 None => continue,
                 Some(t0) if !all && bestf.as_ref().is_some_and(|(bt, _)| t0 > *bt) => continue,
                 _ => {}
@@ -2450,7 +2500,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         }
         // A placed part is picked in its own frame, from its shared mesh and index: the ray is
         // moved there (a rigid move keeps distances along it), so no moved copy is made.
-        let (m, place) = b.mesh_in_place();
+        let (m, place) = placed(b);
         let index = app.viewport.pick_index.of(&m);
         // The nearest kept face: past any the section removes (a bounded walk along the ray).
         let mut nearest = None;
@@ -2508,15 +2558,15 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             continue;
         }
         let mut body_slack = slack;
-        if let Some((_, bb)) = bounds.get(i) {
+        if let Some(bb) = body_box(i, b) {
             // Only bodies whose outline on screen is near the cursor can have an edge under it.
-            if screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos)) {
+            if screen_box(proj, &bb, 8.0).is_some_and(|r| !r.contains(pos)) {
                 continue;
             }
             body_slack = pick_slack(bb.diagonal());
         }
         // In the part's own frame, as for faces; its points are moved back to where it stands.
-        let (m, place) = b.mesh_in_place();
+        let (m, place) = placed(b);
         let Some((lo, ld)) = local_ray(&place, o, d) else { continue };
         let moved = !solidcraft_engine::doc::is_identity(&place);
         let at = |p: Vec3| if moved { solidcraft_engine::doc::apply_point(&place, p) } else { p };
@@ -3049,6 +3099,7 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
         app.start("solid.press_pull");
         return;
     }
+    let sel = crate::dialogs_move::from_shown(app, sel);
     let Some(mut d) = app.dialog.take() else { return };
     // With holes moving by clicking (Preferences), a Single hole picked again on its face moves there.
     if app.preferences.hole_moves && crate::hole_place::pick_moves(&mut d, &app.session, &sel) {
@@ -3295,6 +3346,12 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     crate::theme_files::color_key(&Tokens::get()).hash(&mut h);
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
+    // Where a Move dialog has moved its bodies; while its triad is dragged, only that it is.
+    if crate::dialogs_move::dragging(app) {
+        "dragging".hash(&mut h);
+    } else {
+        crate::dialogs_move::chained(app).map(|(_, c)| c.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>()).hash(&mut h);
+    }
     app.origin_visible().hash(&mut h);
     app.picking_plane().hash(&mut h);
     app.preferences.reference_geometry_through_bodies.hash(&mut h);
@@ -3516,7 +3573,17 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     let active_bodies = s.active_occurrence_path.as_ref().and_then(|p| s.occurrence_bodies(p, true).ok());
     // Faces lit over the model use the triangles the model shows them with.
     let product = crate::render_workspace::active(app);
-    let shown = |b: &solidcraft_engine::doc::ModelBody| if product { b.mesh() } else { shown_mesh(app, b, &active_bodies) };
+    // Bodies a Move dialog moves are lit where they stand (as they are picked). While its triad
+    // is dragged they aren't lit at all, so the highlight is built again once, when it lets go,
+    // rather than every frame.
+    let live = crate::dialogs_move::chained(app);
+    let dragging = crate::dialogs_move::dragging(app);
+    let moving = |name: &str| dragging && chain_of(live.as_ref(), name).is_some();
+    let chained = live.as_ref().filter(|_| !dragging);
+    let carry = |b: &solidcraft_engine::doc::ModelBody| chain_of(chained, &b.name);
+    let replaced = |name: &str| moving(name) || (app.preview.effective_replaced().iter().any(|n| n == name) && chain_of(chained, name).is_none());
+    let shown = |b: &solidcraft_engine::doc::ModelBody| carried_mesh(carry(b), if product { b.mesh() } else { shown_mesh(app, b, &active_bodies) });
+    let drawn = |b: &solidcraft_engine::doc::ModelBody| carried_mesh(carry(b), drawn_mesh(app, b));
     let items = app.highlighted();
     let sketches = selected_sketches(app, &items);
     let mut sel = Vec::new();
@@ -3654,9 +3721,9 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
         match x {
             Sel::Face { body, index, .. } => {
                 // A live preview stands in for the body: its old faces would fight with it.
-                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.effective_replaced().contains(body)) {
+                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !replaced(body)) {
                     face_tris(&mut feedback, &shown(b), *index, c4(t.sel_face), false);
-                    hidden_face_outline(&mut feedback, &drawn_mesh(app, b), *index, t.sel_edge);
+                    hidden_face_outline(&mut feedback, &drawn(b), *index, t.sel_edge);
                 }
             }
             Sel::Body { name } => {
@@ -3674,9 +3741,11 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
             Sel::Edge { body, index, point } => {
                 if let Some(b) = st.body(body)
                     && app.session.body_visible(body)
+                    && !moving(body)
                 {
-                    let m = drawn_mesh(app, b);
-                    if let Some(e) = edge_of(&m, *index, *point) {
+                    let m = drawn(b);
+                    let point = if carry(b).is_some() { crate::dialogs_move::shown_point(app, body, *point) } else { *point };
+                    if let Some(e) = edge_of(&m, *index, point) {
                         edge_lines(&mut feedback, e, selected_edge, 3.0, &edge_normals(&m, e));
                     }
                 }
@@ -3815,13 +3884,12 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
             }
         }
         Some(Hit::Face { body, index, .. })
-            if !app.preview.effective_replaced().contains(body)
-                && !sel.iter().any(|x| matches!(x, Sel::Face { body: b, index: i, .. } if b == body && i == index)) =>
+            if !replaced(body) && !sel.iter().any(|x| matches!(x, Sel::Face { body: b, index: i, .. } if b == body && i == index)) =>
         {
             if let Some(b) = st.body(body) {
                 let k = t.hover_face_lift;
                 let c = body_rgb(app, body);
-                let m = drawn_mesh(app, b);
+                let m = drawn(b);
                 let patch = m.surface_patch(*index);
                 let lit = shown(b);
                 for &f in &patch {
@@ -3836,10 +3904,10 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 }
             }
         }
-        Some(Hit::Edge { body, index, mid, .. }) => {
+        Some(Hit::Edge { body, index, mid, .. }) if !moving(body) => {
             if let Some(b) = st.body(body) {
                 // Lit over the drawn edges (finer away from Normal display quality).
-                let m = drawn_mesh(app, b);
+                let m = drawn(b);
                 for i in m.circular_rim(*index) {
                     let selected = sel.iter().any(|x| matches!(x, Sel::Edge { body: b, index: j, .. } if b == body && *j == i));
                     if !selected && let Some(e) = if i == *index { edge_of(&m, i, *mid) } else { m.edges.get(i) } {

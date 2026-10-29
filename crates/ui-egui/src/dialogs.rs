@@ -2248,13 +2248,14 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
 
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
-fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, session: &Session) {
+fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, app: &SolveApp) {
+    let session = &app.session;
     if matches!(d.kind, Kind::Mirror) {
         object_type_row(d, ui);
         return;
     }
     if matches!(d.kind, Kind::Move { .. }) {
-        crate::dialogs_move::type_row(d, ui, &session.doc);
+        crate::dialogs_move::type_row(app, d, ui);
         return;
     }
     let current = match d.kind {
