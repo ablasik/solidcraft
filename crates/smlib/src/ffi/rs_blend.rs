@@ -23,7 +23,7 @@ use solidcore::topology::face::p2::surface as face_surface;
 use solidcore::topology::{Brep, BrepId, EdgeId, FaceId};
 use solidcore::{EntityRef, SolidError};
 
-use super::ops::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_NO_ROOM, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, Pick, PickError};
+use super::ops::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_NO_ROOM, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, ERR_UNSUPPORTED, Pick, PickError};
 use super::rs::{State, named_ref, state, status};
 use super::rs_ops::copy_of;
 use super::rs_ops2::finish;
@@ -257,6 +257,10 @@ pub fn fillet_variable(
         return Err(ERR_ARG);
     }
     let straight = degree == 1 && knots == [0.0, 0.0, 1.0, 1.0] && radii.len() == 2;
+    // A round closes to a corner at the end of its edge; a zero inside would pinch it to a point.
+    if radii.len() > 2 && radii[1..radii.len() - 1].contains(&0.0) {
+        return Err(ERR_UNSUPPORTED);
+    }
     let order = usize::try_from(degree).map_err(|_| ERR_ARG)? + 1;
     if !straight && (degree < 1 || radii.len() < order || knots.len() != radii.len() + order || knots.iter().any(|k| !k.is_finite())) {
         return Err(ERR_ARG);
