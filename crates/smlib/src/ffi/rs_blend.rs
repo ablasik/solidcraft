@@ -1,8 +1,13 @@
 //! Fillet, chamfer and the selection plumbing on solidcore. Edges and faces are chosen by points as
 //! the C API does: the nearest within the tolerance, by more than the body's tolerance nearer than
-//! any other. Not ported ([`ERR_UNSUPPORTED`]): variable radii other than a straight law. Faces
-//! moved or drafted, unequal chamfers and chord blends are in `rs_ops2`.
-use solidcore::blend::fillet_executive::api::{fillet_edges, fillet_edges_per_edge, variable_radius_fillet};
+//! any other. Faces moved or drafted, unequal chamfers and chord blends are in `rs_ops2`.
+use solidcore::blend::fillet_executive::p1::is_radius_supported;
+use solidcore::blend::fillet_geom::p1::FilletErrorType;
+use solidcore::blend::fillet_standard_solver::p1::{FilletLaw, FilletLawKind};
+use solidcore::geom::extent1d::Extent1d;
+use solidcore::nurbs::b_spline_curve::p1::BSplineCurve;
+use solidcore::nurbs::crv_basic::Curve as NurbCurve;
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_solver::p1::{FilletSurfaceGenerator, FilletSurfaceGeneratorType, MakeSurfaceBlendSih};
 use solidcore::geom::object::ObjectRef;
@@ -18,7 +23,7 @@ use solidcore::topology::face::p2::surface as face_surface;
 use solidcore::topology::{Brep, BrepId, EdgeId, FaceId};
 use solidcore::{EntityRef, SolidError};
 
-use super::ops::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, ERR_UNSUPPORTED, Pick, PickError};
+use super::ops::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_NO_ROOM, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, Pick, PickError};
 use super::rs::{State, named_ref, state, status};
 use super::rs_ops::copy_of;
 use super::rs_ops2::finish;
@@ -189,7 +194,7 @@ pub fn pick_op(kind: Pick, h: &Handle, points: &[[f64; 3]], tolerance: f64, size
             let edges = pick_edges(&s.kernel, &b, points, tolerance)?;
             match kind {
                 // Cross-section 1: circular.
-                Pick::Fillet => fillet_edges(&mut s.kernel, &mut b, &edges, size, 1, 1, 1.0),
+                Pick::Fillet => round_edges(&mut s.kernel, &mut b, &edges, size),
                 _ => chamfer(&mut s.kernel, &mut b, &edges, &vec![size; edges.len()]),
             }
             .map_err(|e| plain(status(&e)))?;
@@ -227,14 +232,17 @@ pub fn blend(kind: i32, h: &Handle, points: &[[f64; 3]], sizes: &[f64], toleranc
     }
     match generator {
         Some(_) if kind == BLEND_CHORD => super::rs_ops2::chord_edges(&mut s.kernel, &mut b, &edges, &radii),
-        Some(g) => fillet_edges_per_edge(&mut s.kernel, &mut b, &edges, &radii, &vec![g; edges.len()], continuity, 1.0),
+        Some(g) => round_edges_per_edge(&mut s.kernel, &mut b, &edges, &radii, &vec![g; edges.len()], continuity),
         None => chamfer(&mut s.kernel, &mut b, &edges, &radii),
     }
     .map_err(|e| plain(status(&e)))?;
     finish(&mut s, b, solid_in)
 }
 
-/// Only a straight law (degree 1, two radii) is ported; `start` says which end has the first radius.
+/// A variable round whose radius runs along the edge by a law: a straight one between two radii
+/// (`SmApiVariableRadiusFillet`), or a B-spline whose control points' x coordinates are the radii
+/// (`SmBSplineFilletLaw`, which SMLib's executive takes but the API call does not offer). `start`
+/// says which end of the edge has the first radius; a radius of zero ends the round at a corner.
 pub fn fillet_variable(
     h: &Handle,
     at: &[f64; 3],
@@ -245,11 +253,13 @@ pub fn fillet_variable(
     radii: &[f64],
 ) -> Result<Handle, i32> {
     check_args(std::slice::from_ref(at), tolerance, radii).map_err(|e| e.0)?;
-    if !start.iter().all(|v| v.is_finite()) || radii.iter().any(|&r| r < 0.0) || radii.iter().all(|&r| r == 0.0) {
+    if !start.iter().all(|v| v.is_finite()) || radii.iter().any(|&r| !r.is_finite() || r < 0.0) || radii.iter().all(|&r| r == 0.0) {
         return Err(ERR_ARG);
     }
-    if degree != 1 || knots != [0.0, 0.0, 1.0, 1.0] || radii.len() != 2 {
-        return Err(ERR_UNSUPPORTED);
+    let straight = degree == 1 && knots == [0.0, 0.0, 1.0, 1.0] && radii.len() == 2;
+    let order = usize::try_from(degree).map_err(|_| ERR_ARG)? + 1;
+    if !straight && (degree < 1 || radii.len() < order || knots.len() != radii.len() + order || knots.iter().any(|k| !k.is_finite())) {
+        return Err(ERR_ARG);
     }
     let mut s = state();
     let (mut b, _) = working(&mut s, h).map_err(|e| e.0)?;
@@ -264,7 +274,75 @@ pub fn fillet_variable(
     };
     let from = point(start);
     let forward = ends[0].distance(from) <= ends[1].distance(from);
-    let (first, second) = if forward { (radii[0], radii[1]) } else { (radii[1], radii[0]) };
-    variable_radius_fillet(&mut s.kernel, &mut b, &[edge], first, second, 1, 1).map_err(|e| status(&e))?;
+    let result = if straight {
+        let (first, second) = if forward { (radii[0], radii[1]) } else { (radii[1], radii[0]) };
+        variable_radius(&mut s.kernel, &mut b, edge, first, FilletLaw::linear(first, second, None))
+    } else {
+        let (lo, hi) = (knots[0], knots[knots.len() - 1]);
+        let (knots, radii): (Vec<f64>, Vec<f64>) = if forward {
+            (knots.to_vec(), radii.to_vec())
+        } else {
+            (knots.iter().rev().map(|k| lo + hi - k).collect(), radii.iter().rev().copied().collect())
+        };
+        let pw = radii.iter().map(|&r| CPoint::new(r, 0.0, 0.0, NOW)).collect();
+        let curve = NurbCurve::new(pw, order - 1, knots).map_err(|e| status(&e))?;
+        let mut law = FilletLaw::new(FilletLawKind::BSpline { law_curve: BSplineCurve::from_nurb(curve, 3, false), extended_law: None });
+        law.edge_map = Extent1d::from_min_max(lo, hi);
+        variable_radius(&mut s.kernel, &mut b, edge, radii[0], law)
+    };
+    result.map_err(|e| status(&e))?;
     finish(&mut s, b, solid_in).map_err(|e| e.0)
+}
+
+/// `SmApiVariableRadiusFillet`'s steps for any law and any radii, a zero among them included
+/// (the call itself refuses a radius under 8 times the tolerance).
+fn variable_radius(k: &mut Kernel, b: &mut Brep, edge: EdgeId, radius: f64, law: FilletLaw) -> Result<(), SolidError> {
+    run_fillet(k, b, |session, k| session.prepare_variable_radius_edges(k, &[edge], radius, law, 1, 1))
+}
+
+/// One fillet session as `SmApiFilletEdges` and its kin run it: `prepare` sets the blends up, then
+/// `DoFillet`, `StitchAndOrient`. A refusal for lack of room (error info `NoRoom`, which the
+/// status does not carry) is [`ERR_NO_ROOM`], so the caller can tell it from a failure.
+fn run_fillet(
+    k: &mut Kernel,
+    b: &mut Brep,
+    prepare: impl FnOnce(&mut FilletSession<'_>, &mut Kernel) -> Result<(), SolidError>,
+) -> Result<(), SolidError> {
+    let mut no_room = false;
+    let fillet = {
+        let mut session = FilletSession::new(k, b)?;
+        let done = prepare(&mut session, k).and_then(|()| session.do_fillet(k));
+        no_room = done.is_err() && session.error_info().code == FilletErrorType::NoRoom as i32;
+        done
+    };
+    let result = match fillet {
+        Ok(()) => stitch_and_orient(k, b, &StitchAndOrientOptions::default()),
+        Err(_) if no_room => Err(SolidError::Upstream { operation: "smlib fillet", code: ERR_NO_ROOM, entity: None }),
+        Err(e) => Err(e),
+    };
+    b.refresh_cached_topology();
+    result
+}
+
+/// `SmApiFilletEdges` with a circular cross-section.
+fn round_edges(k: &mut Kernel, b: &mut Brep, edges: &[EdgeId], radius: f64) -> Result<(), SolidError> {
+    if edges.is_empty() || !is_radius_supported(radius, b.tolerance()) {
+        return Err(SolidError::InvalidInput { operation: "smlib fillet", reason: "no edge, or a radius too small" });
+    }
+    run_fillet(k, b, |session, k| session.prepare_constant_radius_edges(k, edges, radius, 1, 1, 1.0))
+}
+
+/// `SmApiFilletEdgesPerEdge`.
+fn round_edges_per_edge(
+    k: &mut Kernel,
+    b: &mut Brep,
+    edges: &[EdgeId],
+    radii: &[f64],
+    types: &[FilletSurfaceGeneratorType],
+    continuity: u32,
+) -> Result<(), SolidError> {
+    if edges.is_empty() || radii.len() != edges.len() || types.len() != edges.len() || radii.iter().any(|&r| !is_radius_supported(r, b.tolerance())) {
+        return Err(SolidError::InvalidInput { operation: "smlib fillet", reason: "no edge, or a radius too small" });
+    }
+    run_fillet(k, b, |session, k| session.prepare_per_edge_constant_radius(k, edges, radii, types, continuity, 1.0))
 }
