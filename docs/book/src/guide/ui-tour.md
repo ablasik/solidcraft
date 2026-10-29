@@ -14,6 +14,11 @@
   panel's name for all its commands. Drag a command from the dropdown onto a panel's label
   or empty space to append it; the insertion line shows its destination. Drop onto an existing
   button to insert before it. Buttons can also move between panels, and the layout is saved.
+  Click the **+** after the tabs, right-click a tab or empty toolbar space, or use
+  **Preferences > Interface > Toolbar tabs** to hide or restore tabs. Every existing tab,
+  including Sheet Metal and Weldments, stays visible by default. Tabs you hide stay hidden in every
+  design until you show them again. Hidden tabs keep
+  their customised buttons, commands in search and shortcuts; with all tabs hidden, **+** remains.
 - **Browser** (left). The design as a tree: document settings and units, named views, the
   origin, bodies, sketches, construction planes, canvases, joints and components. The eye shows or
   hides an item, a component's radio button makes it the active component, and right-clicking any

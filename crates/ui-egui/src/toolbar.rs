@@ -1009,7 +1009,7 @@ fn ribbon_label_top(whole: Rect, height: f32) -> f32 {
 }
 
 /// Ribbon headings use the translated labels, with normal word casing instead of registry caps.
-fn ribbon_label(app: &SolveApp, label: &str) -> String {
+pub(crate) fn ribbon_label(app: &SolveApp, label: &str) -> String {
     let label = crate::workspace::word_cased(app.tr_label(crate::workspace::tab_label(label)));
     // Partial catalogs may already translate the word-cased name (for example "Model").
     app.tr_label(&label).to_string()
@@ -1072,9 +1072,15 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
                 + 24.0
         })
         .collect();
+    // A plus after the last tab opens the toolbar's menu, so tabs can be shown or hidden without
+    // knowing about the right-click; it stays when every tab is hidden. The Render workspace's
+    // one tab can't be hidden.
+    let add = !crate::render_workspace::active(app);
+    let add_size = TAB_ROW_HEIGHT - 2.0 * RIBBON_TAB_INSET;
     let tabs_width: f32 = widths.iter().sum::<f32>()
         + tabs.len().saturating_sub(1) as f32 * 2.0
-        + tabs.iter().filter(|tab| contextual_tab(app, tab)).count() as f32 * 6.0;
+        + tabs.iter().filter(|tab| contextual_tab(app, tab)).count() as f32 * 6.0
+        + if add { 2.0 + add_size } else { 0.0 };
     let search_width = crate::ui_kit::CommandSearch::closed_width(ui.ctx());
     // The first tab and the search field sit the same distance from the card's top, left and right
     // edges, so their outer corners are concentric with the card's corners.
@@ -1159,7 +1165,31 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
                     if response.clicked() {
                         app.ui.tab = tab.to_string();
                     }
+                    if response.secondary_clicked() {
+                        crate::context_menu::open_for(
+                            app,
+                            response.interact_pointer_pos().unwrap_or(tr.left_bottom()),
+                            crate::context_menu::Target::Toolbar,
+                        );
+                    }
                     x += width + 2.0;
+                }
+                if add {
+                    let pr = Rect::from_min_size(pos2(x, all.top() + inset), vec2(add_size, add_size));
+                    let open = crate::context_menu::open_from(app, pr, &crate::context_menu::Target::Toolbar);
+                    if open && !ui.rect_contains_pointer(pr) {
+                        ui.painter().rect_filled(pr, t.control_radius, t.hover);
+                    }
+                    let response = crate::ui_kit::quiet_icon_button_at(ui, pr, "plus", app.tr("prefs.toolbar_tabs"));
+                    if ui.clip_rect().contains(pr.center()) {
+                        crate::scenario::publish_target("ribbon:add_tab", pr);
+                    }
+                    if response.clicked() {
+                        // A click leaves no keyboard focus here, as on the tabs, so single-key
+                        // shortcuts such as S still work afterwards.
+                        response.surrender_focus();
+                        crate::context_menu::toggle_for(app, pr, pr.left_bottom(), crate::context_menu::Target::Toolbar);
+                    }
                 }
             });
     });
@@ -1364,6 +1394,12 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             })
             .collect();
         let right = r.right();
+        if crate::workspace::visible_tabs(app).is_empty() {
+            // Every tab is hidden: the ribbon says how to bring them back.
+            let at = pos2((ribbon_left + right) / 2.0, top + group_height / 2.0);
+            ribbon_text(ui, at, app.tr("ui.toolbar_tabs_hidden"), t.font_body, t.text_dim, false);
+            crate::scenario::publish_handle("ribbon:tabs_hidden", at);
+        }
         // The Sketch exit group follows the last sketch panel, and is always kept room for so it
         // stays reachable at every width; when panels go into the » menu it moves to the far right.
         let finish_plan =

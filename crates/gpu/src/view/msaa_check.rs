@@ -97,6 +97,7 @@ impl Renderer {
         let frame = Frame {
             product_lights: None,
             product: false,
+            upload_error: None,
             key: 1,
             slot: slot(Some(model)),
             sketch_key: 2,

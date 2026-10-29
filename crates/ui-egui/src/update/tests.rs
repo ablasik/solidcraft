@@ -686,3 +686,67 @@ fn an_unmanaged_install_updates_itself_as_before() {
     assert!(h.widget("Download").is_some());
     assert!(h.widget("Update available: update SolidCraft in ArtCraft Launcher").is_none());
 }
+
+#[test]
+fn periodic_checks_refresh_the_offered_label() {
+    let dir = scratch();
+    let (feed, first) = next_release_feed(&dir.0);
+    let mut h = crate::scenario::Harness::new();
+    h.app.updater.feed = Some(feed.clone());
+    h.frame();
+    wait_for_check(&mut h);
+    h.frames(2);
+    assert!(h.widget(&format!("Update to {first}")).is_some());
+    h.app.updater.installed = Some(Ok(install::Outcome::Restart(dir.0.join("SolidCraft.AppImage"))));
+    let v = parse_version(&first).unwrap();
+    let next = format!("{}.{}.0", v.major, v.minor + 1);
+    std::fs::write(feed, json!({"tag_name": format!("v{next}")}).to_string()).unwrap();
+    h.app.preferences.update.next_check = 0.0;
+    h.frame();
+    wait_for_check(&mut h);
+    h.frames(2);
+    assert!(h.widget(&format!("Update to {next}")).is_some());
+    assert!(h.widget(&format!("Update to {first}")).is_none());
+}
+
+#[test]
+fn install_selection_refreshes_the_button_and_progress_before_completion() {
+    let dir = scratch();
+    let target = dir.0.join("SolidCraft.AppImage");
+    let name = asset_name(&InstallKind::AppImage(target.clone()), std::env::consts::ARCH, "999.1.0").unwrap();
+    let mut h = crate::scenario::Harness::new();
+    h.app.preferences.check_updates = false;
+    let mut shown = release();
+    shown.tag = "v999.0.0".into();
+    h.app.updater.release = Some(shown);
+    h.app.updater.kind = Some(InstallKind::AppImage(target));
+    h.app.updater.open = true;
+    h.app.services.http_get = Some(Arc::new(move |url| {
+        if url == LATEST_API {
+            return Ok(json!({"tag_name":"v999.1.0", "assets":[
+                {"name": name, "browser_download_url":format!("https://github.com/tangency-labs/solidcraft/releases/download/v999.1.0/{name}")},
+                {"name": install::SUMS, "browser_download_url":"https://github.com/tangency-labs/solidcraft/releases/download/v999.1.0/SHA256SUMS.txt"}
+            ]}).to_string().into_bytes());
+        }
+        Ok(format!("{}  {name}\n", "a".repeat(64)).into_bytes())
+    }));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let rx = std::sync::Mutex::new(rx);
+    h.app.services.http_download = Some(Arc::new(move |_, _, _| {
+        rx.lock().unwrap().recv().unwrap();
+        Err(FetchError::Failed("download stopped".into()))
+    }));
+    start_install(&mut h.app, &egui::Context::default());
+    for _ in 0..500 {
+        poll_install(&mut h.app);
+        if h.app.updater.release.as_ref().unwrap().version() == "999.1.0" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    h.frames(2);
+    assert!(h.widget("Update to 999.1.0").is_some());
+    assert!(h.widget("Updating to 999.1.0.").is_some());
+    assert!(h.app.updater.installed.is_none());
+    tx.send(()).unwrap();
+}

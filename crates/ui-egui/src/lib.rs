@@ -881,6 +881,9 @@ impl SolveApp {
         self.viewport.gpu = Some(installed);
         self.viewport.tess_ready = tess_ready;
         self.viewport.draw_stats = Some(stats);
+        // The device's own limits (what it was created with), not the adapter's: uploads are split
+        // at the device's buffer size.
+        self.render_workspace.geometry_budget = render_workspace::geometry_budget(rs.device.limits().max_buffer_size, cfg!(target_arch = "wasm32"));
         render_workspace::invalidate_scene(self);
         let (samples, has_depth) = self.viewport.gpu.map_or((1, false), |g| (g.samples.max(1), g.depth.is_some()));
         self.render_workspace.host = match render_workspace::host_executor(rs.device.limits().max_texture_dimension_2d, has_depth, samples) {

@@ -591,11 +591,58 @@ pub fn frame_body(app: &crate::SolveApp) -> Option<String> {
     matches!(made_by.kind, FeatureKind::FrameMember { .. }).then(|| body.name.clone())
 }
 
+/// The design tabs following the general-purpose tabs in the ribbon.
+pub struct SpecialtyTab {
+    pub tab: &'static str,
+    pub icon: &'static str,
+}
+
+pub const SPECIALTY_TABS: &[SpecialtyTab] =
+    &[SpecialtyTab { tab: "SHEET METAL", icon: "sheet" }, SpecialtyTab { tab: "WELDMENTS", icon: "frame_member" }];
+
+/// A tab's row in the toolbar menu: the icon of the command that leads the tab (Model › Create ›
+/// Extrude, Inspect › Measure, View › Views and so on).
+pub fn tab_icon(tab: &str) -> &'static str {
+    match tab {
+        "MODEL" => "extrude",
+        "SURFACE" => "surface_extrude",
+        "ASSEMBLE" => "joint",
+        "INSERT" => "import",
+        "INSPECT" => "measure",
+        "MANAGE" => "params",
+        "VIEW" => "camera",
+        _ => SPECIALTY_TABS.iter().find(|o| o.tab == tab).map_or("", |o| o.icon),
+    }
+}
+
+/// Tabs shown by default, in row order. Sketch has its own visibility preference and the Render
+/// workspace owns its controls, so neither is on this list.
+pub fn choosable_tabs() -> impl Iterator<Item = &'static str> {
+    TABS.iter().copied().chain(SPECIALTY_TABS.iter().map(|o| o.tab))
+}
+
+/// The person's choice. Every tab is on until explicitly hidden.
+pub fn tab_turned_on(app: &crate::SolveApp, tab: &str) -> bool {
+    choosable_tabs().any(|t| t == tab) && !app.preferences.hidden_toolbar_tabs.iter().any(|t| t == tab)
+}
+
+/// Show or hide a tab (kept with the preferences); names not on the list are left alone.
+pub fn set_tab_shown(app: &mut crate::SolveApp, tab: &str, shown: bool) {
+    if !choosable_tabs().any(|t| t == tab) {
+        return;
+    }
+    app.preferences.hidden_toolbar_tabs.retain(|t| t != tab);
+    if !shown {
+        app.preferences.hidden_toolbar_tabs.push(tab.to_string());
+    }
+}
+
+/// Every design tab stays hidden until the person chooses to show it again.
 pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     if crate::render_workspace::active(app) {
         return Vec::new();
     }
-    let mut tabs = TABS.to_vec();
+    let mut tabs: Vec<_> = TABS.iter().copied().filter(|tab| tab_turned_on(app, tab)).collect();
     if app.preferences.sketch_tab_always {
         // Right after MODEL, whether a sketch is open or not (#7904).
         let at = tabs.iter().position(|t| *t == "MODEL").map_or(0, |i| i + 1);
@@ -603,12 +650,15 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     } else if app.session.active_sketch.is_some() {
         tabs.push("SKETCH");
     }
-    // Always reachable, as before the ribbon redesign: a sheet-metal part starts from an
-    // ordinary sketch or solid, so the tab cannot wait for a sheet body. A frame starts
-    // from a sketch of its lines, so Weldments is always there too.
-    tabs.push("SHEET METAL");
-    tabs.push("WELDMENTS");
+    tabs.extend(SPECIALTY_TABS.iter().map(|o| o.tab).filter(|tab| tab_turned_on(app, tab)));
     tabs
+}
+
+/// Where the ribbon goes when the selected tab is not in the row: Model, or the first tab shown
+/// while Model is hidden; none when every tab is hidden.
+fn home_tab(app: &crate::SolveApp) -> &'static str {
+    let tabs = visible_tabs(app);
+    if tabs.contains(&"MODEL") { "MODEL" } else { tabs.first().copied().unwrap_or_default() }
 }
 
 /// With the SKETCH tab kept shown (#7904) and no sketch open: whether `id` is one of the tools in
@@ -652,19 +702,19 @@ pub fn sync_context(app: &mut crate::SolveApp) {
             "SKETCH"
         } else if let Some(back) = back.as_deref().filter(|t| *t != "SKETCH" && visible_tabs(app).contains(t)) {
             // Finishing a sketch goes back to the tab it came from (#3250).
-            visible_tabs(app).into_iter().find(|t| t == &back).unwrap_or("MODEL")
+            visible_tabs(app).into_iter().find(|t| t == &back).unwrap_or_else(|| home_tab(app))
         } else if context.as_deref().is_some_and(|c| c.starts_with("frame:")) {
             "WELDMENTS"
         } else if context.is_some() {
             "SHEET METAL"
         } else {
-            "MODEL"
+            home_tab(app)
         }
         .into();
         app.ui.ribbon_context = context;
     }
     if !visible_tabs(app).contains(&app.ui.tab.as_str()) {
-        app.ui.tab = "MODEL".into();
+        app.ui.tab = home_tab(app).into();
     }
 }
 
@@ -870,7 +920,7 @@ mod tests {
         h.app.run("solid.box", json!({"body_name":"Solid", "operation":"new", "length":10, "width":10, "height":10})).unwrap();
         h.app.run("select.set", json!({"items":[{"type":"body","name":"Solid"}]})).unwrap();
         sync_context(&mut h.app);
-        assert!(visible_tabs(&h.app).contains(&"SHEET METAL"), "the tab stays reachable off a sheet body");
+        assert!(visible_tabs(&h.app).contains(&"SHEET METAL"), "the tab stays reachable off a sheet body by default");
         assert!(sheet_body(&h.app).is_none());
         h.app.run("select.set", json!({"items":[{"type":"body","name":"Sheet"}]})).unwrap();
         sync_context(&mut h.app);
@@ -921,6 +971,157 @@ mod tests {
         assert_eq!(h.app.ui.tab, "WELDMENTS");
     }
 
+    /// Tabs show until the person hides them, from the same menu and Settings, down
+    /// to no tab at all; the plus stays, so they can come back (#5717).
+    #[test]
+    fn standard_tabs_show_until_hidden_and_every_tab_can_be_hidden() {
+        let mut h = crate::scenario::Harness::new();
+        h.frames(2);
+        assert!(h.app.preferences.hidden_toolbar_tabs.is_empty());
+        assert_eq!(h.app.ui.tab, "MODEL");
+
+        // Hide the selected tab from its own menu: it leaves the row and the next tab is selected.
+        h.step(&json!({"click":{"handle":"tab:MODEL"},"button":"right"})).unwrap();
+        h.call("ui.menuPick", json!({"item":"Model"}));
+        h.frames(2);
+        assert_eq!(h.app.preferences.hidden_toolbar_tabs, ["MODEL"]);
+        assert!(crate::scenario::handle_at("tab:MODEL").is_none());
+        assert_eq!(h.app.ui.tab, "SURFACE", "the first tab still shown is selected");
+
+        // Settings › Interface lists the standard tabs too.
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        crate::prefs::reveal_preference(&mut h, "prefs:toolbar_tab:MODEL");
+        h.step(&json!({"click":{"handle":"prefs:toolbar_tab:MODEL"}})).unwrap();
+        assert!(h.app.preferences.hidden_toolbar_tabs.is_empty());
+        crate::prefs::reveal_preference(&mut h, "prefs:toolbar_tab:VIEW");
+        h.step(&json!({"click":{"handle":"prefs:toolbar_tab:VIEW"}})).unwrap();
+        assert_eq!(h.app.preferences.hidden_toolbar_tabs, ["VIEW"]);
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(h.app.preferences.hidden_toolbar_tabs.is_empty(), "the Interface page's defaults show every standard tab");
+        h.call("ui.prefs", json!({"button":"ok"}));
+
+        // The control channel checks the list, and it is kept with the preferences.
+        assert!(h.call("ui.prefs", json!({"hidden_toolbar_tabs": ["SKETCH"]}))["error"].is_string(), "only choosable tabs");
+        assert!(h.call("ui.prefs", json!({"hidden_toolbar_tabs": ["VIEW", "VIEW"]}))["error"].is_string(), "each once");
+        assert!(h.call("ui.prefs", json!({"hidden_toolbar_tabs": choosable_tabs().collect::<Vec<_>>()}))["error"].is_null());
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&h.app.prefs());
+        assert!(visible_tabs(&other).is_empty());
+
+        // Every tab hidden: only the plus is left in the row, the ribbon says how to bring the
+        // tabs back, and the menu has no tab to customise.
+        h.frames(2);
+        assert!(visible_tabs(&h.app).is_empty());
+        assert_eq!(h.app.ui.tab, "");
+        assert!(choosable_tabs().all(|tab| crate::scenario::handle_at(&format!("tab:{tab}")).is_none()));
+        assert!(crate::scenario::handle_at("ribbon:tabs_hidden").is_some());
+        let items = crate::toolbar_custom::toolbar_items(&h.app);
+        assert!(!items.iter().any(|i| matches!(i.id.as_str(), "ui.toolbarCustomize" | "ui.toolbarReset")));
+        // A sketch still brings its tab, and finishing it leaves the row empty again.
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(2);
+        assert_eq!(visible_tabs(&h.app), ["SKETCH"]);
+        assert_eq!(h.app.ui.tab, "SKETCH");
+        h.app.finish_sketch();
+        h.frames(2);
+        assert_eq!(h.app.ui.tab, "");
+        // The plus brings a tab back.
+        h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
+        h.call("ui.menuPick", json!({"item":"Inspect"}));
+        h.frames(2);
+        assert_eq!(visible_tabs(&h.app), ["INSPECT"]);
+        assert_eq!(h.app.ui.tab, "INSPECT");
+        assert!(crate::scenario::handle_at("ribbon:tabs_hidden").is_none());
+        // A hidden tab's commands are still found by command search, and start from there.
+        let found = crate::shortcut_box::search(&h.app, "Change Parameters");
+        assert_eq!(found.first().map(|row| row.0), Some("parameters.change"), "Parameters is on the hidden Model and Manage tabs");
+        h.step(&json!({"start":"parameters.change"})).unwrap();
+        assert!(h.app.params.is_some());
+        assert_eq!(h.app.ui.tab, "INSPECT", "its tabs stay hidden");
+        h.call("ui.prefs", json!({"hidden_toolbar_tabs": []}));
+    }
+
+    #[test]
+    fn specialty_tabs_show_by_default_and_stay_hidden_for_features() {
+        let mut h = crate::scenario::Harness::new();
+        h.frames(2);
+        assert_eq!(visible_tabs(&h.app), choosable_tabs().collect::<Vec<_>>());
+        h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
+        let rows: Vec<_> = crate::toolbar_custom::toolbar_items(&h.app).into_iter().filter(|i| i.id == "ui.toolbarTab").collect();
+        assert_eq!(
+            rows.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Model", "Surface", "Assemble", "Insert", "Inspect", "Manage", "View", "Sheet Metal", "Weldments"]
+        );
+        assert!(rows.iter().all(|i| i.shortcut == "current"), "all existing tabs stay on by default");
+        h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
+        assert!(h.app.viewport.context_menu.is_none(), "a second click closes the menu");
+        h.step(&json!({"key":"S"})).unwrap();
+        assert!(h.app.ui.palette_open, "the plus leaves single-key shortcuts available");
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.step(&json!({"click":{"handle":"ribbon:add_tab"}})).unwrap();
+        h.call("ui.menuPick", json!({"item":"Sheet Metal"}));
+        h.frames(2);
+        assert_eq!(h.app.preferences.hidden_toolbar_tabs, ["SHEET METAL"]);
+        assert!(crate::scenario::handle_at("tab:SHEET METAL").is_none());
+        assert!(visible_tabs(&h.app).contains(&"WELDMENTS"));
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&h.app.prefs());
+        assert!(!visible_tabs(&other).contains(&"SHEET METAL"));
+
+        h.app.run("sketch.create", json!({"plane":"XY", "name":"Tab path"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[40,30]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        h.app.run("sheet.flange", json!({"name":"Sheet", "body_name":"Sheet"})).unwrap();
+        sync_context(&mut h.app);
+        h.frames(2);
+        assert_eq!(h.app.ui.tab, "MODEL", "a sheet context cannot select its hidden tab");
+        assert!(!visible_tabs(&h.app).contains(&"SHEET METAL"));
+        assert!(crate::scenario::handle_at("tab:SHEET METAL").is_none());
+        assert_eq!(h.app.preferences.hidden_toolbar_tabs, ["SHEET METAL"], "features do not change the saved choice");
+        let path = h.dir.join("hidden-sheet.solidcraft");
+        h.app.run("file.save", json!({"path":path})).unwrap();
+        other.run("doc.open", json!({"path":path})).unwrap();
+        assert!(!visible_tabs(&other).contains(&"SHEET METAL"), "opening a sheet design respects the saved hiding choice");
+        sync_context(&mut other);
+        assert_eq!(other.ui.tab, "MODEL");
+        h.app.run("edit.undo", json!({})).unwrap();
+        sync_context(&mut h.app);
+        assert!(!visible_tabs(&h.app).contains(&"SHEET METAL"));
+
+        h.call("ui.prefs", json!({"hidden_toolbar_tabs": ["SHEET METAL", "WELDMENTS"]}));
+        h.app.run("frame.member", json!({"sketch":"Tab path", "profile":{"kind":"rect_tube","width":10,"height":10,"wall":1}})).unwrap();
+        sync_context(&mut h.app);
+        h.frames(2);
+        assert_eq!(h.app.ui.tab, "MODEL", "a frame context cannot select its hidden tab");
+        assert!(!visible_tabs(&h.app).contains(&"WELDMENTS"));
+        assert!(crate::scenario::handle_at("tab:WELDMENTS").is_none());
+        h.app.run("file.save", json!({"path":path})).unwrap();
+        set_tab_shown(&mut other, "WELDMENTS", false);
+        other.run("doc.open", json!({"path":path})).unwrap();
+        assert!(!visible_tabs(&other).contains(&"WELDMENTS"), "opening a frame design respects the saved hiding choice");
+        sync_context(&mut other);
+        assert_eq!(other.ui.tab, "MODEL");
+        h.call("ui.prefs", json!({"hidden_toolbar_tabs":choosable_tabs().collect::<Vec<_>>()}));
+        h.frames(2);
+        assert!(visible_tabs(&h.app).is_empty(), "a design with a frame member can still hide every tab");
+        assert_eq!(h.app.ui.tab, "");
+        h.app.run("edit.undo", json!({})).unwrap();
+        sync_context(&mut h.app);
+        assert!(!visible_tabs(&h.app).contains(&"WELDMENTS"));
+
+        // The Sketch visibility setting still works when every other tab is hidden.
+        h.call("ui.prefs", json!({"hidden_toolbar_tabs":choosable_tabs().collect::<Vec<_>>(), "sketch_tab_always":true}));
+        h.frames(2);
+        assert_eq!(visible_tabs(&h.app), ["SKETCH"]);
+        assert_eq!(h.app.ui.tab, "SKETCH");
+
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        h.call("ui.prefs", json!({"button":"ok"}));
+        assert!(h.app.preferences.hidden_toolbar_tabs.is_empty());
+        assert_eq!(visible_tabs(&h.app), choosable_tabs().collect::<Vec<_>>(), "defaults restore Sheet Metal and Weldments too");
+    }
+
     /// Parameters and Configurations are on the design tabs they were on before the redesign, and a
     /// fresh document reaches Sheet Metal (to flange a sketch or convert a solid) by its tab.
     #[test]
@@ -937,6 +1138,7 @@ mod tests {
         }
         let mut h = crate::scenario::Harness::new();
         assert!(sheet_body(&h.app).is_none());
+        h.frames(2);
         h.step(&json!({"click":{"handle":"tab:SHEET METAL"}})).unwrap();
         h.frames(2);
         assert_eq!(h.app.ui.tab, "SHEET METAL");

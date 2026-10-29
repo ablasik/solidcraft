@@ -904,6 +904,8 @@ preference_settings! {
     /// A small dot at every vertex wherever edges are drawn (#7834). Off by default: the viewport
     /// draws edges only, as it always has.
     vertex_markers: bool = false => check("Vertex markers", "Show a small dot at every vertex wherever edges are drawn");
+    /// Restore the previous platform-specific fixed Render preview geometry budget.
+    render_previous_geometry_budget: bool = false, PAGE_GRAPHICS => check_id("prefs.render_previous_geometry_budget");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     display_quality: String = "normal".into(), PAGE_GRAPHICS;
@@ -976,6 +978,8 @@ preference_settings! {
     /// Where notices and offers stack: the view's bottom-right corner (the default) or the bottom
     /// centre, as before #7893.
     toast_place: crate::viewport::ToastPlace = Default::default(), PAGE_INTERFACE;
+    /// Toolbar tabs hidden by the person. An empty list keeps every existing tab visible.
+    hidden_toolbar_tabs: Vec<String> = Vec::new(), PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
@@ -3060,12 +3064,29 @@ fn limit_disabled_plugins(mut p: Prefs) -> Prefs {
     p
 }
 
+/// Keep only known hidden tabs, each once, so a hand-edited preferences
+/// file cannot carry a huge or nonsense list. `set` still refuses those instead of dropping them.
+fn limit_toolbar_tabs(mut p: Prefs) -> Prefs {
+    fn known_once(list: Vec<String>, allowed: &[&str]) -> Vec<String> {
+        let mut kept: Vec<String> = Vec::new();
+        for tab in list {
+            if allowed.contains(&tab.as_str()) && !kept.contains(&tab) {
+                kept.push(tab);
+            }
+        }
+        kept
+    }
+    let allowed: Vec<&str> = crate::workspace::choosable_tabs().collect();
+    p.hidden_toolbar_tabs = known_once(std::mem::take(&mut p.hidden_toolbar_tabs), &allowed);
+    p
+}
+
 /// Saved preferences, keeping every one that still reads. A value this version doesn't
 /// understand (a setting a newer or older release saved differently, a hand edit) falls back to
 /// its default on its own instead of discarding all of them.
 pub fn lenient(saved: &serde_json::Value) -> Prefs {
     if let Ok(p) = serde_json::from_value::<Prefs>(saved.clone()) {
-        return limit_disabled_plugins(migrate(p));
+        return limit_toolbar_tabs(limit_disabled_plugins(migrate(p)));
     }
     let Ok(mut cur) = serde_json::to_value(Prefs::default()) else { return Prefs::default() };
     if let (Some(o), Some(src)) = (cur.as_object_mut(), saved.as_object()) {
@@ -3079,7 +3100,7 @@ pub fn lenient(saved: &serde_json::Value) -> Prefs {
             }
         }
     }
-    serde_json::from_value(cur).map(migrate).map(limit_disabled_plugins).unwrap_or_default()
+    serde_json::from_value(cur).map(migrate).map(limit_disabled_plugins).map(limit_toolbar_tabs).unwrap_or_default()
 }
 
 /// Set preferences from JSON (control channel); returns them all.
@@ -3171,6 +3192,13 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
             )
         })?;
     }
+    let once = |list: &[String], allowed: &[&str]| {
+        list.len() <= allowed.len() && list.iter().all(|tab| allowed.contains(&tab.as_str()) && list.iter().filter(|t| *t == tab).count() == 1)
+    };
+    let allowed: Vec<&str> = crate::workspace::choosable_tabs().collect();
+    if !once(&new.hidden_toolbar_tabs, &allowed) {
+        return Err(format!("`hidden_toolbar_tabs` lists toolbar tabs, each once: {}", allowed.join(", ")));
+    }
     if !accepted::ui_scale(&new) || !accepted::look_at_speed(&new) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
     }
@@ -3210,7 +3238,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) {
-    for _ in 0..16 {
+    // Interface includes the toolbar-tab choices as well as the existing font controls.
+    // Keep small scroll steps so a target cannot be skipped, with a bounded longer page.
+    for _ in 0..32 {
         let page = crate::scenario::rect_of("dialog:page_body").expect("preference body");
         let visible = crate::scenario::rect_of(handle)
             .map(|r| page.contains_rect(r))
@@ -5189,6 +5219,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn render_previous_geometry_budget_round_trips_and_resets() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(Default::default(), Default::default());
+        assert!(!app.preferences.render_previous_geometry_budget);
+        let out = super::set(&mut app, &json!({"render_previous_geometry_budget":true})).unwrap();
+        assert_eq!(out["render_previous_geometry_budget"], true);
+        let mut restored = crate::SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&app.prefs());
+        assert!(restored.preferences.render_previous_geometry_budget);
+        super::defaults(&mut restored, super::PAGE_GRAPHICS);
+        assert!(!restored.preferences.render_previous_geometry_budget);
+    }
+
     /// Display quality (#1287) is a preference like any other: set by name, checked, saved with
     /// the others, back to Normal with Restore Defaults.
     #[test]
@@ -5243,6 +5287,11 @@ mod tests {
         assert_eq!(p.navigator_style, super::NavigatorStyle::Axes);
         assert_eq!(p.ui_scale, super::Prefs::default().ui_scale);
         assert_eq!(super::lenient(&json!("garbage")), super::Prefs::default());
+        // Hand-edited toolbar tab lists keep only the tabs each can hold, each once (#5717).
+        let mut hidden = vec![json!("VIEW"), json!("SHEET METAL"), json!("VIEW"), json!("SURFACE")];
+        hidden.extend(std::iter::repeat_n(json!("NOT A TAB"), 10_000));
+        let tabs = super::lenient(&json!({"hidden_toolbar_tabs": hidden}));
+        assert_eq!(tabs.hidden_toolbar_tabs, ["VIEW", "SHEET METAL", "SURFACE"]);
         // Whole-app load: the other saved state is kept too, and nothing panics.
         let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         app.load_prefs(&json!({"grid": false, "preferences": saved}).to_string());

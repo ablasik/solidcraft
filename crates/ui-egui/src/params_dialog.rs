@@ -395,15 +395,22 @@ fn new_check(app: &mut SolveApp, d: &mut ParamsDialog, unit: &str) -> Result<Str
 
 fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&Row], salt: &str) {
     let units: Vec<_> = UNITS.iter().map(|unit| unit_label(unit)).collect();
+    // Name keeps a larger share and a content floor so long identifiers stay readable (#8533).
+    // Full window/column resize is #5097; hover still shows the whole name when clipped.
+    let name_floor = rows
+        .iter()
+        .map(|r| ui_kit::ContentWidth::name(ui, &r.name))
+        .fold(crate::theme::Tokens::get().form_label_width, f32::max)
+        .min(crate::theme::Tokens::get().form_card_width);
     let columns = [
         Column::new("", 0.0).min_content_width(crate::theme::Tokens::get().space_24 * 3.0),
-        Column::new("Name", 1.1).flex(),
+        Column::new("Name", 2.0).flex().min_content_width(name_floor),
         Column::new("Unit", 0.65).min_content_width(
             ui_kit::ContentWidth::dropdown(ui, &units).max(crate::theme::Tokens::get().space_24 * 3.0 + crate::theme::Tokens::get().space_6),
         ),
         Column::new("Expression", 1.5).flex(),
         Column::new("Value", 1.1).flex(),
-        Column::new("Comment", 1.2).flex(),
+        Column::new("Comment", 1.0).flex(),
         Column::new("Actions", 0.0).icon_only().min_content_width(ui_kit::table_row_height()),
     ];
     ui_kit::table(ui, salt, &columns, crate::i18n::tr("manage.empty"), |ui, table| {
@@ -454,8 +461,9 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         }
                     }
                     _ => {
-                        let response =
-                            ui_kit::text(ui, &r.name, ui_kit::Text::NameCell(false)).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
+                        let rename = crate::i18n::tr_label("Double-click to rename");
+                        // Always tip the full name: the Name cell clips long identifiers (#8533).
+                        let response = ui_kit::text(ui, &r.name, ui_kit::Text::NameCell(false)).on_hover_text(format!("{}\n{rename}", r.name));
                         crate::scenario::publish_handle(&format!("param:name:{}", r.name), response.rect.center());
                         if response.double_clicked() {
                             d.renaming = Some((r.name.clone(), r.name.clone()));

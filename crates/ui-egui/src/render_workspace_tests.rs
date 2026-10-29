@@ -3520,7 +3520,7 @@ fn full_detail_preview_source_can_exceed_legacy_128_mib_without_mesh_reduction()
 fn refused_product_capture_is_cached_until_identity_changes_or_explicit_retry() {
     let mut h = Harness::new();
     let calls = std::cell::Cell::new(0);
-    let signature = (7, 123, 99);
+    let signature = (7, 123, 99, MAX_GEOMETRY_BYTES as u64);
     for _ in 0..8 {
         assert_eq!(
             h.app
@@ -3539,7 +3539,7 @@ fn refused_product_capture_is_cached_until_identity_changes_or_explicit_retry() 
     assert!(
         h.app
             .render_workspace
-            .prepare_preview((8, 123, 99), || {
+            .prepare_preview((8, 123, 99, MAX_GEOMETRY_BYTES as u64), || {
                 calls.set(calls.get() + 1);
                 Err("new revision".into())
             })
@@ -6309,4 +6309,75 @@ fn render_lighting_shadow_edits_are_undoable_and_preset_reviews_reject_changed_d
     assert!(h.widget(h.app.tr("render.lighting_consent")).is_none());
     assert_eq!(h.app.session.doc, before);
     assert_eq!(h.app.render_workspace.view.draft.width, 1200);
+}
+
+#[test]
+fn geometry_budget_follows_the_device_buffer_limit_and_keeps_the_web_cap() {
+    // The standard 256 MiB device buffers: 2 GiB, far past the old fixed 128 MiB.
+    assert_eq!(geometry_budget(256 << 20, false), 2 << 30);
+    assert!(admit_geometry(129 << 20, geometry_budget(256 << 20, false)).is_ok());
+    // A smaller device gets less, a larger one no more than the ceiling.
+    assert_eq!(geometry_budget(64 << 20, false), 512 << 20);
+    assert_eq!(geometry_budget(u64::MAX, false), DESKTOP_GEOMETRY_CEILING);
+    for device in [0, 256 << 20, u64::MAX] {
+        let budget = geometry_budget(device, true);
+        assert_eq!(budget, 128 << 20);
+        assert!(admit_geometry(budget, budget).is_ok());
+        assert!(admit_geometry(budget + 1, budget).is_err());
+    }
+}
+
+#[test]
+fn geometry_refusal_reports_scene_size_limit_and_recovery() {
+    use solidcraft_engine::{
+        geom::{Aabb3, Mesh},
+        render::ProductMesh,
+    };
+    let scene = ProductScene {
+        meshes: vec![ProductMesh {
+            name: "Synthetic assembly".into(),
+            mesh: Arc::new(Mesh { triangles: vec![[0; 3]; 1 << 20], ..Default::default() }),
+            color: [128; 3],
+            opacity: 1.0,
+            surface: Some(
+                solidcraft_engine::render::surface::OpaqueSurface::new(solidcraft_engine::geom::Vec3::new(0.5, 0.5, 0.5), 0.0, 0.5, 1.5).unwrap(),
+            ),
+            transmission: None,
+            faces: Vec::new(),
+        }],
+        bounds: Aabb3::EMPTY,
+    };
+    let error = gpu_scene_with_budget(&scene, WEB_GEOMETRY_BYTES).err().unwrap();
+    assert!(error.contains("144.0 MiB"), "{error}");
+    assert!(error.contains("128.0 MiB"), "{error}");
+    assert!(error.contains("Hide bodies in Design"), "{error}");
+    let refused = upload_refusal(144 << 20, "Out of Memory");
+    assert!(refused.contains("144.0 MiB") && refused.contains("Out of Memory") && refused.contains("Hide bodies in Design"), "{refused}");
+}
+
+#[test]
+fn previous_geometry_budget_restores_the_fixed_limit() {
+    for web in [false, true] {
+        for device in [64 << 20, 256 << 20, u64::MAX] {
+            let device_budget = geometry_budget(device, web);
+            assert_eq!(preferred_geometry_budget(device_budget, false), device_budget);
+            let previous = preferred_geometry_budget(device_budget, true);
+            assert_eq!(previous, MAX_GEOMETRY_BYTES as u64);
+            assert!(admit_geometry(previous, previous).is_ok());
+            assert!(admit_geometry(previous + 1, previous).is_err());
+        }
+    }
+}
+
+#[test]
+fn geometry_budget_change_retries_cached_admission_without_document_changes() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+    let scene = solidcraft_engine::product_scene::extract(&session).unwrap();
+    let bytes = preview_upload_plan(&scene, usize::MAX).unwrap().bytes().unwrap() as u64;
+    let mut state = State::default();
+    assert!(state.prepare_preview((7, 123, 99, bytes - 1), || Ok(scene.clone())).is_err());
+    state.prepare_preview((7, 123, 99, bytes), || Ok(scene)).unwrap();
+    assert_eq!(state.preview_upload_bytes, Some(bytes as usize));
+    assert!(state.scene_error.is_none());
 }

@@ -1,0 +1,188 @@
+{
+  "en": {
+    "prefs.toolbar_tabs": "Toolbar tabs",
+    "ui.tab_assemble": "Assemble",
+    "ui.tab_manage": "Manage",
+    "ui.tab_sheet_metal": "Sheet Metal",
+    "ui.tab_view": "View",
+    "ui.tab_weldments": "Weldments",
+    "ui.toolbar_tabs_hidden": "Every toolbar tab is hidden. Click + or right-click here to show one."
+  },
+  "cs": {
+    "ui.tab_assemble": "Sestava",
+    "ui.tab_manage": "Správa",
+    "ui.tab_sheet_metal": "Plech",
+    "ui.tab_view": "Pohled"
+  },
+  "da": {
+    "ui.tab_assemble": "Samling",
+    "ui.tab_manage": "Administrér",
+    "ui.tab_sheet_metal": "Plade",
+    "ui.tab_view": "Visning"
+  },
+  "de": {
+    "ui.tab_assemble": "Zusammenbau",
+    "ui.tab_manage": "Verwalten",
+    "ui.tab_sheet_metal": "Blech",
+    "ui.tab_view": "Ansicht",
+    "prefs.toolbar_tabs": "Werkzeugleisten-Registerkarten",
+    "ui.toolbar_tabs_hidden": "Alle Werkzeugleisten-Registerkarten sind ausgeblendet. Klicken Sie auf + oder hier mit der rechten Maustaste, um eine einzublenden.",
+    "ui.tab_weldments": "Schweissteile"
+  },
+  "es": {
+    "ui.tab_assemble": "Ensamblar",
+    "ui.tab_manage": "Gestionar",
+    "ui.tab_sheet_metal": "Chapa",
+    "ui.tab_view": "Vista"
+  },
+  "fr": {
+    "ui.tab_assemble": "Assembler",
+    "ui.tab_manage": "Gérer",
+    "ui.tab_sheet_metal": "Tôlerie",
+    "ui.tab_view": "Vue"
+  },
+  "gl": {
+    "ui.tab_assemble": "Ensamblar",
+    "ui.tab_manage": "Xestionar",
+    "ui.tab_sheet_metal": "Chapa",
+    "ui.tab_view": "Vista"
+  },
+  "hu": {
+    "ui.tab_assemble": "Összeszerelés",
+    "ui.tab_manage": "Kezelés",
+    "ui.tab_sheet_metal": "Lemez",
+    "ui.tab_view": "Nézet"
+  },
+  "id": {
+    "ui.tab_assemble": "Rakit",
+    "ui.tab_manage": "Kelola",
+    "ui.tab_sheet_metal": "Pelat Logam",
+    "ui.tab_view": "Tampilan"
+  },
+  "it": {
+    "ui.tab_assemble": "Assembla",
+    "ui.tab_manage": "Gestisci",
+    "ui.tab_sheet_metal": "Lamiera",
+    "ui.tab_view": "Vista"
+  },
+  "ja": {
+    "prefs.toolbar_tabs": "ツールバーのタブ",
+    "ui.tab_assemble": "アセンブリ",
+    "ui.tab_manage": "管理",
+    "ui.tab_sheet_metal": "板金",
+    "ui.tab_view": "表示",
+    "ui.toolbar_tabs_hidden": "ツールバーのタブはすべて非表示です。+ をクリックするか、ここを右クリックして表示します。",
+    "ui.tab_weldments": "溶接構造"
+  },
+  "ko": {
+    "ui.tab_assemble": "조립",
+    "ui.tab_manage": "관리",
+    "ui.tab_sheet_metal": "판금",
+    "ui.tab_view": "보기",
+    "prefs.toolbar_tabs": "도구 모음 탭",
+    "ui.toolbar_tabs_hidden": "모든 도구 모음 탭이 숨겨져 있습니다. +를 클릭하거나 여기를 마우스 오른쪽 버튼으로 클릭하여 표시하세요.",
+    "ui.tab_weldments": "용접 구조물"
+  },
+  "ms": {
+    "ui.tab_assemble": "Pasang",
+    "ui.tab_manage": "Urus",
+    "ui.tab_sheet_metal": "Logam Kepingan",
+    "ui.tab_view": "Pandangan"
+  },
+  "nb": {
+    "ui.tab_assemble": "Monter",
+    "ui.tab_manage": "Administrer",
+    "ui.tab_sheet_metal": "Plate",
+    "ui.tab_view": "Visning"
+  },
+  "nl": {
+    "ui.tab_assemble": "Samenstellen",
+    "ui.tab_manage": "Beheren",
+    "ui.tab_sheet_metal": "Plaatwerk",
+    "ui.tab_view": "Weergave"
+  },
+  "pl": {
+    "ui.tab_assemble": "Złożenie",
+    "ui.tab_manage": "Zarządzanie",
+    "ui.tab_sheet_metal": "Blacha",
+    "ui.tab_view": "Widok"
+  },
+  "pt-BR": {
+    "ui.tab_assemble": "Montar",
+    "ui.tab_manage": "Gerenciar",
+    "ui.tab_sheet_metal": "Chapa Metálica",
+    "ui.tab_view": "Vista"
+  },
+  "ro": {
+    "ui.tab_assemble": "Asamblare",
+    "ui.tab_manage": "Gestionare",
+    "ui.tab_sheet_metal": "Tablă",
+    "ui.tab_view": "Vizualizare"
+  },
+  "ru": {
+    "ui.tab_assemble": "Сборка",
+    "ui.tab_manage": "Управление",
+    "ui.tab_sheet_metal": "Листовой Металл",
+    "ui.tab_view": "Вид"
+  },
+  "sv": {
+    "ui.tab_assemble": "Montera",
+    "ui.tab_manage": "Hantera",
+    "ui.tab_sheet_metal": "Plåt",
+    "ui.tab_view": "Vy"
+  },
+  "tr": {
+    "ui.tab_assemble": "Montaj",
+    "ui.tab_manage": "Yönet",
+    "ui.tab_sheet_metal": "Sac Metal",
+    "ui.tab_view": "Görünüm"
+  },
+  "uk": {
+    "ui.tab_assemble": "Складання",
+    "ui.tab_manage": "Керування",
+    "ui.tab_sheet_metal": "Листовий Метал",
+    "ui.tab_view": "Вид"
+  },
+  "vi": {
+    "ui.tab_assemble": "Lắp Ráp",
+    "ui.tab_manage": "Quản Lý",
+    "ui.tab_sheet_metal": "Kim Loại Tấm",
+    "ui.tab_view": "Góc Nhìn",
+    "prefs.toolbar_tabs": "Thẻ thanh công cụ",
+    "ui.toolbar_tabs_hidden": "Tất cả các thẻ thanh công cụ đều bị ẩn. Nhấp vào + hoặc nhấp chuột phải tại đây để hiện một thẻ.",
+    "ui.tab_weldments": "Kết Cấu Hàn"
+  },
+  "zh": {
+    "prefs.toolbar_tabs": "工具栏选项卡",
+    "ui.tab_assemble": "装配",
+    "ui.tab_manage": "管理",
+    "ui.tab_sheet_metal": "钣金",
+    "ui.tab_view": "视图",
+    "ui.toolbar_tabs_hidden": "所有工具栏选项卡均已隐藏。点击 + 或在此处右键单击即可显示。",
+    "ui.tab_weldments": "焊件"
+  },
+  "zh-TW": {
+    "ui.tab_assemble": "組裝",
+    "ui.tab_manage": "管理",
+    "ui.tab_sheet_metal": "鈑金",
+    "ui.tab_view": "檢視"
+  },
+  "ar": {
+    "prefs.toolbar_tabs": "علامات تبويب شريط الأدوات",
+    "ui.toolbar_tabs_hidden": "جميع علامات تبويب شريط الأدوات مخفية. انقر على + أو انقر هنا بزر الفأرة الأيمن لإظهار إحداها.",
+    "ui.tab_weldments": "اللحامات",
+    "ui.tab_assemble": "التجميع",
+    "ui.tab_manage": "إدارة",
+    "ui.tab_view": "العرض",
+    "ui.tab_sheet_metal": "الصفائح المعدنية"
+  },
+  "he": {
+    "prefs.toolbar_tabs": "לשוניות סרגל הכלים",
+    "ui.toolbar_tabs_hidden": "כל לשוניות סרגל הכלים מוסתרות. לחצו על + או לחצו כאן לחיצה ימנית כדי להציג לשונית.",
+    "ui.tab_weldments": "ריתוכים",
+    "ui.tab_assemble": "הרכבה",
+    "ui.tab_manage": "ניהול",
+    "ui.tab_view": "תצוגה",
+    "ui.tab_sheet_metal": "פח"
+  }
+}

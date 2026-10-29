@@ -55,6 +55,7 @@ pub const MANUAL_COOLDOWN_S: f64 = 30.0;
 pub const RETRY_AFTER_FAILURE_S: f64 = 3600.0;
 /// Caps on what a release response may hold (it comes from the network).
 const MAX_NOTES: usize = 64 * 1024;
+const MAX_RELEASE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ASSETS: usize = 400;
 /// The room the Update pill's long label leaves for the document tabs.
 const TAB_ROOM: f32 = 300.0;
@@ -493,6 +494,9 @@ impl Release {
     /// A `releases/latest` answer. Drafts and prereleases are refused (GitHub never returns them
     /// there, but the answer comes from the network).
     pub fn parse(json: &[u8]) -> Result<Release, FetchError> {
+        if json.len() > MAX_RELEASE_BYTES {
+            return Err(FetchError::Failed("release response is too large".into()));
+        }
         let v: Value = serde_json::from_slice(json).map_err(|e| FetchError::Failed(format!("unexpected answer from GitHub: {e}")))?;
         let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         if v.get("draft").and_then(Value::as_bool).unwrap_or(false) || v.get("prerelease").and_then(Value::as_bool).unwrap_or(false) {
@@ -713,7 +717,12 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     poll(app);
     let now = unix_now();
     let launch = !app.updater.launch_checked;
-    if app.updater.rx.is_none() && app.preferences.check_updates && app.preferences.update.due(now, launch) && available(app) {
+    if app.updater.job.is_none()
+        && app.updater.rx.is_none()
+        && app.preferences.check_updates
+        && app.preferences.update.due(now, launch)
+        && available(app)
+    {
         app.updater.launch_checked = true;
         start(app, ctx, false);
     }
@@ -734,20 +743,29 @@ pub fn check_now(app: &mut SolveApp, ctx: &egui::Context) {
     start(app, ctx, true);
 }
 
+/// Fetch the same bounded feed for automatic checks and an explicit installation.
+fn fetch_latest(feed: Option<&Path>, http: Option<&HttpGet>) -> Result<Release, FetchError> {
+    use std::io::Read;
+    let body = match (feed, http) {
+        (Some(path), _) => {
+            let file = std::fs::File::open(path).map_err(|e| FetchError::Failed(e.to_string()))?;
+            let mut body = Vec::new();
+            file.take(MAX_RELEASE_BYTES as u64 + 1).read_to_end(&mut body).map_err(|e| FetchError::Failed(e.to_string()))?;
+            body
+        }
+        (None, Some(get)) => get(LATEST_API)?,
+        (None, None) => return Err(FetchError::Failed("no network client".into())),
+    };
+    Release::parse(&body)
+}
+
 fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
     let (tx, rx) = std::sync::mpsc::channel();
     app.updater.status = Status::Checking;
     app.updater.rx = Some((rx, manual));
     let feed = app.updater.feed.clone();
     let http = app.services.http_get.clone();
-    let fetch = move || -> Result<Release, FetchError> {
-        let body = match (&feed, &http) {
-            (Some(path), _) => std::fs::read(path).map_err(|e| FetchError::Failed(format!("{}: {e}", path.display())))?,
-            (None, Some(get)) => get(LATEST_API)?,
-            (None, None) => return Err(FetchError::Failed("no network client".into())),
-        };
-        Release::parse(&body)
-    };
+    let fetch = move || fetch_latest(feed.as_deref(), http.as_ref());
     #[cfg(not(target_arch = "wasm32"))]
     {
         let ctx = ctx.clone();
@@ -788,7 +806,9 @@ fn poll(app: &mut SolveApp) {
                 app.preferences.update.remind_after = 0.0;
                 app.updater.open = true;
             }
-            app.updater.release = Some(release);
+            if app.updater.job.is_none() && app.updater.release.as_ref().is_none_or(|known| !is_newer(&known.tag, &release.tag)) {
+                app.updater.release = Some(release);
+            }
         }
         Err(e) => {
             log::info!("update check: {e}");
@@ -819,7 +839,7 @@ pub fn install_method(app: &mut SolveApp) -> Option<install::Method> {
     }
 }
 
-/// Download, verify and apply the release found (Update now).
+/// Re-check the feed, then download, verify and apply the newest release (Update now).
 pub fn start_install(app: &mut SolveApp, ctx: &egui::Context) {
     let (Some(release), Some(method), Some(get), Some(download)) =
         (app.updater.release.clone(), install_method(app), app.services.http_get.clone(), app.services.http_download.clone())
@@ -830,6 +850,7 @@ pub fn start_install(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let kind = app.updater.kind().clone();
+    let feed = app.updater.feed.clone();
     let progress = Arc::new(install::Progress::default());
     let (tx, rx) = std::sync::mpsc::channel();
     app.updater.installed = None;
@@ -838,7 +859,7 @@ pub fn start_install(app: &mut SolveApp, ctx: &egui::Context) {
     {
         let ctx = ctx.clone();
         let staging = std::env::temp_dir().join("solidcraft-update");
-        let net = install::Net { get, download };
+        let net = install::Net { get, download, feed };
         let spawned = std::thread::Builder::new().name("update-install".into()).spawn(move || {
             let result = install::run(&release, &kind, &method, std::env::consts::ARCH, &net, &staging, &progress);
             let _ = tx.send(result);
@@ -851,14 +872,18 @@ pub fn start_install(app: &mut SolveApp, ctx: &egui::Context) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (ctx, tx, release, method, get, download, kind);
+        let _ = (ctx, tx, release, method, get, download, kind, feed);
         app.updater.job = None;
     }
 }
 
 fn poll_install(app: &mut SolveApp) {
-    let Some((rx, _)) = &app.updater.job else { return };
-    let result = match rx.try_recv() {
+    let Some((rx, progress)) = &app.updater.job else { return };
+    let received = rx.try_recv();
+    if let Some((release, _)) = progress.selection() {
+        app.updater.release = Some(release);
+    }
+    let result = match received {
         Ok(r) => r,
         Err(TryRecvError::Empty) => return,
         Err(TryRecvError::Disconnected) => Err("the update stopped".into()),
@@ -991,6 +1016,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             match (&state, &app.updater.installed, &app.updater.job) {
                 (State::Downloading, _, Some((_, progress))) => {
+                    ui_kit::text(ui, &progress.message(), ui_kit::Text::Report("selection", false));
                     let done = progress.done.load(std::sync::atomic::Ordering::Relaxed);
                     let total = progress.total.load(std::sync::atomic::Ordering::Relaxed).max(1);
                     let mb = |b: u64| format!("{:.1}", b as f64 / 1_048_576.0);

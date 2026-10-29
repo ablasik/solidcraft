@@ -1,0 +1,42 @@
+{
+  "en": {
+    "update.refresh_checking": "Checking for the newest release…",
+    "update.refresh_fallback": "Could not check for a newer release; updating to {version}, found earlier.",
+    "update.refresh_selected": "Updating to {version}."
+  },
+  "ar": {
+    "update.refresh_checking": "جارٍ البحث عن أحدث إصدار…",
+    "update.refresh_fallback": "تعذّر البحث عن إصدار أحدث؛ سيتم التحديث إلى {version} الذي عُثر عليه سابقًا.",
+    "update.refresh_selected": "جارٍ التحديث إلى {version}."
+  },
+  "de": {
+    "update.refresh_checking": "Neueste Version wird gesucht…",
+    "update.refresh_fallback": "Die Suche nach einer neueren Version ist fehlgeschlagen; die zuvor gefundene Version {version} wird installiert.",
+    "update.refresh_selected": "Version {version} wird installiert."
+  },
+  "he": {
+    "update.refresh_checking": "בודק אם יש גרסה חדשה יותר…",
+    "update.refresh_fallback": "לא ניתן היה לבדוק אם יש גרסה חדשה יותר; מעדכן לגרסה {version} שנמצאה קודם.",
+    "update.refresh_selected": "מעדכן לגרסה {version}."
+  },
+  "ja": {
+    "update.refresh_checking": "最新のリリースを確認中…",
+    "update.refresh_fallback": "新しいリリースを確認できませんでした。以前見つかった {version} に更新します。",
+    "update.refresh_selected": "{version} に更新中。"
+  },
+  "ko": {
+    "update.refresh_checking": "최신 릴리스 확인 중…",
+    "update.refresh_fallback": "새 릴리스를 확인하지 못했습니다. 이전에 찾은 {version}(으)로 업데이트합니다.",
+    "update.refresh_selected": "{version}(으)로 업데이트 중."
+  },
+  "vi": {
+    "update.refresh_checking": "Đang kiểm tra bản phát hành mới nhất…",
+    "update.refresh_fallback": "Không thể kiểm tra bản phát hành mới hơn; đang cập nhật lên {version} đã tìm thấy trước đó.",
+    "update.refresh_selected": "Đang cập nhật lên {version}."
+  },
+  "zh": {
+    "update.refresh_checking": "正在检查最新版本…",
+    "update.refresh_fallback": "无法检查更新的版本；将更新至先前找到的 {version}。",
+    "update.refresh_selected": "正在更新至 {version}。"
+  }
+}
