@@ -2204,6 +2204,7 @@ pub const ESCAPE_TWICE_S: f64 = 0.4;
 
 /// Global keyboard shortcuts (when no text field has focus).
 pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
+    crate::browser::update_folder_pick(app, ctx);
     if design_shown(app) {
         crate::navigation::step_key_hold(app, ctx);
     } else {
