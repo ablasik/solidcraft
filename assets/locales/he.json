@@ -793,6 +793,8 @@
   "cam.roller": "גלגלת",
   "cam.roller_pick": "גלגלת (אופציונלי)",
   "cam.tip_pick": "חוד (אופציונלי)",
+  "canvas.decal_place_hint": "יש ללחוץ על פאה כדי למקם את המדבקה",
+  "canvas.place_hint": "יש ללחוץ על מישור או פאה כדי למקם את תמונת הייחוס",
   "choose a profile": "יש לבחור פרופיל",
   "choose the cam's and the follower's joints": "יש לבחור את מפרק הפיקה ואת מפרק העוקב",
   "choose the joints to couple": "יש לבחור את המפרקים לצימוד",

@@ -793,6 +793,8 @@
   "cam.roller": "Con lăn cam",
   "cam.roller_pick": "Con lăn cam (tùy chọn)",
   "cam.tip_pick": "Đầu tiếp xúc cam (tùy chọn)",
+  "canvas.decal_place_hint": "Nhấp vào một mặt để đặt hình dán",
+  "canvas.place_hint": "Nhấp vào mặt phẳng hoặc mặt để đặt ảnh tham chiếu",
   "choose a profile": "chọn một biên dạng",
   "choose the cam's and the follower's joints": "chọn khớp của cam và khớp của cần đẩy",
   "choose the joints to couple": "chọn các khớp cần ghép nối",

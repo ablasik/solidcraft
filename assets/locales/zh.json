@@ -793,6 +793,8 @@
   "cam.roller": "滚子",
   "cam.roller_pick": "滚子（可选）",
   "cam.tip_pick": "尖端（可选）",
+  "canvas.decal_place_hint": "单击一个面以放置贴花",
+  "canvas.place_hint": "单击平面或面以放置画布",
   "choose a profile": "请选择轮廓",
   "choose the cam's and the follower's joints": "请选择凸轮和从动件的接头",
   "choose the joints to couple": "请选择要耦合的接头",

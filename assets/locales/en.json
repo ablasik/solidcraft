@@ -793,6 +793,8 @@
   "cam.roller": "Roller",
   "cam.roller_pick": "Roller (optional)",
   "cam.tip_pick": "Tip (optional)",
+  "canvas.decal_place_hint": "Click a face to place the decal",
+  "canvas.place_hint": "Click a plane or face to place the canvas",
   "choose a profile": "choose a profile",
   "choose the cam's and the follower's joints": "choose the cam's and the follower's joints",
   "choose the joints to couple": "choose the joints to couple",

@@ -793,6 +793,8 @@
   "cam.roller": "ローラー",
   "cam.roller_pick": "ローラー (オプション)",
   "cam.tip_pick": "先端 (オプション)",
+  "canvas.decal_place_hint": "面をクリックしてデカールを配置",
+  "canvas.place_hint": "平面または面をクリックしてキャンバスを配置",
   "choose a profile": "プロファイルを選択してください",
   "choose the cam's and the follower's joints": "カムと従動節のジョイントを選択してください",
   "choose the joints to couple": "連結するジョイントを選択してください",

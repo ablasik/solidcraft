@@ -793,6 +793,8 @@
   "cam.roller": "بكرة",
   "cam.roller_pick": "بكرة (اختياري)",
   "cam.tip_pick": "الطرف (اختياري)",
+  "canvas.decal_place_hint": "انقر على وجه لوضع الملصق",
+  "canvas.place_hint": "انقر على مستوى أو وجه لوضع الصورة المرجعية",
   "choose a profile": "اختر مقطعًا",
   "choose the cam's and the follower's joints": "اختر مفصلَي الكامة والتابع",
   "choose the joints to couple": "اختر المفاصل المراد ربطها",
