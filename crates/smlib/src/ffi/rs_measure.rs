@@ -145,3 +145,9 @@ pub fn edge_face_distance(h: &super::Handle, edge: i64, face: i64) -> Result<f64
         Ok(gap.max.map_or(0.0, |g| g.length()))
     })
 }
+
+/// The volume of `b` to a thousandth, or `None` where the integral does not converge (the check
+/// that asks for it then has nothing to compare).
+pub(super) fn volume_of(k: &Kernel, b: &mut Brep) -> Option<f64> {
+    properties(k, b, 1e-3, Point3::new(0.0, 0.0, 0.0)).ok().map(|p| p.volume)
+}

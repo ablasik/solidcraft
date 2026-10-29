@@ -274,6 +274,7 @@ pub fn fillet_variable(
     };
     let from = point(start);
     let forward = ends[0].distance(from) <= ends[1].distance(from);
+    let volume_in = if solid_in { super::rs_measure::volume_of(&s.kernel, &mut b) } else { None };
     let result = if straight {
         let (first, second) = if forward { (radii[0], radii[1]) } else { (radii[1], radii[0]) };
         variable_radius(&mut s.kernel, &mut b, edge, first, FilletLaw::linear(first, second, None))
@@ -291,6 +292,17 @@ pub fn fillet_variable(
         variable_radius(&mut s.kernel, &mut b, edge, radii[0], law)
     };
     result.map_err(|e| status(&e))?;
+    // A round only takes material off, and no more than the wedge its radius reaches along the edge
+    // (r^2 cot(a/2) a length: 12 r^2 down to a dihedral of 9 degrees). Where the tracing of the blend
+    // goes wrong the body can come out as the strip the round removes, and pass the check.
+    // ponytail: the edge's chord for its length, so a long arc of a curved edge is not caught.
+    let r_max = radii.iter().copied().fold(0.0, f64::max);
+    let length = ends[0].distance(ends[1]);
+    if let (Some(before), Some(after)) = (volume_in, super::rs_measure::volume_of(&s.kernel, &mut b))
+        && (after > before * (1.0 + 1e-3) || before - after > 12.0 * r_max * r_max * length)
+    {
+        return Err(solidcore::error::SM_ERR);
+    }
     finish(&mut s, b, solid_in).map_err(|e| e.0)
 }
 
