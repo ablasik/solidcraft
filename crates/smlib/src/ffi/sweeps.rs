@@ -420,17 +420,17 @@ pub fn loft(_: &List, _: &[i64], _: i32, _: bool) -> Result<Handle, i32> {
     Err(NOT_BUILT)
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(not(any(feature = "native", feature = "solidcore")))]
 pub fn loft_to_point(_: &List, _: &[f64; 3]) -> Result<Handle, i32> {
     Err(NOT_BUILT)
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(not(any(feature = "native", feature = "solidcore")))]
 pub fn screw_sweep(_: &List, _: &[f64; 3], _: &[f64; 3], _: f64, _: f64, _: f64) -> Result<Handle, i32> {
     Err(NOT_BUILT)
 }
 
-#[cfg(not(feature = "native"))]
+#[cfg(not(any(feature = "native", feature = "solidcore")))]
 pub fn screw_sweep_radial(_: &List, _: &[f64; 3], _: &[f64; 3], _: f64, _: f64, _: &[f64], _: f64) -> Result<Handle, i32> {
     Err(NOT_BUILT)
 }
@@ -441,4 +441,6 @@ pub fn sweep_stations(_: &List, _: &[f64], _: i32) -> Result<Handle, i32> {
 }
 
 #[cfg(feature = "solidcore")]
-pub use super::rs_sweeps::{extrude, loft, planar_faces, revolve, sweep, sweep_placed};
+pub use super::rs_sweeps::{
+    extrude, loft, loft_to_point, planar_faces, revolve, screw_sweep, screw_sweep_radial, sweep, sweep_placed,
+};
