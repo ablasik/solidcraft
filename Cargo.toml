@@ -14,8 +14,8 @@ repository = "https://github.com/bherbruck/solidcraft"
 
 [workspace.dependencies]
 robust = "1.2"
-# The pure-Rust kernel behind the `solidcore` feature. Local path for now; one line to swap for a git rev.
-solidcore = { path = "/Users/ablasik/Development/solidcraft/work/app/solidcore-with-our-fixes/crates/solidcore" }
+# The pure-Rust kernel behind the `solidcore` feature, pinned to tangency-labs/solidcore main.
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "881b040f9664b6d3e3cacac1834e5be6036d311d" }
 # internal
 solidcraft-geom = { path = "crates/geom" }
 solidcraft-profile = { path = "crates/profile" }
