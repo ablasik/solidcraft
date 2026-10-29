@@ -885,6 +885,34 @@ pub(crate) fn vector3_field(ui: &mut Ui, values: &mut [f64; 3], range: std::ops:
     changed
 }
 
+/// Equal-width numeric cells within a shared `row`. Returns each field's response in order.
+/// Tokens: `control_height`, inherited item spacing and number-field tokens.
+pub(crate) fn number_fields<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    values: &mut [T],
+    range: std::ops::RangeInclusive<T>,
+    speed: f64,
+    suffix: &str,
+) -> Vec<Response> {
+    let gap = ui.spacing().item_spacing.x;
+    let width = dimension(ui.available_width() - gap * values.len().saturating_sub(1) as f32) / values.len().max(1) as f32;
+    values
+        .iter_mut()
+        .enumerate()
+        .map(|(index, value)| {
+            ui.push_id(index, |ui| {
+                ui.allocate_ui_with_layout(vec2(width, row_height()), egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                    ui.spacing_mut().text_edit_width = width;
+                    ui.spacing_mut().interact_size.x = width;
+                    number_field(ui, value, range.clone(), speed, suffix)
+                })
+                .inner
+            })
+            .inner
+        })
+        .collect()
+}
+
 /// Growing plain-text message editor; its parent owns scrolling and Enter routing.
 /// Tokens: control_fill, form_inset, font_label. Use text_area for bounded data input.
 #[cfg(any(not(target_arch = "wasm32"), test))]

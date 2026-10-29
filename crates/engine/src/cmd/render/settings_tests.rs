@@ -87,6 +87,47 @@ fn environment_editor_command_has_schemas_and_strict_validation() {
     assert!(s.execute("render.environment.set", &json!({"name":"Studio","intensity":2,"unknown":true})).is_err());
 }
 
+#[test]
+fn shot_frame_edits_are_bounded_atomic_and_one_undo_per_edit() {
+    let mut s = Session::default();
+    save(&mut s, json!({"width":800,"height":600}));
+    for patch in [
+        json!({"width":1920,"height":1080}),
+        json!({"width":1080,"height":1920}),
+        json!({"exposure_ev":-32}),
+        json!({"exposure_ev":32}),
+        json!({"camera":{"target":[0,0,0],"yaw":0,"pitch":0,"distance":1e9,"fov":0}}),
+    ] {
+        let before = s.doc.clone();
+        let undo = s.undo.len();
+        let evaluations = s.evaluations;
+        save(&mut s, patch.clone());
+        assert_eq!(s.undo.len(), undo + 1);
+        assert_eq!(s.evaluations, evaluations);
+        save(&mut s, patch);
+        assert_eq!(s.undo.len(), undo + 1);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc, before);
+    }
+    let before = s.doc.clone();
+    let undo = s.undo.len();
+    for patch in [
+        json!({"width":0}),
+        json!({"height":0}),
+        json!({"width":u32::MAX}),
+        json!({"width":4096,"height":4096}),
+        json!({"width":1e300}),
+        json!({"exposure_ev":32.1}),
+        json!({"exposure_ev":-32.1}),
+        json!({"exposure_ev":null}),
+        json!({"camera":{"target":[0,0,0],"yaw":0,"pitch":0,"distance":0,"fov":0}}),
+    ] {
+        assert!(s.execute("render.settings.set", &json!({"name":"Studio","set":patch})).is_err());
+        assert!(Arc::ptr_eq(&s.doc, &before));
+        assert_eq!(s.undo.len(), undo);
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn embedded_hdr_capture_is_offline_atomic_deduplicated_and_undoable_after_source_removal() {

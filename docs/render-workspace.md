@@ -455,6 +455,20 @@ that pending request. Hover uses the shared tooltip with the object and look nam
 
 ## Browser scene focus
 
+The existing Camera Inspector page shows a standalone Shot editor when the Browser selection
+is a saved shot. Opening it leaves the live camera and saved design unchanged. Camera fields
+use `render.camera.set`; Update shot saves that camera and Revert restores the saved camera.
+Name, output dimensions and exposure use the existing undoable shot/settings commands.
+Distance is shown as a multiple of the visible subject's bounding-box diagonal (one millimetre
+for an empty scene). The lens chip uses the camera's vertical FOV and a 24 mm sensor height.
+
+Frame's floating panel offers five aspect presets and Custom, plus composition guides.
+Clicking a preset saves its output dimensions in one undo step; Custom preserves dimensions.
+`view.render_frame` independently validates and echoes transient aspect/guide preferences;
+headless calls never edit a design. Guides are per-document UI state, never saved in design JSON.
+The frame and its size/lens chips appear only in Frame or the Shot editor. Product preview,
+navigation and picking use the fitted frame aspect; image jobs and the Result canvas omit guides.
+
 The shared Browser lists Environment (with its source), Lights, saved Shots,
 Objects and Output (with image dimensions and format). Shots **+** opens the
 existing Shots manager; Lights **+**, Solo and Mute remain faded with an explicit

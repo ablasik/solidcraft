@@ -153,6 +153,24 @@ const ELEMENTS: &[Element] = &[
             checkbox(ui, "Reduce noise", &mut state.checked);
         });
     }),
+    element!("icon_action", |ui, _| {
+        icon_action(ui, "Duplicate", "copy", true, false);
+        icon_action(ui, "Remove", "delete", true, true);
+    }),
+    element!("aspect_grid", |ui, _| {
+        aspect_grid(
+            ui,
+            &[
+                AspectTile { id: "gallery:aspect:wide", label: "16:9", aspect: 16.0 / 9.0, selected: true },
+                AspectTile { id: "gallery:aspect:square", label: "1:1", aspect: 1.0, selected: false },
+                AspectTile { id: "gallery:aspect:tall", label: "9:16", aspect: 9.0 / 16.0, selected: false },
+            ],
+        );
+    }),
+    element!("frame_guides", |ui, _| {
+        let (viewport, _) = ui.allocate_exact_size(vec2(200.0, 150.0), egui::Sense::hover());
+        frame_guides(ui, viewport, viewport.shrink(20.0), FrameGuides { thirds: true, safe_area: true, centre_mark: true });
+    }),
     element!("tree_row_rect", |ui, _| {
         for (index, row) in [
             Row { label: "Objects", ..Default::default() },
@@ -1058,6 +1076,11 @@ const ELEMENTS: &[Element] = &[
     element!("number_field", |ui, _| {
         number_field(ui, &mut 3_u32, 1..=200, 1.0, "");
     }),
+    element!("number_fields", |ui, _| {
+        row(ui, "Target", |ui| {
+            number_fields(ui, &mut [-18.0, 125.5, -18.0], -1e9..=1e9, 0.1, "");
+        });
+    }),
     element!("slider_percent", |ui, _| {
         slider(ui, &mut 1.0, 0.5..=2.5, Slider { step: Some(0.05), format: |v| format!("{:.0} %", v * 100.0), ..Default::default() });
     }),
@@ -1866,6 +1889,7 @@ fn gallery_covers_every_inline_element() {
         "color.rs",
         "disclosure.rs",
         "fields.rs",
+        "framing.rs",
         "layout.rs",
         "look_chain.rs",
         "menu.rs",

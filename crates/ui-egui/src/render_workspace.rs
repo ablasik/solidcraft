@@ -48,6 +48,9 @@ mod materials;
 #[path = "render_workspace_setups.rs"]
 mod setups;
 
+#[path = "render_workspace_shot.rs"]
+pub(crate) mod shot;
+
 #[path = "render_workspace_shots.rs"]
 pub(crate) mod shots;
 
@@ -277,10 +280,21 @@ pub enum RenderSelection {
     Check,
 }
 
+/// Selection-driven homes introduced by E1/E7; remaining editors retain their adapters.
+pub(crate) fn selection_editor(app: &mut SolveApp, selection: &RenderSelection) {
+    app.render_workspace.view.inspector.page = match selection {
+        RenderSelection::Nothing => inspector::Page::Scene,
+        RenderSelection::Shot(_) => inspector::Page::Camera,
+        RenderSelection::Output => inspector::Page::Output,
+        _ => return,
+    };
+}
+
 /// Small per-document editor state; GPU uploads and host capabilities stay outside tabs.
 #[derive(Clone, Debug)]
 pub struct ViewState {
     pub(crate) assign: assign::State,
+    pub(crate) frame: shot::Frame,
     job_shot: Option<String>,
     save_shot_name: Option<String>,
     pub name: String,
@@ -345,6 +359,7 @@ impl Default for ViewState {
         Self {
             assign: assign::State::default(),
             job_shot: None,
+            frame: Default::default(),
             save_shot_name: None,
             name: "Studio".into(),
             selection: RenderSelection::Nothing,
@@ -584,6 +599,9 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
             app.render_workspace.design_camera = Some((app.cam, app.ui.perspective));
             app.ui.tab = "RENDER".into();
             select_stage(app, app.render_workspace.view.stage.key());
+            if app.render_workspace.view.selection == RenderSelection::Nothing {
+                selection_editor(app, &RenderSelection::Nothing);
+            }
             let scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|e| e.to_string())?;
             if !scene.bounds.is_empty() {
                 app.fit_bounds(scene.bounds);
@@ -1835,8 +1853,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         show_result(app, ui);
         return;
     }
-    let rect = ui.max_rect();
-    app.viewport.rect = Some(rect);
+    let viewport = ui.max_rect();
+    app.viewport.rect = Some(viewport);
+    // Framing uses the output camera's own aspect, including navigation and picking.
+    let rect = shot::preview_rect(app, viewport).unwrap_or(viewport);
     crate::viewport::refresh_layout(app, ui.ctx());
     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
     if !environment::ring_input(app, ui, rect, &response) {
@@ -1881,7 +1901,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.viewport.hover = None;
     }
     let bg = app.render_workspace.view.draft.background;
-    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+    ui.painter().rect_filled(viewport, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
     let result = (|| -> Result<(), String> {
         if app.viewport.gpu.is_none() {
             return Err(crate::i18n::tr("render.error_gpu_preview").into());
@@ -1980,8 +2000,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Err(error) = result {
         preview_error(app, ui, rect, &error);
     }
-    crate::viewport::axis_view(app, ui, rect);
-    crate::navigation_bar_view::show(app, ui, rect);
+    shot::overlay(app, ui, viewport);
+    crate::viewport::axis_view(app, ui, viewport);
+    crate::navigation_bar_view::show(app, ui, viewport);
 }
 
 /// Apply validated UI requests after the same registry call used by automation.
@@ -2081,6 +2102,8 @@ pub(crate) fn start_interactive(app: &mut SolveApp, id: &str) -> bool {
         && app.render_workspace.view.selection == RenderSelection::Wear
     {
         let _ = app.run("view.render_select", json!({"kind":"nothing"}));
+        // Clearing semantic focus routes to Scene; retain the explicit Advanced destination.
+        app.render_workspace.view.inspector.page = inspector::Page::Appearance;
     }
     handled
 }

@@ -3238,3 +3238,31 @@ fn mirror_origin_axis_in_rotated_plane_reuses_projection_and_rejects_invalid_lin
         assert_eq!(s.doc.to_json(), before);
     }
 }
+
+#[test]
+fn corner_tools_refuse_all_spatial_curves_with_an_unsupported_message() {
+    let mut s = Session::default();
+    run(&mut s, "solid.sphere", json!({"radius":20}));
+    run(&mut s, "sketch.create", json!({"plane":"XY", "offset":50}));
+    run(&mut s, "sketch.line", json!({"points":[[-10,0],[10,0]],"ids":["source"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let src = s.doc.features.last().unwrap().id;
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    let projected = run(&mut s, "sketch.project_to_surface", json!({"curves":[{"sketch":src,"curve":"source"}],"face":[0,0,20]}));
+    let linked = projected["links"][0]["wires"][0].as_str().unwrap().to_owned();
+    run(&mut s, "sketch.options", json!({"sketch_3d":true}));
+    let line = ids(&run(&mut s, "sketch.line3d", json!({"points":[[0,0,0],[20,0,20]]}))["curves"])[0].clone();
+    let spline = ids(&run(&mut s, "sketch.spline3d", json!({"points":[[0,0,0],[10,5,10],[20,0,20]]}))["curves"])[0].clone();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[0,20]],"ids":["side"]}));
+    let before = s.doc.to_json();
+    for cmd in ["sketch.fillet", "sketch.chamfer.equal_distance", "sketch.chamfer.two_distance", "sketch.chamfer.distance_angle"] {
+        let action = if cmd == "sketch.fillet" { "filleting" } else { "chamfering" };
+        for wire in [&line, &spline, &linked] {
+            for (a, b) in [(wire.as_str(), "side"), ("side", wire.as_str())] {
+                let error = s.execute(cmd, &json!({"a":a,"b":b,"radius":2,"distance":2,"distance2":3,"angle":45})).unwrap_err().to_string();
+                assert!(error.contains(&format!("not supported yet: {action} 3D or linked sketch curves")), "{cmd}: {error}");
+                assert_eq!(s.doc.to_json(), before);
+            }
+        }
+    }
+}

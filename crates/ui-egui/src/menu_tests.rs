@@ -72,10 +72,10 @@ fn linked_component_opens_its_part_in_a_tab_and_reports_a_missing_source() {
     assert!(!context_menu::items(&h.app, &Target::Component { id: 0 }).iter().any(|item| item.label == "Open Linked Design"));
 
     act(&mut h.app, &linked, "Open Linked Design");
-    for _ in 0..600 {
-        if h.app.session.path.as_deref() == part.to_str() {
-            break;
-        }
+    // The part opens in the background. A count of frames is no bound for that: frames are quick
+    // while a loaded machine is slow to read the file. Wait as `Harness::settle` waits for a load.
+    let began = std::time::Instant::now();
+    while h.app.session.path.as_deref() != part.to_str() && began.elapsed() < std::time::Duration::from_secs(120) {
         h.frame();
     }
     assert_eq!(h.app.session.path.as_deref(), part.to_str());

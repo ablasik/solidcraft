@@ -282,6 +282,34 @@ fn environment_ring_fixture() -> Harness {
 }
 
 #[test]
+fn render_workspace_frame_rect_fits_centres_and_refuses_hostile_sizes() {
+    let viewport = egui::Rect::from_min_size(egui::pos2(100.0, 40.0), egui::vec2(800.0, 600.0));
+    for aspect in [16.0 / 9.0, 1.5, 1.0, 0.8, 9.0 / 16.0, 0.01, 100.0] {
+        let frame = shot::frame_rect(aspect, viewport).unwrap();
+        assert!(viewport.contains_rect(frame));
+        assert_eq!(frame.center(), viewport.center());
+        assert!((f64::from(frame.width() / frame.height()) - aspect).abs() < 0.001);
+        assert!(frame.width() == viewport.width() || frame.height() == viewport.height());
+    }
+    for aspect in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX, 1e-300] {
+        assert!(shot::frame_rect(aspect, viewport).is_none());
+    }
+    for size in [egui::Vec2::ZERO, egui::vec2(0.0, 400.0), egui::vec2(f32::NAN, 10.0), egui::vec2(f32::MAX, f32::MAX), egui::vec2(-10.0, 20.0)] {
+        assert!(shot::frame_rect(1.5, egui::Rect::from_min_size(egui::Pos2::ZERO, size)).is_none());
+    }
+}
+
+fn frame_editor_fixture() -> Harness {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1440,"height":1200}));
+    h.app.run("render.settings.set", json!({"name":"Hero","set":{"width":800,"height":600,"camera":h.app.cam}})).unwrap();
+    enter(&mut h.app, true).unwrap();
+    h.app.run("view.render_select", json!({"kind":"shot","id":"Hero"})).unwrap();
+    h.app.run("view.render_stage", json!({"stage":"frame"})).unwrap();
+    h
+}
+
+#[test]
 fn environment_ring_drag_is_one_undo_snaps_and_never_navigates_the_camera() {
     use egui::{Event, Modifiers, PointerButton};
     let mut h = environment_ring_fixture();
@@ -496,6 +524,167 @@ fn environment_editor_hdr_header_reads_catalog_without_applying_or_saving() {
         let undo = h.app.session.undo.len();
         environment::commit_environment(&mut h.app, request).unwrap();
         assert_eq!(h.app.session.undo.len(), undo + 1);
+    }
+}
+
+#[test]
+fn render_workspace_frame_opening_editor_and_presets_never_mutates_or_starts_a_job() {
+    let mut h = frame_editor_fixture();
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    let camera = h.app.cam;
+    h.frames(4);
+    assert_eq!(h.app.cam, camera);
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert_eq!(h.app.session.undo.len(), undo);
+    assert!(h.app.render_workspace.view.job.is_none());
+    assert!(crate::scenario::rect_of("render:shot:name").is_some());
+    assert!(crate::scenario::rect_of("render:frame:aspect:16:9").is_some());
+    assert!(crate::scenario::rect_of("render:frame:overlay").is_some());
+    assert_eq!(shot::selected(&h.app), Some("Hero"));
+    h.step(&json!({"click":{"handle":"render:frame:thirds"}})).unwrap();
+    assert!(h.app.render_workspace.view.frame.guides.thirds);
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert_eq!(h.app.session.undo.len(), undo);
+    let mut h = frame_editor_fixture();
+    let camera = Camera { fov: 175f64.to_radians(), ..h.app.cam };
+    inspector::apply_camera_draft(&mut h.app, camera).unwrap();
+    h.frames(4);
+    assert_eq!(h.app.cam, camera, "opening must preserve valid FOVs outside the slider's usual editing range");
+}
+
+#[test]
+fn render_workspace_frame_guides_are_transient_and_overlay_visibility_is_contextual() {
+    let mut h = frame_editor_fixture();
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    h.app.run("view.render_frame", json!({"aspect":"16:9","thirds":true,"safe_area":true,"centre_mark":true})).unwrap();
+    assert!(shot::overlay_visible(&h.app));
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+    let frame = shot::preview_rect(&h.app, viewport).unwrap();
+    assert!((frame.width() / frame.height() - 16.0 / 9.0).abs() < 0.001);
+    h.app.run("view.render_stage", json!({"stage":"look"})).unwrap();
+    assert!(!shot::overlay_visible(&h.app));
+    h.app.render_workspace.view.inspector.page = inspector::Page::Camera;
+    assert!(shot::overlay_visible(&h.app));
+    h.app.render_workspace.view.result = true;
+    assert!(!shot::overlay_visible(&h.app));
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert_eq!(h.app.session.doc.render.setups["Hero"].width, 800);
+    assert_eq!(h.app.session.undo.len(), undo);
+    assert!(h.app.render_workspace.view.frame.guides.thirds);
+    assert!(h.app.render_workspace.view.frame.guides.safe_area);
+    assert!(h.app.render_workspace.view.frame.guides.centre_mark);
+}
+
+#[test]
+fn render_workspace_frame_exposure_drag_is_one_saved_edit_and_undoes() {
+    let mut h = frame_editor_fixture();
+    shot::edit_settings(&mut h.app, "Hero", json!({"job":{"method":"cpu_raytrace"}})).unwrap();
+    h.call("ui.resize", json!({"width":1600,"height":1800}));
+    h.frames(4);
+    let track = crate::scenario::rect_of("dialog:slider_track:Exposure").unwrap();
+    assert!(track.width() > 20.0, "exposure track: {track:?}");
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    let start = track.center();
+    let end = egui::pos2(track.left() + track.width() * 0.75, track.center().y);
+    h.step(&json!({"drag":[[start.x,start.y],[end.x,end.y]],"steps":8})).unwrap();
+    assert_ne!(
+        h.app.session.doc.render.setups["Hero"].exposure_ev, 0.0,
+        "track: {track:?}; state: {:?}; status: {:?}",
+        h.app.render_workspace.view.frame, h.app.status
+    );
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.to_json(), before);
+}
+
+#[test]
+fn render_workspace_scene_render_shot_captures_current_size_and_live_camera_without_saving() {
+    let mut h = frame_editor_fixture();
+    h.app.run("solid.box", json!({"length":10,"width":20,"height":5})).unwrap();
+    shot::edit_settings(&mut h.app, "Hero", json!({"width":16,"height":12})).unwrap();
+    h.app.render_workspace.image_host = Some(solidcraft_engine::render::job::CpuHost::cooperative());
+    sync_backend(&mut h.app);
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    let camera = Camera { distance: 85.0, fov: 35f64.to_radians(), ..h.app.cam };
+    inspector::apply_camera_draft(&mut h.app, camera).unwrap();
+    h.app.run("view.render_frame", json!({"thirds":true,"safe_area":true,"centre_mark":true})).unwrap();
+    h.app.render_workspace.view.name = "Hero".into();
+    setups::load(&mut h.app);
+    ribbon::perform_job(&mut h.app, "render.start").unwrap();
+    let job = h.app.render_workspace.view.job.unwrap();
+    let handle = h.app.session.render_job_handle(job).unwrap();
+    assert_eq!(h.app.render_workspace.view.job_shot.as_deref(), Some("Hero"));
+    let host = h.app.session.render_job_host().unwrap().clone();
+    for _ in 0..128 {
+        host.pump(16384).unwrap();
+        if handle.frame().unwrap().is_some() {
+            break;
+        }
+    }
+    let frame = handle.frame().unwrap().unwrap();
+    assert_eq!((frame.info.width, frame.info.height), (16, 12));
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert_eq!(h.app.session.undo.len(), undo);
+}
+
+#[test]
+fn render_workspace_frame_aspect_click_edits_only_selected_shot_size_once_and_undoes() {
+    let mut h = frame_editor_fixture();
+    h.frames(4);
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"render:frame:aspect:16:9"}})).unwrap();
+    let saved = &h.app.session.doc.render.setups["Hero"];
+    assert_eq!((saved.width, saved.height), (1920, 1080));
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.to_json(), before);
+    for (index, expected) in [(1, (1620, 1080)), (2, (1080, 1080)), (3, (864, 1080)), (4, (1080, 1920))] {
+        let undo = h.app.session.undo.len();
+        shot::choose_aspect(&mut h.app, "Hero", index).unwrap();
+        let saved = &h.app.session.doc.render.setups["Hero"];
+        assert_eq!((saved.width, saved.height), expected);
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+    }
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    shot::choose_aspect(&mut h.app, "Hero", 5).unwrap();
+    assert_eq!(h.app.session.doc.to_json(), before);
+    assert_eq!(h.app.session.undo.len(), undo);
+    assert!(shot::choose_aspect(&mut h.app, "Hero", usize::MAX).is_err());
+}
+
+#[test]
+fn render_workspace_frame_shot_edits_revert_duplicate_and_rename_use_existing_commands() {
+    let mut h = frame_editor_fixture();
+    let before = h.app.session.doc.render.setups["Hero"].clone();
+    let camera = Camera { distance: before.camera.distance * 2.0, ..before.camera };
+    inspector::apply_camera_draft(&mut h.app, camera).unwrap();
+    let undo = h.app.session.undo.len();
+    assert!(shots::camera_modified(&h.app, "Hero"));
+    shot::edit_settings(&mut h.app, "Hero", json!({"camera":camera})).unwrap();
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    assert!(!shots::camera_modified(&h.app, "Hero"));
+    h.app.run("edit.undo", json!({})).unwrap();
+    shot::revert(&mut h.app, "Hero").unwrap();
+    assert_eq!(h.app.cam, before.camera);
+    shot::edit_settings(&mut h.app, "Hero", json!({"exposure_ev":1.5})).unwrap();
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    shot::duplicate(&mut h.app, "Hero").unwrap();
+    assert_eq!(h.app.session.undo.len(), undo + 2);
+    let copied = h.app.session.doc.render.setups.iter().find(|(name, _)| name.as_str() != "Hero").unwrap().1;
+    assert_eq!(copied, &h.app.session.doc.render.setups["Hero"]);
+    shot::rename(&mut h.app, "Hero", "Renamed").unwrap();
+    assert_eq!(shot::selected(&h.app), Some("Renamed"));
+    assert_eq!(h.app.session.undo.len(), undo + 3);
+    let before = h.app.session.doc.to_json();
+    for patch in [json!({"width":0}), json!({"width":u32::MAX}), json!({"height":1e300}), json!({"exposure_ev":33}), json!({"exposure_ev":null})] {
+        assert!(shot::edit_settings(&mut h.app, "Renamed", patch).is_err());
+        assert_eq!(h.app.session.doc.to_json(), before);
     }
 }
 
@@ -1088,12 +1277,13 @@ fn clicked_render_workspace_saves_one_setup_and_restores_design_view() {
         h.step(&json!({"click":[at.x,at.y]})).unwrap();
         h.step(&json!({"click":{"handle":"menu:ui.workspace.render"}})).unwrap();
         assert!(active(&h.app));
-        let heading = h.app.tr("render.studio_title").to_string();
+        let heading = h.app.tr("render.page_scene").to_string();
         let perspective = h.app.tr("render.perspective").to_string();
         let save = h.app.tr("render.save_setup").to_string();
         let back = h.app.tr("render.return_design").to_string();
-        h.step(&json!({"click":{"handle":"render:stage:frame"}})).unwrap();
         assert!(h.widget(&heading).is_some(), "{language}");
+        h.step(&json!({"click":{"handle":"render:scene:frame"}})).unwrap();
+        assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Camera);
         h.step(&json!({"widget":perspective})).unwrap();
         assert!(!h.app.session.is_dirty(), "preview edits are staged");
         h.step(&json!({"widget":save})).unwrap();
@@ -3344,7 +3534,7 @@ fn render_workspace_stage_commands_keep_registered_actions_without_a_ribbon() {
     assert!(crate::scenario::rect_of("tab:RENDER").is_none());
     assert!(crate::scenario::rect_of("render:hud").is_none());
     assert_eq!(h.app.render_workspace.view.stage, Stage::Look);
-    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Appearance);
+    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Scene);
 }
 
 #[test]
@@ -3895,7 +4085,10 @@ fn assert_product_fits_canvas(app: &SolveApp) {
 
 #[test]
 fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
-    for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+    for (layout, page) in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked]
+        .into_iter()
+        .flat_map(|layout| [inspector::Page::Scene, inspector::Page::Appearance].map(|page| (layout, page)))
+    {
         let mut h = Harness::new();
         h.app.ui.layout = layout;
         h.call("ui.resize", json!({"width":1600,"height":1000}));
@@ -3903,6 +4096,7 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
         h.frames(4);
 
         enter(&mut h.app, true).unwrap();
+        h.app.render_workspace.view.inspector.page = page;
         h.frames(4);
         let viewport = h.app.viewport.rect.unwrap();
         let history = crate::timeline::floating_rect(viewport);
@@ -3943,8 +4137,10 @@ fn render_workspace_hosts_float_and_shield_input_in_both_ribbon_layouts() {
                 "render:tree:by-look"
             } else if key == "render:appearances" {
                 "render:library-search"
-            } else {
+            } else if page == inspector::Page::Appearance {
                 "dialog:editor_footer"
+            } else {
+                "render:scene:look"
             })
             .unwrap();
             if key == "render:browser" {
@@ -4545,10 +4741,9 @@ fn render_workspace_browser_focus_covers_each_kind_without_design_edits() {
     assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Shot("Shot".into()));
     h.step(&json!({"click":{"handle":"render:tree:output"}})).unwrap();
     assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Output);
-    let page = h.app.render_workspace.view.inspector.page;
     h.app.run("view.render_select", json!({"kind":"nothing"})).unwrap();
     assert_eq!(h.app.render_workspace.view.selection, RenderSelection::Nothing);
-    assert_eq!(h.app.render_workspace.view.inspector.page, page, "focus alone does not dispatch Inspector editors");
+    assert_eq!(h.app.render_workspace.view.inspector.page, inspector::Page::Scene);
     assert_eq!(h.app.session.revision, focused_revision, "semantic selection only refreshes the view when clearing object picks");
     assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
     assert_eq!(before, (h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.is_dirty()));

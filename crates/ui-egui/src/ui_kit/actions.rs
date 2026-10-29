@@ -580,6 +580,14 @@ pub(crate) fn icon_label_button(ui: &mut Ui, label: &str, icon: &str, enabled: b
     icon_label_presentation(ui, crate::i18n::tr_label(label), Some(icon), enabled, false, danger, false)
 }
 
+/// Icon-only action with an accessible name and tooltip, using the shared action
+/// geometry, enabled state and optional danger ink. Tokens: icon-label action tokens.
+pub(crate) fn icon_action(ui: &mut Ui, label: &str, icon: &str, enabled: bool, danger: bool) -> Response {
+    let response = icon_label_button(ui, "", icon, enabled, danger).on_hover_text(label);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label));
+    response
+}
+
 /// Compact stage actions share the icon-label button's frame, typography and hit target.
 pub(super) fn icon_label_width(ui: &Ui, label: &str, icon: Option<&str>, primary: bool) -> f32 {
     let t = Tokens::get();

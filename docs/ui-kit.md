@@ -134,6 +134,11 @@ input and introduce no repaint timer.
 
 ## Elements
 
+`aspect_grid` composes three-column `AspectTile` choices with token-sized aspect glyphs,
+selection tint and stable targets. `frame_guides` paints a bounded viewport mask, outline,
+thirds, a 90% safe area and a centre mark from `FrameGuides`. These are viewport decorations;
+callers exclude them from exported images and result canvases.
+
 Module names below describe implementation locations, not caller import paths.
 Every inline element/variant has one entry in the light/dark `gallery::ELEMENTS`
 table. Panel/Window/Confirm compositions also have dedicated geometry and interaction tests.
@@ -156,6 +161,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `figure_rows`, `FigureSlot` | A caller-painted figure in the label column beside a stack of captioned expression fields (the Hole dialog's section); the caller gets each field's rect and hover/focus state to draw leaders and light the part it sizes. Fields keep their `dialog:<label>` handles; the block publishes `dialog:figure:<id>` and its picture `dialog:figure_picture:<id>` | `control_height`, `form_label_width`, `font_small`, `form_dim`, `space_2/4`, label gap |
 | `linear_color_field` | Linear RGB swatch with precise channel fields; clips only the preview to display gamut and preserves HDR values until edited | `control_height`, `space_4`, shared colour popover |
 | `section`, `section_count`, `section_method`, `search_fold`, `divider` | Persisted small-caps disclosure with chevron, optional count or method tag and trailing hairline; `search_fold` is that row for shortcut matches during Preferences search, closed until opened; full-width rule | `control_height`, `dialog_rule`, `font_caption`, tracking, spacing |
+| `icon_action` | Icon-only action with an accessible name, tooltip, enabled state and danger variant | Shared icon-label action geometry and ink tokens |
 | `list_row` | Picked item with a remove target | `control_height`, `font_label`, icon/spacing tokens |
 | `text`, `Text` | Hint, note, report, inline or cell text; see variants below | `font_small/label`, `text/dim/error`, `control_height`, `space_4` |
 | `text_lines` | Virtualized read-only licence/report lines, horizontal overflow | `font_small`, `text`, `control_height` |
@@ -174,6 +180,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `value_pair` | Paired captions/expressions; optional independent field names | row/field tokens, `space_8` |
 | `fraction_field`, `scalar_field`, `mixed_scalar_field` | Locale-aware bounded dimensionless values; scalar fields fill their control column; the mixed variant accepts a translated placeholder | form control/font tokens |
 | `number_field` | Integer/decimal field with caller range, drag speed and suffix | form control/font tokens |
+| `number_fields` | N numeric cells sharing a row's remaining width equally, including gaps; returns each field response in order | `control_height`, inherited item spacing, number-field tokens |
 | `length_field`, `angle_field` | Length in design units, angle in degrees | form control/font tokens |
 | `slider` + `Slider` options | One token-painted track/thumb over native slider/value interaction; optional step, caller formatting, whole-step manipulation and hidden value editor | `control_height`, `space_24/8/4/2`, form control/font tokens |
 | `placement_field` | Stable focus ID; drawing tool owns Enter/Tab validation and completion | `control_fill`, `font_body`, `text`, `control_height`, spacing |
@@ -444,6 +451,10 @@ the kit. The source guard scans both trees without an allowance table; the galle
 covers continuous, percent/stepped, integer/no-editor and disabled states in both themes.
 Numeric fields use the existing kit `scalar_field`, `length_field`, `angle_field`
 or `number_field` rather than constructing a raw `egui::DragValue` at a caller.
+For a numeric tuple, call `number_fields(ui, &mut values, range, speed, suffix)`
+inside `row`. It divides the remaining control width equally after reserving the
+inter-cell gaps, and keeps each cell's editor width and native input minimum local
+to that cell. An empty slice draws nothing; responses follow the input order.
 
 Parameters retains its bounded header drag offset while the manager is open,
 including frames without a regular feature dialog. The shared Panel bound reserves
