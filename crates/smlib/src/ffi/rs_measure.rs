@@ -66,12 +66,29 @@ pub fn mass_properties(h: &super::Handle, relative_accuracy: f64) -> Result<[f64
             (true, Some(m)) => mid + *m / first.mass,
             _ => mid,
         };
-        let second = properties(k, &mut b, acc, centroid)?;
-        let (Some(products), Some(axial)) = (second.moments.get(6), second.moments.get(7)) else { return Err(super::ERR_EXCEPTION) };
+        // One pass about the box's midpoint, then the parallel-axis shift to the centroid (as the C
+        // API does), instead of a second integral about the centroid.
+        let (Some(products), Some(axial)) = (first.moments.get(6), first.moments.get(7)) else { return Err(super::ERR_EXCEPTION) };
+        let d = match (first.volume > 0.0, first.moments.get(4)) {
+            (true, Some(m)) => *m / first.mass,
+            _ => Vec3::new(0.0, 0.0, 0.0),
+        };
+        let m = first.mass;
         // unconfirmed: moments[6] is the products yz, zx, xy as smlib.h gives them (signed integrals
-        // about the centroid), and moments[7] the axial moments Ixx, Iyy, Izz; the tests only
-        // exercise bodies whose products vanish.
-        Ok([second.area, second.volume, centroid.x, centroid.y, centroid.z, axial.x, axial.y, axial.z, products.x, products.y, products.z])
+        // about the midpoint), and moments[7] the axial moments Ixx, Iyy, Izz.
+        Ok([
+            first.area,
+            first.volume,
+            centroid.x,
+            centroid.y,
+            centroid.z,
+            axial.x - m * (d.y * d.y + d.z * d.z),
+            axial.y - m * (d.z * d.z + d.x * d.x),
+            axial.z - m * (d.x * d.x + d.y * d.y),
+            products.x - m * d.y * d.z,
+            products.y - m * d.z * d.x,
+            products.z - m * d.x * d.y,
+        ])
     })
 }
 

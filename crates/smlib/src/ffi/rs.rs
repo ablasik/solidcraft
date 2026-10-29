@@ -59,6 +59,9 @@ fn new_kernel() -> Kernel {
     k.fixes.fillet_trace_rejects_short_step = true;
     // Not upstream, and wanted always: four equal rounds meeting at a point get the sphere through their arcs.
     k.fixes.fillet_corner_sphere_from_four_arcs = true;
+    // Always on (WR-472, WR-494; built into develop's SMLib fork): without them the mass-property integral asks for ~1e-14 relative accuracy at 1e-8 and its steps shrink to nothing.
+    k.fixes.precise_properties_body_length_scale = true;
+    k.fixes.precise_properties_split_at_surface_knots = true;
     let spec = std::env::var("SOLIDCORE_FIXES").unwrap_or_default();
     for name in spec.split(',') {
         let all = name == "all";
