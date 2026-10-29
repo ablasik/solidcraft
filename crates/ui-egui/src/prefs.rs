@@ -1073,6 +1073,12 @@ preference_settings! {
     /// Draw the parts browser on a translucent card over the 3D view instead of a column of its
     /// own, so the workspace keeps the whole window width.
     browser_float: bool = false, PAGE_INTERFACE;
+    /// The browser card folded to its header with the chevron in that header, kept from one run
+    /// to the next like the toolbar's pins (#8692).
+    browser_collapsed: bool = false, PAGE_INTERFACE;
+    /// Whether the browser card is always shown or kept out of sight until the pointer comes to
+    /// it, as the navigation bar's "Hide until hovered" does (#8692).
+    browser_show: crate::browser::BrowserShow = Default::default(), PAGE_INTERFACE;
     /// Where command dialogs open: at the view's edge, or in the left column in place of the
     /// browser and the History there (#6707).
     dialog_place: crate::dialog_column::DialogPlace = Default::default(), PAGE_INTERFACE;
@@ -4761,6 +4767,8 @@ mod tests {
             ("history_sketches", json!("under_feature"), PAGE_INTERFACE),
             ("history_play_button", json!(false), PAGE_INTERFACE),
             ("browser_float", json!(true), PAGE_INTERFACE),
+            ("browser_collapsed", json!(true), PAGE_INTERFACE),
+            ("browser_show", json!("hover"), PAGE_INTERFACE),
             ("dialog_place", json!("left_column"), PAGE_INTERFACE),
             ("color_vision", json!("protan"), PAGE_INTERFACE),
             ("viewport_theme", json!("light"), PAGE_INTERFACE),

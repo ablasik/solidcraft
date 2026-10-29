@@ -3794,7 +3794,7 @@ fn render_workspace_focus_restores_docks_without_design_history_or_camera_change
         h.app.preferences.render_browser_width = 350.0;
         h.app.preferences.render_inspector_width = 390.0;
         h.app.preferences.render_shots_strip = shots;
-        h.app.tree.panel_collapsed = folded;
+        h.app.preferences.browser_collapsed = folded;
         h.app.shell.render_browser_open = folded;
         h.frames(3);
         let dock_preferences = h.app.prefs();
@@ -3829,7 +3829,7 @@ fn render_workspace_focus_restores_docks_without_design_history_or_camera_change
             assert_eq!(restored_edge.as_ref().map(std::mem::discriminant), edge.as_ref().map(std::mem::discriminant));
         }
         assert_eq!(h.app.prefs(), dock_preferences);
-        assert_eq!(h.app.tree.panel_collapsed, folded);
+        assert_eq!(h.app.preferences.browser_collapsed, folded);
         assert_eq!(h.app.shell.render_browser_open, folded);
         assert_eq!((h.app.cam, h.app.session.camera), camera);
         assert!(Arc::ptr_eq(&h.app.session.doc, &document));

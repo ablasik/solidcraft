@@ -382,6 +382,9 @@ fn unlock(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let doc = s.doc_mut();
     doc.assembly.joints.retain(|j| !gone.contains(&j.id));
+    for group in &mut doc.timeline_groups {
+        group.joints.retain(|id| !gone.contains(id));
+    }
     doc.assembly.links.retain(|l| !gone.contains(&l.a) && !gone.contains(&l.b));
     s.visibility.hidden_joints.retain(|h| !gone.contains(h));
     Ok(json!({"component": id, "joints": gone}))

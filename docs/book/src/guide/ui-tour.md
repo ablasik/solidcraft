@@ -139,6 +139,7 @@
   selects it, and while the marker sits between a sketch and its feature, or the two are in
   different folders, the sketch keeps a row of its own. The timeline along the bottom always lists
   features in creation order.
+  Feature Folders can contain joints as well as features; closing a folder hides both behind one tile.
 - **Status bar** (off by default: Preferences › Interface › **Status bar**). A thin bar along
   the window's bottom edge, below the timeline. From the right: the design's units (click them
   to change the design's units, one undo step), the open sketch's state in its colour (under

@@ -2851,7 +2851,7 @@ pub struct BrowserGroup {
     pub items: Vec<String>,
 }
 
-/// A saved feature-history folder. Folders may nest, and a feature can belong to at most one folder.
+/// A saved history folder. Folders may nest; each feature or joint belongs to at most one folder.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimelineGroup {
     pub id: u64,
@@ -2861,6 +2861,9 @@ pub struct TimelineGroup {
     pub parent: Option<u64>,
     #[serde(default)]
     pub features: Vec<u64>,
+    /// Joints stored in this timeline folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joints: Vec<u64>,
 }
 
 /// The first feature-history folder whose own and nested features do not form one
