@@ -157,3 +157,6 @@ egui-wgpu = { path = "vendor/egui-wgpu" }
 [profile.mutants]
 inherits = "ci"
 incremental = true
+
+[patch."https://github.com/tangency-labs/solidcore"]
+solidcore = { path = "../solidcore-with-our-fixes/crates/solidcore" }
