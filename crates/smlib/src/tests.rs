@@ -198,3 +198,17 @@ fn solidcore_refuses_a_shear_and_mirrors_a_reflection() {
         }
     }
 }
+
+#[cfg(feature = "solidcore")]
+#[test]
+fn solidcore_export_writes_each_edges_and_vertexs_own_tolerance() {
+    for b in [Brep::make_box([0.0; 3], [1.0, 2.0, 3.0]).unwrap(), Brep::make_sphere([0.0; 3], 5.0).unwrap()] {
+        let a = b.arrays().unwrap();
+        let (e, v) = (&a.reals[&flat::EDGE_TOLERANCE], &a.reals[&flat::VERTEX_TOLERANCE]);
+        assert_eq!((e.len(), v.len()), (b.counts().unwrap()[1], b.counts().unwrap()[2]));
+        let body = a.reals[&flat::TOLERANCE][0];
+        assert!(e.iter().chain(v).all(|t| *t > 0.0 && *t <= body), "{e:?} {v:?} within the body's {body}");
+        // Back in, with the per-item tolerances.
+        assert!(b.to_native().is_ok());
+    }
+}

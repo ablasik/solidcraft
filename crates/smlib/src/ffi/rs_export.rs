@@ -246,8 +246,8 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
     }
 
     // Vertices, extent and tolerance.
-    let mut tolerance = b.tolerance();
     let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    let mut vertex_tolerances = Vec::with_capacity(vertices.len());
     for &v in &vertices {
         let v = b.vertex(v).map_err(s)?;
         let p = xyz(v.point);
@@ -257,16 +257,34 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
             lo[i] = lo[i].min(p[i]);
             hi[i] = hi[i].max(p[i]);
         }
-        tolerance = tolerance.max(v.tolerance);
+        vertex_tolerances.push(v.tolerance);
     }
+    let mut edge_tolerances = Vec::with_capacity(edges.len());
+    for &e in &edges {
+        edge_tolerances.push(b.edge(e).map_err(s)?.tolerance);
+    }
+    let mut tolerance = b.tolerance();
     for &f in &faces {
         tolerance = tolerance.max(b.face(f).map_err(s)?.tolerance);
     }
-    for &e in &edges {
-        tolerance = tolerance.max(b.edge(e).map_err(s)?.tolerance);
+    for t in vertex_tolerances.iter().chain(&edge_tolerances) {
+        tolerance = tolerance.max(*t);
     }
     o.r3(EXTENT, lo);
     o.r3(EXTENT, hi);
+    // Each edge's and vertex's own tolerance, twice as the arrays carry it (as TOLERANCE below),
+    // never below the largest ordinary one: solidcore's tolerances for approximated edges are
+    // what it tracked, not the gap to its faces (up to 4e-5 mm more on a fillet's rail), so
+    // the body's largest ordinary tolerance bounds those. Only one past what import takes
+    // (an edge a trim made 42 mm) stays its own, never the whole body's.
+    let ordinary =
+        vertex_tolerances.iter().chain(&edge_tolerances).copied().chain([b.tolerance()]).filter(|t| *t <= MAX_TOLERANCE).fold(0.0, f64::max);
+    for t in &vertex_tolerances {
+        o.r(VERTEX_TOLERANCE, 2.0 * t.max(ordinary));
+    }
+    for t in &edge_tolerances {
+        o.r(EDGE_TOLERANCE, 2.0 * t.max(ordinary));
+    }
     // unconfirmed: "twice the largest face, edge and vertex tolerance" over solidcore's zone
     // tolerances (and the body's), as the header words it.
     o.r(TOLERANCE, 2.0 * tolerance);
