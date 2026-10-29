@@ -152,8 +152,8 @@ pub const SECTIONS: &[Section] = &[
     Section {
         tab: "ASSEMBLE",
         panel: "POSITION",
-        promoted: 3,
-        ids: &["occurrence.ground", "component.capture_position", "component.revert_position"],
+        promoted: 4,
+        ids: &["occurrence.move", "occurrence.ground", "component.capture_position", "component.revert_position"],
     },
     Section {
         tab: "ASSEMBLE",
@@ -411,6 +411,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("inspect.zebra", "Zebra"),
     ("joint.as_built", "As-Built"),
     ("material.assign", "Material"),
+    ("occurrence.move", "Move"),
     ("parameters.change", "Parameters"),
     ("parameters.graph", "Param. Graph"),
     ("parts.fastener", "Fastener"),

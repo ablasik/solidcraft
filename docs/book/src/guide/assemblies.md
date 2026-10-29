@@ -35,6 +35,27 @@ pending. Scripts and agents do the same with `occurrence.drag {occurrence or pat
 which moves the placement by `point - at` in world coordinates and answers the placements it
 `moved`.
 
+**Move along the joint's free axes.** Select a face or a single assembly part, then choose
+**Assemble → Move**, or right-click the selected face and choose **Move**. Thick straight
+arrows move along the allowed axes; circular arrows turn about them. Grounded parts, rigid
+joints, fixed coordinates and coordinates controlled by parameter expressions have no handle.
+The handles appear only after Move is started and disappear when Measure or another command
+starts. A face selected for measurement does not open Move.
+If the selected part has no free joint value, Move shows a warning instead of handles.
+Check rigid joints, grounding, joint limits and parameter-driven values; OK or Escape
+dismisses the warning without changing those constraints.
+
+While dragging, a readout shows the actual distance or angle from the drag's starting pose,
+including when a joint limit or contact stops the part. Distances use the design's display
+units. Rotation uses 10° steps near the ring; pull the pointer outside the dashed guide to
+use 0.1° steps. Crossing the guide changes precision without jumping to another angle.
+Change both step sizes under **Preferences → Design → Assembly Move**. Each drag is one
+undo step; Escape while dragging restores its starting pose. **Done** (or Escape when idle)
+closes the handles.
+
+To use the previous Move panel, turn off **Use joint motion handles for assembly Move**
+in the same settings section.
+
 Paste New copies nested component definitions, sketches, feature histories and generated
 dimension parameters. Repeated child instances remain shared within the new copy. Materials,
 appearances and wholly internal joints/motion records receive copied references. Design-wide

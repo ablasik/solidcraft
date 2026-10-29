@@ -98,6 +98,7 @@ pub mod insert_handles;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
+pub(crate) mod joint_handles;
 pub mod keymap;
 mod length_input;
 mod linked_source;
@@ -1383,6 +1384,9 @@ impl SolveApp {
         if self.file_load.busy() || self.file_picker.is_some() {
             return;
         }
+        if id != "occurrence.move" {
+            joint_handles::close(self);
+        }
         // Repeat Last Command starts the tool it names; it is never the one repeated itself.
         if id == "edit.repeat" {
             self.repeat_last();
@@ -1434,6 +1438,10 @@ impl SolveApp {
             return;
         }
         workspace::select_command_tab(self, id);
+        if id == "occurrence.move" {
+            joint_handles::start(self);
+            return;
+        }
         // One selected placement moves as a component, the same way as its Browser menu,
         // retaining the exact instance path and the grounding/rigid-group restrictions.
         // A selected body, or a component picked in the tree, opens Move/Copy on those bodies.
@@ -2320,6 +2328,7 @@ impl SolveApp {
         prefs::apply(self, ctx);
         // The view's own dark or light only changes tokens, not egui's visuals: no restyle.
         theme::set_viewport_dark(self.preferences.viewport_theme.dark());
+        theme::set_viewport_background(self.preferences.viewport_background);
         if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {
             theme::set_dark(self.ui.dark);
             theme::set_vision(self.preferences.color_vision);
@@ -2625,6 +2634,7 @@ impl SolveApp {
         delete::show(self, ui.ctx());
         easyprint_ui::show(self, ui.ctx());
         linked_source::show_copies(self, ui.ctx());
+        joint_handles::show_warning(self, ui.ctx());
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
         toolbar_custom::window(self, ui.ctx());

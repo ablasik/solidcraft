@@ -1902,6 +1902,32 @@ fn align_accepts_a_plane_click() {
 }
 
 #[test]
+fn align_components_input_picks_occurrence_from_viewport_body_and_skips_root_body() {
+    let mut app = app_with(json!([]));
+    app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "RootBody"})).unwrap();
+    let comp = app.run("component.create", json!({"name": "Extrusion", "grounded": false})).unwrap()["component"].as_u64().unwrap();
+    app.run("solid.box", json!({"length": 10, "width": 10, "height": 40, "corner": [20, 0, 0], "body_name": "Beam"})).unwrap();
+    app.run("component.activate", json!({"component": "root"})).unwrap();
+    let second = app.run("occurrence.copy", json!({"component": comp, "translate": [30, 0, 0]})).unwrap()["occurrence"].as_u64().unwrap();
+
+    let mut d = start(&mut app, vec![], "solid.align");
+    d.kind = Kind::Align { flip: false, components: true };
+    d.inputs[0].label = "Components";
+    d.active = 0;
+
+    // Root-component bodies are not components.
+    let root_hit = crate::viewport::Hit::Face { body: "RootBody".into(), index: 0, point: Vec3::new(5.0, 5.0, 10.0) };
+    assert_eq!(d.candidate(&app.session, &root_hit), None);
+
+    // Clicking the second instance's body picks its exact occurrence path.
+    let inst_hit = crate::viewport::Hit::Face { body: "Beam (Extrusion:2)".into(), index: 0, point: Vec3::new(55.0, 5.0, 20.0) };
+    let cand = d.candidate(&app.session, &inst_hit);
+    assert_eq!(cand, Some(Sel::Occurrence { path: vec![second] }));
+    d.pick(&app.session, cand.unwrap());
+    assert_eq!(d.inputs[0].items, vec![Sel::Occurrence { path: vec![second] }]);
+}
+
+#[test]
 fn surface_dialogs_make_their_commands() {
     // A planar patch of a sketch's rectangle, then thickened; Edit Feature brings both back.
     let mut app = app_with(json!([

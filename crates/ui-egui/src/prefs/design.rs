@@ -83,6 +83,19 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         setting::hide_origin(app, ui);
         ui_kit::text(ui, app.tr("ui.hide_origin_note"), ui_kit::Text::Hint("hide_origin"));
     });
+    ui_kit::settings_section(ui, "joint_move", app.tr("joint_move.settings"), |ui| {
+        setting::assembly_move_handles(app, ui);
+        ui_kit::text(ui, app.tr("joint_move.legacy_hint"), ui_kit::Text::Hint("joint_move_legacy"));
+        ui_kit::settings_form(ui, t.space_24 * 7.0 + t.space_2, |ui| {
+            ui_kit::row(ui, app.tr("joint_move.coarse"), |ui| {
+                ui_kit::settings_number(ui, &mut app.preferences.joint_rotation_coarse, 0.001..=180.0, 0.1);
+            });
+            ui_kit::row(ui, app.tr("joint_move.fine"), |ui| {
+                ui_kit::settings_number(ui, &mut app.preferences.joint_rotation_fine, 0.001..=180.0, 0.01);
+            });
+        });
+        ui_kit::text(ui, app.tr("joint_move.precision"), ui_kit::Text::Hint("joint_move"));
+    });
     // The Hole command's own settings, under its name.
     ui_kit::settings_section(ui, "create_hole", crate::i18n::tr_label("Create Hole"), |ui| {
         setting::hole_snaps(app, ui);

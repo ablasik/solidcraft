@@ -481,3 +481,31 @@ fn mesh_and_solid_body_rows_have_different_icons_and_tooltips() {
     assert_ne!(icon.master, crate::icon_svg::resolve("body").master);
     assert_eq!(icon.accent, crate::icon_svg::accent_index("mesh"));
 }
+
+#[test]
+fn browser_occurrence_clicks_fill_align_components_input() {
+    let mut h = Harness::new();
+    let comp = h.app.run("component.create", json!({"name": "Extrusion", "grounded": false})).unwrap()["component"].as_u64().unwrap();
+    h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 40, "body_name": "Beam"})).unwrap();
+    h.app.run("component.activate", json!({"component": "root"})).unwrap();
+    let second = h.app.run("occurrence.copy", json!({"component": comp, "translate": [30, 0, 0]})).unwrap()["occurrence"].as_u64().unwrap();
+
+    h.app.start("solid.align");
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.kind = crate::dialogs::Kind::Align { flip: false, components: true };
+        d.inputs[0].label = "Components";
+        d.active = 0;
+    }
+    h.settle();
+
+    let handle = format!("row:occurrence:{second}");
+    h.step(&json!({"click": {"handle": &handle}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[0].items, vec![Sel::Occurrence { path: vec![second] }]);
+    assert!(h.app.session.selection.is_empty(), "dialog picks do not change global selection");
+
+    // Clicking the same occurrence row again toggles it off in the multi-select Components input.
+    h.step(&json!({"click": {"handle": &handle}})).unwrap();
+    assert!(h.app.dialog.as_ref().unwrap().inputs[0].items.is_empty());
+}

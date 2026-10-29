@@ -1,0 +1,55 @@
+{
+  "en": {
+    "prefs.viewport_background": "Background",
+    "prefs.viewport_background_theme": "Theme's gradient",
+    "prefs.viewport_background_colour": "Color"
+  },
+  "en-GB": {
+    "prefs.viewport_background_colour": "Colour"
+  },
+  "fr": {
+    "prefs.viewport_background": "Fond",
+    "prefs.viewport_background_theme": "Dégradé du thème",
+    "prefs.viewport_background_colour": "Couleur"
+  },
+  "de": {
+    "prefs.viewport_background": "Hintergrund",
+    "prefs.viewport_background_theme": "Verlauf des Designs",
+    "prefs.viewport_background_colour": "Farbe"
+  },
+  "it": {
+    "prefs.viewport_background": "Sfondo",
+    "prefs.viewport_background_theme": "Sfumatura del tema",
+    "prefs.viewport_background_colour": "Colore"
+  },
+  "es": {
+    "prefs.viewport_background": "Fondo",
+    "prefs.viewport_background_theme": "Degradado del tema",
+    "prefs.viewport_background_colour": "Color"
+  },
+  "ar": {
+    "prefs.viewport_background": "الخلفية",
+    "prefs.viewport_background_theme": "تدرج السمة",
+    "prefs.viewport_background_colour": "لون"
+  },
+  "he": {
+    "prefs.viewport_background": "רקע",
+    "prefs.viewport_background_theme": "מעבר הצבעים של ערכת הנושא",
+    "prefs.viewport_background_colour": "צבע"
+  },
+  "ja": {
+    "prefs.viewport_background": "背景",
+    "prefs.viewport_background_theme": "テーマのグラデーション",
+    "prefs.viewport_background_colour": "色"
+  },
+  "vi": {
+    "prefs.viewport_background": "Nền",
+    "prefs.viewport_background_theme": "Dải màu của chủ đề",
+    "prefs.viewport_background_colour": "Màu"
+  },
+  "zh": {
+    "prefs.viewport_background": "背景",
+    "prefs.viewport_background_theme": "主题渐变",
+    "prefs.viewport_background_colour": "颜色"
+  }
+}

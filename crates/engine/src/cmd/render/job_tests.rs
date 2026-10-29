@@ -1071,7 +1071,7 @@ fn dielectric_preflight_and_start_resolve_refraction_without_broadening_boundari
             let status = handle.wait_timeout(std::time::Duration::from_secs(10)).unwrap();
             assert!(
                 matches!(status.progress.phase, solidcraft_render::job::Phase::Cancelled | solidcraft_render::job::Phase::Completed),
-                "phase {:?}, error {:?}",
+                "phase {:?}, error {:?}; full status {status:?}",
                 status.progress.phase,
                 status.error
             );

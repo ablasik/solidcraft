@@ -1,0 +1,32 @@
+{
+  "ar": {
+    "cmd.occurrence_align": "محاذاة النسخة",
+    "select components first": "حدد المكوّنات أولًا",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "هذا المكوّن داخل تجميع فرعي موضوع أكثر من مرة: محاذاته تحرّكه في كل موضع."
+  },
+  "en": {
+    "cmd.occurrence_align": "Align Occurrence",
+    "select components first": "select components first",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "This component is inside a subassembly placed more than once: aligning it moves it in every placement."
+  },
+  "he": {
+    "cmd.occurrence_align": "יישור מופע",
+    "select components first": "יש לבחור רכיבים תחילה",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "רכיב זה נמצא בתוך תת-הרכבה שהוצבה יותר מפעם אחת: יישורו יזיז אותו בכל הצבה."
+  },
+  "ja": {
+    "cmd.occurrence_align": "オカレンスを整列",
+    "select components first": "コンポーネントを先に選択してください",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "このコンポーネントは複数配置されたサブアセンブリ内にあります。整列すると、すべての配置で移動します。"
+  },
+  "vi": {
+    "cmd.occurrence_align": "Căn chỉnh bản thể",
+    "select components first": "hãy chọn các thành phần trước",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "Thành phần này nằm trong một cụm lắp phụ được đặt nhiều lần: căn chỉnh nó sẽ làm nó di chuyển ở mọi vị trí đặt."
+  },
+  "zh": {
+    "cmd.occurrence_align": "对齐实例",
+    "select components first": "请先选择组件",
+    "This component is inside a subassembly placed more than once: aligning it moves it in every placement.": "此组件位于多次放置的子装配体中：对齐它会使其在每个放置位置中都移动。"
+  }
+}

@@ -268,9 +268,10 @@ crate::dialog_descriptor::dialog_descriptors! {
                 cells: Vec<(Vec3, String, bool)>,
                 of: Vec<Sel>,
             },
-            /// Move bodies so a face or point meets another.
+            /// Move bodies or component occurrences so a face or point meets another.
             Align {
                 flip: bool,
+                components: bool,
             },
             /// Remove bodies from here on in the timeline.
             Remove,
@@ -844,14 +845,17 @@ impl Dialog {
             "solid.boundary_fill" => {
                 Dialog::new(Kind::BoundaryFill { operation: 0, cells: Vec::new(), of: Vec::new() }, vec![SelInput::new("Tools", BODIES, true)])
             }
-            "solid.align" => Dialog::new(
-                Kind::Align { flip: false },
-                vec![
-                    SelInput::new("Bodies", BODIES, true),
-                    SelInput::new("From", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
-                    SelInput::new("To", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
-                ],
-            ),
+            "solid.align" => {
+                let components = s.selection.iter().any(|x| matches!(x, Sel::Occurrence { .. }));
+                Dialog::new(
+                    Kind::Align { flip: false, components },
+                    vec![
+                        SelInput::new(if components { "Components" } else { "Bodies" }, BODIES, true),
+                        SelInput::new("From", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
+                        SelInput::new("To", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
+                    ],
+                )
+            }
             "solid.remove" => Dialog::new(Kind::Remove, vec![SelInput::new("Bodies", BODIES, true)]),
             "solid.pattern.path" => Dialog::new(
                 Kind::PathPattern { count: "4".into(), spacing: length_default(s, "20") },
@@ -1045,6 +1049,24 @@ impl Dialog {
         // text it edits, not its path.)
         let preselection: &[Sel] = if matches!(d.kind, Kind::Text(_)) { &[] } else { &s.selection };
         for sel in preselection {
+            if matches!(d.kind, Kind::Align { components: true, .. }) {
+                let occ = match sel {
+                    Sel::Occurrence { path } if !path.is_empty() => Some(Sel::Occurrence { path: path.clone() }),
+                    Sel::Body { name } => occurrence_path_of_body(s, name).map(|path| Sel::Occurrence { path }),
+                    Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => {
+                        occurrence_path_of_body(s, body).map(|path| Sel::Occurrence { path })
+                    }
+                    _ => None,
+                };
+                if let Some(occ) = occ {
+                    if let Some(inp) = d.inputs.first_mut()
+                        && !inp.items.contains(&occ)
+                    {
+                        inp.items.push(occ);
+                    }
+                    continue;
+                }
+            }
             let as_body = match sel {
                 Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(Sel::Body { name: body.to_string() }),
                 _ => None,
@@ -1330,6 +1352,11 @@ impl Dialog {
             && (matches!(self.kind, Kind::Move { .. }) || (matches!(self.kind, Kind::Construct { .. }) && inp.accept & selection::VERTICES != 0))
     }
 
+    /// Does the active input pick component occurrences rather than bodies?
+    pub(crate) fn takes_components(&self) -> bool {
+        matches!(self.kind, Kind::Align { components: true, .. }) && self.active == 0
+    }
+
     /// Everything the inputs hold (for highlighting).
     pub fn items(&self) -> Vec<Sel> {
         self.inputs.iter().flat_map(|i| i.items.iter().cloned()).collect()
@@ -1422,6 +1449,12 @@ impl Dialog {
             return Some(target);
         }
         let inp = self.active_input()?;
+        if self.takes_components() {
+            return match h {
+                Hit::Face { body, .. } => occurrence_path_of_body(s, body).map(|path| Sel::Occurrence { path }),
+                _ => None,
+            };
+        }
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
             return match h {
@@ -1609,6 +1642,7 @@ impl Dialog {
             self.profile_selection_changed = true;
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
+        let takes_components = self.takes_components();
         let is_fillet = matches!(self.kind, Kind::Fillet { .. }) && self.active == 0;
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
         if is_fillet && !add {
@@ -1619,6 +1653,19 @@ impl Dialog {
             inp.items.clear();
         }
         for x in sels {
+            if takes_components {
+                let occ = match x {
+                    Sel::Occurrence { path } if !path.is_empty() => Some(Sel::Occurrence { path }),
+                    Sel::Body { name } => occurrence_path_of_body(s, &name).map(|path| Sel::Occurrence { path }),
+                    _ => None,
+                };
+                if let Some(occ) = occ
+                    && !inp.items.contains(&occ)
+                {
+                    inp.items.push(occ);
+                }
+                continue;
+            }
             let x = if measure { crate::viewport::measurement_selection(s, &x) } else { x };
             if !fits(inp.accept, &x) {
                 continue;
@@ -2153,6 +2200,8 @@ fn hint(inp: &SelInput) -> &'static str {
         "click sketch curves"
     } else if a & (selection::POINTS | selection::SKETCH_POINTS) != 0 {
         "click sketch points"
+    } else if inp.label == "Components" {
+        "click components"
     } else if a & BODIES != 0 {
         "click bodies"
     } else {
@@ -2248,12 +2297,32 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
     }
 }
 
+fn align_object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
+    let Kind::Align { components, .. } = &mut d.kind else { return };
+    let Some(inp) = d.inputs.first_mut() else { return };
+    let cur = usize::from(*components);
+    let mut ty = cur;
+    choice_row(ui, "Object Type", "align_obj", &mut ty, &["Bodies", "Components"]);
+    if ty != cur {
+        *components = ty == 1;
+        inp.label = if *components { "Components" } else { "Bodies" };
+        let back = std::mem::take(&mut d.other_objects);
+        d.other_objects = std::mem::replace(&mut inp.items, back);
+        d.active = 0;
+        d.error = None;
+    }
+}
+
 /// Rows above the selection inputs: the pattern type and object type, the Hole placement (one
 /// face point, or sketch points).
 fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, app: &SolveApp) {
     let session = &app.session;
     if matches!(d.kind, Kind::Mirror) {
         object_type_row(d, ui);
+        return;
+    }
+    if matches!(d.kind, Kind::Align { .. }) {
+        align_object_type_row(d, ui);
         return;
     }
     if matches!(d.kind, Kind::Move { .. }) {
@@ -2320,6 +2389,65 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui, app: &SolveApp) {
     }
 }
 
+/// The placement a click on a placed component's world body picks (`None` for root-component
+/// bodies): the one directly under the active component, as the browser shows it. With the design
+/// active a part inside a subassembly picks the subassembly; with the subassembly (or the part)
+/// active it picks the part. A body outside the active component picks its top-level placement.
+pub(crate) fn occurrence_path_of_body(s: &Session, body: &str) -> Option<Vec<u64>> {
+    let st = s.world_state();
+    let b = st.body(body)?;
+    if s.doc.model_body_component(b) == 0 {
+        return None;
+    }
+    let model = s.model.state();
+    let (_, _, _, path, _) = s.placed_document().body_frames_with_source(&model).into_iter().find(|(world, ..)| world == body)?;
+    let depth = pick_depth(s, &path);
+    let path: Vec<u64> = path.into_iter().take(depth).collect();
+    (!path.is_empty()).then_some(path)
+}
+
+/// How many ids of a body's full placement `path` a component pick keeps (see
+/// [`occurrence_path_of_body`]).
+fn pick_depth(s: &Session, path: &[u64]) -> usize {
+    let context = match &s.active_occurrence_path {
+        Some(active) => Some(active.len()),
+        // An active component without an exact placement: the placement of it on this path.
+        None if s.active_component != 0 => {
+            path.iter().position(|id| s.doc.occurrences.iter().any(|o| o.id == *id && o.component == s.active_component)).map(|i| i + 1)
+        }
+        None => Some(0),
+    };
+    match context {
+        Some(n) if s.active_occurrence_path.as_deref().is_none_or(|active| path.starts_with(active)) => (n + 1).min(path.len()),
+        _ => 1,
+    }
+}
+
+/// The note Align shows when a picked component sits inside a subassembly placed more than once.
+const ALIGN_SHARED_WARNING: &str = "This component is inside a subassembly placed more than once: aligning it moves it in every placement.";
+
+/// Does aligning these Components picks move a placement shared by several subassembly copies?
+fn align_moves_shared(s: &Session, items: &[Sel]) -> bool {
+    occurrence_paths(s, items).iter().any(|path| s.occurrence_shared(path))
+}
+
+fn occurrence_paths(s: &Session, items: &[Sel]) -> Vec<Vec<u64>> {
+    let mut out = Vec::new();
+    for item in items {
+        let path = match item {
+            Sel::Occurrence { path } if !path.is_empty() => Some(path.clone()),
+            Sel::Body { name } => occurrence_path_of_body(s, name),
+            _ => None,
+        };
+        if let Some(p) = path
+            && !out.contains(&p)
+        {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// A picked item as its chip shows it. A round edge or face says what it stands for in `inp`:
 /// its axis in an axis input, a circle's centre in a point input. An origin plane goes by
 /// the name the preferences give it.
@@ -2340,6 +2468,7 @@ pub(crate) fn selection_label(s: &Session, names: crate::prefs::OriginPlaneNames
         // A point of the model: a vertex, or the centre a round edge stands for.
         Sel::Vertex { body, .. } if !body.is_empty() => format!("{body} · point"),
         Sel::Feature { id } => s.doc.feature(*id).map(|f| f.name.clone()).unwrap_or_else(|| format!("Feature {id}")),
+        Sel::Occurrence { path } => s.occurrence_placement(path).map(|p| p.name).unwrap_or_else(|_| "Component".into()),
         Sel::Vertex { body, point } if body.is_empty() => {
             let state = s.world_state();
             let p = s.active_sketch.and_then(|id| state.sketch(id)).map(|sk| sk.plane.to_local(*point)).unwrap_or_default();
@@ -4313,11 +4442,19 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "faces")?;
             ("face.delete", json!({"faces": face_points(0)}))
         }
-        Kind::Align { flip } => {
-            need(0, "bodies")?;
+        Kind::Align { flip, components } => {
+            need(0, if *components { "components" } else { "bodies" })?;
             need(1, "what to move from")?;
             need(2, "where to move it to")?;
-            let mut p = json!({"bodies": sels(d, 0).body_names(), "flip": flip});
+            let mut p = if *components {
+                let paths = occurrence_paths(s, sels(d, 0));
+                if paths.is_empty() {
+                    return Err("select components first".into());
+                }
+                json!({"paths": paths, "flip": flip})
+            } else {
+                json!({"bodies": sels(d, 0).body_names(), "flip": flip})
+            };
             for (i, key) in [(1, "from"), (2, "to")] {
                 let snap = d.extra.get(&format!("{key}_snap")).and_then(Value::as_str).unwrap_or("picked");
                 match (sels(d, i).first(), snap) {
@@ -4335,7 +4472,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     _ => return Err("pick faces, edges, vertices or planes".into()),
                 }
             }
-            ("solid.align", p)
+            (if *components { "occurrence.align" } else { "solid.align" }, p)
         }
         Kind::Remove => {
             need(0, "bodies")?;

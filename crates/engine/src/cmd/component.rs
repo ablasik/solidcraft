@@ -11,13 +11,17 @@ use solidcraft_geom::Vec3;
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_, string_list, vec3};
-use crate::schema::component::{EditInPlaceParams, EditInPlaceResult, FinishEditParams, FinishEditResult};
+use crate::schema::component::{
+    EditInPlaceParams, EditInPlaceResult, FinishEditParams, FinishEditResult, OccurrenceAlignParams, OccurrenceAlignResult,
+};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Session};
 
 const EDIT_IN_PLACE_CONTRACT: TypedContract<EditInPlaceParams> = TypedContract::new();
 const FINISH_EDIT_CONTRACT: TypedContract<FinishEditParams> = TypedContract::new();
 
+#[path = "component_align.rs"]
+mod align;
 #[path = "component_drag.rs"]
 mod drag;
 #[path = "component_matrix.rs"]
@@ -110,6 +114,16 @@ pub static COMMANDS: &[CommandSpec] = &[
          point - at (with any chain of joints it is in that is joined to nothing grounded) and captures its position; other pending \
          moves stay pending. Shared definitions move in all placements. Grounded parts and parts joints hold to something fixed are refused (joint.reach moves those)",
     ),
+    CommandSpec::new("occurrence.align", "Align Occurrence", crate::checked!("occurrence.align", align::align))
+        .icon("align")
+        .contract(&ALIGN_CONTRACT)
+        .output(output_schema_for::<OccurrenceAlignResult>)
+        .params(
+            "occurrence?, occurrences?, path?, paths?: placements to move together; from | from_face | from_plane; to | to_face | to_plane; \
+             flip?: bool; capture?: bool (default true); move_grounded?: bool (default false). Moves only the chosen occurrence placements in \
+             world coordinates without changing shared component geometry; a placement inside a component placed more than once moves in \
+             every placement of it, and the reply's `shared` lists those paths",
+        ),
     CommandSpec::new("occurrence.ground", "Ground", ground).icon("ground").params("occurrence; grounded?: bool (default toggles)"),
     CommandSpec::new("occurrence.reparent", "Move to Component", reparent::reparent).icon("move").params(
         "occurrence; path?: exact placement; parent: component id or name (0 or \"root\" for the design); parent_path?: the parent's \
@@ -119,6 +133,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("component.capture_position", "Capture Position", capture).at("SOLID", "POSITION").icon("capture").params("keeps pending occurrence moves"),
     CommandSpec::new("component.revert_position", "Revert Position", revert).at("SOLID", "POSITION").icon("revert").noundo().params("occurrences?: [ids] (default all); drops selected pending occurrence moves"),
 ];
+
+const ALIGN_CONTRACT: TypedContract<OccurrenceAlignParams> = TypedContract::new();
 
 fn key(v: Option<&Value>) -> Option<String> {
     match v {

@@ -12,6 +12,7 @@ pub const DOCUMENTED: &[&str] = &[
     "component.finish_edit",
     "face.delete",
     "material.assign",
+    "occurrence.move",
     "parameters.change",
     "pointcloud.insert",
     "solid.align",

@@ -932,6 +932,84 @@ fn corner_toasts_share_one_width_against_the_right_edge() {
     ToastPlace::Corner.publish(&ctx);
 }
 
+/// A pane at the right edge (an edge-docked dialog, the Assistant) takes the corner column's
+/// width with it: the stack moves, at full `TOAST_WIDTH`, to just left of the pane instead of
+/// being squeezed into the strip beside it (#8804, as the frame-rate readout does, #6755).
+#[test]
+fn corner_toasts_move_left_of_a_pane_at_the_right_edge_at_full_width() {
+    let t = Tokens::get();
+    let view = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0));
+    let axis = Rect::from_min_max(pos2(1600.0 - 8.0 - 110.0, 8.0), pos2(1592.0, 118.0));
+    let alone = corner_free(view, &[axis]);
+    assert!((alone.right() - (view.right() - t.space_8)).abs() < 0.01, "no pane keeps the corner: {alone:?}");
+    for width in [230.0, 280.0, 480.0, 760.0] {
+        let pane = Rect::from_min_max(pos2(1600.0 - 8.0 - width, 40.0), pos2(1592.0, 990.0));
+        let free = corner_free(view, &[axis, pane]);
+        assert!(free.width() >= TOAST_WIDTH - 0.5, "{width}: squeezed to {free:?}");
+        assert!(!free.intersects(pane), "{width}: {free:?} over {pane:?}");
+        assert!(free.right() <= pane.left() - t.space_8 + 0.01, "{width}: {free:?} not left of {pane:?}");
+        assert!(view.contains_rect(free), "{width}: {free:?} outside the view");
+    }
+    // Nothing is wide enough: a tall place left of the pane beats a full-width strip a line high.
+    let small = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0));
+    let axis = Rect::from_min_max(pos2(1000.0 - 8.0 - 110.0, 8.0), pos2(992.0, 118.0));
+    let pane = Rect::from_min_max(pos2(1000.0 - 8.0 - 760.0, 40.0), pos2(992.0, 990.0));
+    let free = corner_free(small, &[axis, pane]);
+    assert!(free.width() > 40.0 && free.height() >= 8.0 * t.space_8, "a strip too flat to show a toast: {free:?}");
+    assert!(!free.intersects(pane), "{free:?} over {pane:?}");
+    // Hostile input never panics or loops, and gives a finite rect or nothing.
+    let nan = Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(10.0, f32::NAN));
+    let inf = Rect::from_min_max(pos2(f32::NEG_INFINITY, f32::NEG_INFINITY), pos2(f32::INFINITY, f32::INFINITY));
+    let many: Vec<Rect> = (0..40).map(|i| Rect::from_min_max(pos2(i as f32 * 30.0, 0.0), pos2(i as f32 * 30.0 + 20.0, 1000.0))).collect();
+    let cases: [(Rect, Vec<Rect>); 5] = [
+        (view, vec![nan, inf]),
+        (view, vec![view]),
+        (Rect::from_min_size(Pos2::ZERO, vec2(1.0, 1.0)), vec![axis]),
+        (view, many),
+        (Rect::NOTHING, vec![axis]),
+    ];
+    for (v, obstacles) in &cases {
+        let free = corner_free(*v, obstacles);
+        assert!(!free.is_positive() || (free.is_finite() && v.contains_rect(free)), "{free:?} in {v:?}");
+    }
+}
+
+/// With a real dialog docked at the right edge, a long status toast stays `TOAST_WIDTH` wide left
+/// of it, clear of everything covered, and goes back to the corner when the dialog closes (#8804).
+#[test]
+fn corner_toast_keeps_its_width_beside_a_docked_dialog() {
+    use crate::scenario::rect_of;
+    let t = Tokens::get();
+    for mode in [LayoutMode::Floating, LayoutMode::Docked] {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.call("ui.set", json!({"layout": mode}));
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        let text = "Calibrating your 3D mouse fixes swapped or reversed axes and sets its speed and feel.";
+        h.app.start("parts.insert");
+        h.app.status = Some((text.into(), crate::now_ms(), true));
+        h.frames(3);
+        let dialog = h.app.viewport.dialog_rect.expect("the dialog is open");
+        let layout = h.app.viewport.layout.as_ref().unwrap();
+        let content = crate::shell::content_rect(&h.app, layout.viewport);
+        let toast = rect_of("toast").expect("the toast is drawn beside the dialog");
+        assert!((toast.width() - TOAST_WIDTH).abs() < 0.5, "{mode:?}: {toast:?} beside {dialog:?}");
+        assert!(!toast.intersects(dialog), "{mode:?}: {toast:?} over {dialog:?}");
+        assert!(content.contains_rect(toast), "{mode:?}: {toast:?} outside {content:?}");
+        for covered in crate::shell::covered_rects(&h.app) {
+            assert!(!toast.intersects(covered), "{mode:?}: {toast:?} under {covered:?}");
+        }
+        h.app.dialog = None;
+        h.app.status = Some((text.into(), crate::now_ms(), true));
+        h.frames(3);
+        let layout = h.app.viewport.layout.as_ref().unwrap();
+        let content = crate::shell::content_rect(&h.app, layout.viewport);
+        let toast = rect_of("toast").expect("the toast is drawn");
+        assert!((toast.right() - (content.right() - t.space_8)).abs() < 0.5, "{mode:?}: back in the corner: {toast:?} in {content:?}");
+        assert!((toast.width() - TOAST_WIDTH).abs() < 0.5, "{mode:?}: {toast:?}");
+    }
+}
+
 /// A dashed line reaching far off screen is cut to the view before it is dashed: epaint makes a
 /// shape per dash and steps along in f32, so one a trillion points long made billions of them,
 /// or never finished. A line in view is dashed exactly as before, and a cut one keeps its

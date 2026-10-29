@@ -227,6 +227,8 @@ pub struct MenuState {
     pub rename: Option<Rename>,
     /// A delete waiting for its confirmation (it takes or breaks other features).
     pub confirm: Option<crate::delete::Pending>,
+    /// A selected part has no free joint value for the explicit assembly Move command.
+    pub joint_move_warning: Option<String>,
     /// Identical copies Extract to File found, waiting to be linked too.
     pub link_copies: Option<crate::linked_source::Copies>,
     /// The Properties window: title and measurements.
@@ -607,6 +609,9 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "construct.plane.offset", "Offset Plane"));
         v.push(cmd(app, "solid.shell", "Shell"));
+        if crate::joint_handles::selected_occurrence(app).is_some() {
+            v.push(cmd(app, "occurrence.move", "Move"));
+        }
         v.push(act("ui.editFeature", "Edit Feature", "edit").with(json!({ "feature": feature })).on(feature.is_some()));
         v.push(act("ui.editSketch", "Edit Profile Sketch", "sketch").with(json!({ "sketch": sketch })).on(sketch.is_some()));
         let planar =
@@ -1491,6 +1496,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.moveOccurrence" => {
             if let Some(o) = id_of(&p, "occurrence") {
+                if crate::joint_handles::begin(app, o) {
+                    return;
+                }
                 let mut movement = crate::browser::OccMove::new(o);
                 movement.had_pending = app.session.pending_moves.contains_key(&o);
                 movement.path = p.get("path").and_then(Value::as_array).map(|p| p.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();

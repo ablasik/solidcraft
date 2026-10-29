@@ -1507,3 +1507,134 @@ fn a_pattern_of_another_components_body_follows_its_own_component_when_moved() {
     fresh.evaluate(&s.doc);
     assert_eq!(boxes(&s.model.state()), boxes(&fresh.state()), "the kept model against a fresh evaluation");
 }
+
+#[test]
+fn occurrence_align_moves_only_selected_instance_including_90_degree_face_mate() {
+    let mut s = Session::default();
+    let c = run(&mut s, "component.create", json!({"name": "Extrusion"}));
+    let (comp, first) = (c["component"].as_u64().unwrap(), c["occurrence"].as_u64().unwrap());
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 60, "body_name": "Beam"}));
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    let second = run(&mut s, "occurrence.copy", json!({"component": comp, "translate": [40, 0, 0]}))["occurrence"].as_u64().unwrap();
+
+    // Activate the second instance (the user's exact workflow) and align its bottom face (-Z at
+    // [45, 5, 0]) onto the first instance's +X side face ([10, 5, 30]): instance 2 turns 90 deg
+    // to extend along +X, while instance 1 remains untouched.
+    run(&mut s, "component.activate", json!({"component": comp, "occurrence": second, "path": [second]}));
+    let features_before = s.doc.features.len();
+    run(
+        &mut s,
+        "occurrence.align",
+        json!({
+            "occurrence": second,
+            "path": [second],
+            "from_face": [45, 5, 0],
+            "to_face": [10, 5, 30]
+        }),
+    );
+    assert_eq!(s.doc.features.len(), features_before, "aligning an occurrence must not add a body feature to the shared component");
+
+    let st = s.world_state();
+    let b1 = st.body("Beam").unwrap().mesh().bounds();
+    assert!((b1.min.x - 0.0).abs() < 1e-5 && (b1.max.x - 10.0).abs() < 1e-5, "{b1:?}");
+    assert!((b1.min.y - 0.0).abs() < 1e-5 && (b1.max.y - 10.0).abs() < 1e-5, "{b1:?}");
+    assert!((b1.min.z - 0.0).abs() < 1e-5 && (b1.max.z - 60.0).abs() < 1e-5, "{b1:?}");
+
+    let b2 = st.body("Beam (Extrusion:2)").unwrap().mesh().bounds();
+    assert!((b2.min.x - 10.0).abs() < 1e-5 && (b2.max.x - 70.0).abs() < 1e-5, "{b2:?}");
+    assert!((b2.min.y - 0.0).abs() < 1e-5 && (b2.max.y - 10.0).abs() < 1e-5, "{b2:?}");
+    assert!((b2.min.z - 25.0).abs() < 1e-5 && (b2.max.z - 35.0).abs() < 1e-5, "{b2:?}");
+
+    // Grounded first part refuses without move_grounded, leaving both placements untouched.
+    let doc_before = s.doc.clone();
+    let err = s.execute("occurrence.align", &json!({"occurrence": first, "from": [0, 0, 0], "to": [5, 0, 0]})).unwrap_err().to_string();
+    assert!(err.contains("grounded"), "{err}");
+    assert_eq!(s.doc, doc_before);
+}
+
+#[test]
+fn occurrence_align_supports_snaps_planes_flip_nested_paths_and_pending_capture() {
+    let mut s = Session::default();
+    let (_, parent) = created(&mut s, "Frame");
+    run(&mut s, "occurrence.move", json!({"occurrence": parent, "axis": [0, 0, 1], "angle": "90 deg"}));
+    let (_, child) = created(&mut s, "Bracket");
+    run(&mut s, "solid.box", json!({"length": 10, "width": 20, "height": 4, "corner": [5, 5, 10], "body_name": "Plate"}));
+    run(&mut s, "component.activate", json!({"component": "root"}));
+
+    // Align the child under a 90-deg rotated parent onto XY plane along plane normal only (capture: false).
+    let before = s.world_state().body("Plate").unwrap().mesh().bounds();
+    run(
+        &mut s,
+        "occurrence.align",
+        json!({
+            "paths": [[parent, child]],
+            "from_face": [before.center().x, before.center().y, 10.0],
+            "to_plane": "XY",
+            "capture": false
+        }),
+    );
+    let moved = s.world_state().body("Plate").unwrap().mesh().bounds();
+    assert!((moved.min.z - 0.0).abs() < 1e-5 && (moved.max.z - 4.0).abs() < 1e-5, "{moved:?}");
+    assert!((moved.center().x - before.center().x).abs() < 1e-5 && (moved.center().y - before.center().y).abs() < 1e-5, "{moved:?}");
+
+    // Revert drops the pending alignment; re-align with capture: true and vertex snap to origin.
+    run(&mut s, "component.revert_position", json!({}));
+    assert!((s.world_state().body("Plate").unwrap().mesh().bounds().min.z - 10.0).abs() < 1e-5);
+
+    run(
+        &mut s,
+        "occurrence.align",
+        json!({
+            "occurrence": child,
+            "path": [parent, child],
+            "from": {"snap": "vertex", "at": [before.min.x, before.min.y, before.min.z]},
+            "to": "origin"
+        }),
+    );
+    let at_origin = s.world_state().body("Plate").unwrap().mesh().bounds();
+    assert!(at_origin.min.dist(solidcraft_geom::Vec3::ZERO) < 1e-5, "{at_origin:?}");
+
+    // Hostile / invalid parameters never panic.
+    for bad_params in [
+        json!({}),
+        json!({"occurrence": 999999, "from": [0, 0, 0], "to": [1, 0, 0]}),
+        json!({"paths": [], "from": [0, 0, 0], "to": [1, 0, 0]}),
+        json!({"occurrence": child, "path": [parent, child], "from": [1e12, 0, 0], "to": [0, 0, 0]}),
+        json!({"occurrence": child, "path": [parent, child], "from": {"snap": "bogus", "at": [0, 0, 0]}, "to": [0, 0, 0]}),
+        json!({"occurrence": child, "path": [parent, child], "from_plane": "XY", "from": [0, 0, 0], "to": [0, 0, 1]}),
+    ] {
+        assert!(s.execute("occurrence.align", &bad_params).is_err(), "{bad_params}");
+    }
+}
+
+#[test]
+fn occurrence_align_keeps_every_pick_and_reports_shared_definitions() {
+    // Frame holds Bracket and is placed twice (A and B). Aligning [A, Bracket] together with B
+    // must move both picks: B is another placement of Frame, not an ancestor of [A, Bracket].
+    let mut s = Session::default();
+    let (frame, a) = created(&mut s, "Frame");
+    let (_, bracket) = created(&mut s, "Bracket");
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 4, "body_name": "Plate"}));
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    let b = run(&mut s, "occurrence.copy", json!({"component": frame, "translate": [0, 50, 0]}))["occurrence"].as_u64().unwrap();
+    let origin = |s: &Session, path: &[u64]| solidcraft_doc::apply_point(&s.occurrence_placement(path).unwrap().world, solidcraft_geom::Vec3::ZERO);
+    let (a0, ab0, b0, bb0) = (origin(&s, &[a]), origin(&s, &[a, bracket]), origin(&s, &[b]), origin(&s, &[b, bracket]));
+
+    assert!(!s.occurrence_shared(&[a]) && !s.occurrence_shared(&[b]), "top-level placements are their own");
+    assert!(s.occurrence_shared(&[a, bracket]) && s.occurrence_shared(&[b, bracket]), "Bracket's placement lives in Frame, placed twice");
+
+    let r = run(&mut s, "occurrence.align", json!({"paths": [[a, bracket], [b]], "from": [0, 0, 0], "to": [5, 0, 0]}));
+    assert_eq!(r["paths"], json!([[a, bracket], [b]]), "{r}");
+    assert_eq!(r["shared"], json!([[a, bracket]]), "{r}");
+
+    let shift = solidcraft_geom::Vec3::new(5.0, 0.0, 0.0);
+    assert!(origin(&s, &[a]).dist(a0) < 1e-9, "A itself stays");
+    assert!(origin(&s, &[a, bracket]).dist(ab0 + shift) < 1e-9, "the picked Bracket moves");
+    assert!(origin(&s, &[b]).dist(b0 + shift) < 1e-9, "B moves");
+    // B's Bracket moves with B and, sharing Frame's definition, with the other pick too.
+    assert!(origin(&s, &[b, bracket]).dist(bb0 + shift + shift) < 1e-9);
+
+    // A top-level-only alignment reports nothing shared.
+    let r = run(&mut s, "occurrence.align", json!({"paths": [[b]], "from": [0, 0, 0], "to": [1, 0, 0]}));
+    assert!(r.get("shared").is_none(), "{r}");
+}

@@ -83,6 +83,7 @@ const MOVES: &[&str] = &[
     "joint.rack_pinion",
     "joint.screw",
     "joint.cam",
+    "occurrence.align",
     "parts.insert",
     "parts.fastener",
 ];

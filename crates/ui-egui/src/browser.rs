@@ -271,7 +271,7 @@ enum Take {
 /// ([`pick_from_browser`]). Returns false when that input does not take bodies, so the click
 /// keeps its ordinary meaning. A Shift range only adds; a group or component toggles.
 fn offer_bodies(app: &mut SolveApp, names: &[String], take: Take) -> bool {
-    if !dialog_takes_body(app) {
+    if !dialog_takes_body(app) || app.dialog.as_ref().is_some_and(|d| d.takes_components()) {
         return false;
     }
     let world = app.session.world_state();
@@ -1502,16 +1502,22 @@ fn occurrence_rows_inner(
     if r.eye {
         let _ = app.run("browser.visibility", json!({"visible": app.session.occurrence_hidden(path), "paths": [path]}));
     }
+    let takes_components = app.dialog.as_ref().is_some_and(|d| d.takes_components());
     let params = json!({"component": placement.component, "occurrence": placement.occurrence, "path": path});
     if r.radio {
         let _ = app.run("component.activate", params);
-    } else if r.double && !app.session.doc.parts.contains_key(&placement.component) {
+    } else if r.double && !takes_components && !app.session.doc.parts.contains_key(&placement.component) {
         crate::edit_in_place::double_click_component(app, params);
     }
-    if r.double && app.session.doc.parts.contains_key(&placement.component) {
+    if r.double && !takes_components && app.session.doc.parts.contains_key(&placement.component) {
         crate::dialogs_part_size::open(app, placement.component);
     }
-    if r.clicked && !r.double {
+    if r.clicked && takes_components {
+        if let Some(mut d) = app.dialog.take() {
+            d.pick(&app.session, Sel::Occurrence { path: path.to_vec() });
+            app.dialog = Some(d);
+        }
+    } else if r.clicked && !r.double {
         let names = app.session.occurrence_bodies(path, true).unwrap_or_default();
         if !offer_bodies(app, &names, Take::Toggle) {
             click_select(app, ui, key.clone(), Some(Sel::Occurrence { path: path.to_vec() }));
@@ -2013,11 +2019,18 @@ fn dialog_takes_body(app: &SolveApp) -> bool {
 /// Browser picks go only into compatible active dialog inputs. Outside a dialog, planes and
 /// axes become the selection; body rows use the ordinary Ctrl/Shift-aware selection path.
 fn pick_from_browser(app: &mut SolveApp, x: Sel) {
-    if let Sel::Body { .. } = &x
+    if let Sel::Body { name } = &x
         && dialog_takes_body(app)
         && let Some(mut d) = app.dialog.take()
     {
-        d.pick(&app.session, x);
+        let pick = if d.takes_components() {
+            crate::dialogs::occurrence_path_of_body(&app.session, name).map(|path| Sel::Occurrence { path })
+        } else {
+            Some(x)
+        };
+        if let Some(pick) = pick {
+            d.pick(&app.session, pick);
+        }
         app.dialog = Some(d);
         return;
     }
@@ -2915,7 +2928,13 @@ pub fn needs_capture(app: &SolveApp, what: &str) -> bool {
     !app.session.pending_moves.is_empty()
         && !matches!(
             what,
-            "component.capture_position" | "component.revert_position" | "occurrence.move" | "occurrence.drag" | "edit.undo" | "edit.redo"
+            "component.capture_position"
+                | "component.revert_position"
+                | "occurrence.move"
+                | "occurrence.align"
+                | "occurrence.drag"
+                | "edit.undo"
+                | "edit.redo"
         )
         && app.tree.capture_prompt.is_none()
 }

@@ -412,12 +412,17 @@ pub fn request_scope(app: &SolveApp, params: &Value) -> Result<Option<vfs::PathS
 /// mode, the section the viewport shows: an open Section Analysis dialog's preview, a sketch's
 /// Slice), with the grid and the origin's axes as `guides` says.
 pub(crate) fn view_scene(app: &SolveApp, guides: solidcraft_engine::view::Guides) -> solidcraft_engine::render::Scene {
+    let mut palette = crate::viewport::scene_palette(app.viewport_dark(), app.preferences.color_vision);
+    // The view's own background colour (#7688).
+    if let Some([r, g, b]) = app.preferences.viewport_background {
+        palette.background = (solidcraft_engine::render::Rgb(r, g, b), solidcraft_engine::render::Rgb(r, g, b));
+    }
     let mut scene = solidcraft_engine::view::scene_with_thread_markings(
         &app.session,
         &app.cam,
         crate::viewport::section_plane(app),
         solidcraft_engine::view::world_curve_parts,
-        &crate::viewport::scene_palette(app.viewport_dark(), app.preferences.color_vision),
+        &palette,
         guides,
         app.preferences.cosmetic_threads,
     );

@@ -45,6 +45,18 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     app.preferences.viewport_theme = *view;
                 }
             });
+            // The view's background: the theme's gradient, or one colour of the user's (#7688).
+            let label = app.tr("prefs.viewport_background");
+            ui_kit::row(ui, label, |ui| {
+                let labels = [crate::i18n::tr("prefs.viewport_background_theme"), crate::i18n::tr("prefs.viewport_background_colour")];
+                let mut selected = usize::from(app.preferences.viewport_background.is_some());
+                if ui_kit::settings_segments(ui, label, &mut selected, &labels) {
+                    app.preferences.viewport_background = (selected == 1).then_some([255, 255, 255]);
+                }
+                if let Some(colour) = &mut app.preferences.viewport_background {
+                    ui_kit::color_field(ui, colour);
+                }
+            });
             // The logo in the theme's own logo colours or in its accent.
             let label = app.tr("prefs.logo");
             ui_kit::row(ui, label, |ui| {
