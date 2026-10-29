@@ -290,7 +290,7 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
                 s.visibility.hidden_folders.push(k.clone());
             }
         }
-        s.revision += 1;
+        s.refresh_display();
         return Ok(json!({"visible":visible,"changed":keys.len(),"visibility":s.visibility}));
     }
     if let Some(value) = p.get("paths") {
@@ -341,7 +341,7 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
             root_bodies.extend(ancestor_bodies);
             s.visibility.hidden_occurrences = hidden;
             s.visibility.hidden_bodies = root_bodies;
-            s.revision += 1;
+            s.refresh_display();
             return Ok(json!({"visible":true,"isolated":paths,"visibility":s.visibility}));
         }
         for path in &paths {
@@ -350,7 +350,7 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
                 s.visibility.hidden_occurrences.push(path.clone());
             }
         }
-        s.revision += 1;
+        s.refresh_display();
         return Ok(json!({"visible":visible,"changed":paths.len(),"visibility":s.visibility}));
     }
     let items: Vec<Shown> = match (str_(p, "folder"), p.get("items")) {
@@ -462,7 +462,7 @@ fn visibility(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    s.revision += 1;
+    s.refresh_display();
     Ok(json!({ "visible": visible, "changed": items.len(), "visibility": s.visibility }))
 }
 

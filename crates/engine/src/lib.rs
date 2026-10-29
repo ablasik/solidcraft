@@ -294,6 +294,7 @@ pub struct ComputedCommands {
     source: Session,
     computed: Session,
     steps: Vec<ComputedCommand>,
+    editor_original: Option<Arc<Document>>,
 }
 
 struct ComputedCommand {
@@ -360,6 +361,9 @@ pub struct Session {
     pub log: Vec<String>,
     /// Increments on every document change (views use it to refresh).
     pub revision: u64,
+    /// Revision increments caused only by visibility. Comparing both counters proves that
+    /// every intervening increment left an editor's document and model untouched.
+    visibility_revision: u64,
     /// This open design's id for programs that follow it (`document.revision`, #6646): kept
     /// while it stays open, through saves and renames; another for each design started or opened.
     pub document_id: String,
@@ -568,6 +572,7 @@ impl Session {
             open_preview: None,
             log: Vec::new(),
             revision: 1,
+            visibility_revision: 0,
             document_id: cmd::inspect::new_document_id(),
             followed: None,
             auto_project: true,
@@ -1069,6 +1074,7 @@ impl Session {
     /// moves (the visibility caches are keyed on it) and the viewport redraws.
     pub(crate) fn refresh_display(&mut self) {
         self.revision += 1;
+        self.visibility_revision += 1;
     }
 
     /// Show the sketch a live frame changed, leaving the features after it as they were last
@@ -1409,6 +1415,7 @@ impl Session {
             saved: self.saved.clone(),
             log: Vec::new(),
             revision: self.revision,
+            visibility_revision: self.visibility_revision,
             document_id: self.document_id.clone(),
             followed: None,
             auto_project: self.auto_project,
@@ -1477,6 +1484,7 @@ impl Session {
         marker: Option<Option<usize>>,
         original: Option<Session>,
     ) -> Result<ComputedCommands> {
+        let editor_original = original.as_ref().map(|session| session.doc.clone());
         let mut computed = self.scratch();
         let mut steps = Vec::new();
         if let Some(marker) = marker {
@@ -1513,15 +1521,26 @@ impl Session {
         }
         // What the source was primed with stays out of the session that is adopted (#6901).
         computed.unprime();
-        Ok(ComputedCommands { source: self, computed, steps })
+        Ok(ComputedCommands { source: self, computed, steps, editor_original })
     }
 
     /// Adopt evaluated commands only if their document and authoring context are still current.
     /// No model evaluation occurs here. Rejected or cancelled work never enters the journal.
-    pub fn accept_commands(&mut self, prepared: ComputedCommands) -> Result<Vec<(String, Value)>> {
+    pub fn accept_commands(&mut self, mut prepared: ComputedCommands) -> Result<Vec<(String, Value)>> {
         if !prepared.is_current(self) {
             return Err(EngineError::Other("the design changed while the feature was computing".into()));
         }
+        if let Some(original) = &prepared.editor_original {
+            self.restore_editor_history(&prepared.source.doc, original);
+        }
+        // Visibility may have changed while the worker ran. Undoing its first command must
+        // restore that current view, including sketches, folders and joint glyphs.
+        if let Some(before) = prepared.computed.undo.first_mut() {
+            before.visibility.clone_from(&self.visibility);
+        }
+        // Only joints newly hidden by the computation (e.g. an import's rigid group) join
+        // the live view. A joint shown meanwhile must not inherit the worker's old hide.
+        prepared.computed.visibility.hidden_joints.retain(|joint| !prepared.source.visibility.hidden_joints.contains(joint));
         for step in &prepared.steps {
             crash::accepted_command(self, &step.before, &step.after, &step.id, &step.params, step.changed);
         }
@@ -1532,7 +1551,10 @@ impl Session {
 
     fn same_document_context(&self, source: &Session) -> bool {
         Arc::ptr_eq(&self.doc, &source.doc)
-            && self.revision == source.revision
+            && self
+                .revision
+                .checked_sub(source.revision)
+                .is_some_and(|delta| self.visibility_revision.checked_sub(source.visibility_revision) == Some(delta))
             && self.active_sketch == source.active_sketch
             && self.active_component == source.active_component
             && self.active_occurrence_path == source.active_occurrence_path
@@ -1547,6 +1569,7 @@ impl Session {
         }
         let params = original.doc.marker.map(|position| serde_json::json!({"position":position})).unwrap_or_else(|| serde_json::json!({}));
         crash::accepted_command(self, &self.doc, &original.doc, "timeline.roll_to", &params, !Arc::ptr_eq(&self.doc, &original.doc));
+        self.restore_editor_history(&source.doc, &original.doc);
         let undo = std::mem::take(&mut self.undo);
         let redo = std::mem::take(&mut self.redo);
         let selection = std::mem::take(&mut self.selection);
@@ -1556,6 +1579,16 @@ impl Session {
         self.redo = redo;
         self.selection = selection;
         Ok(())
+    }
+
+    /// Hide/show steps taken in an editor belong to the complete design, not its temporary
+    /// rollback. Keep each step's visibility and ordering, on both sides of the history.
+    fn restore_editor_history(&mut self, source: &Arc<Document>, original: &Arc<Document>) {
+        for snapshot in self.undo.iter_mut().chain(&mut self.redo) {
+            if Arc::ptr_eq(&snapshot.doc, source) {
+                snapshot.doc = original.clone();
+            }
+        }
     }
 
     /// Refresh UI caches when adopting a session or switching tabs, without discarding its

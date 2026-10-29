@@ -99,6 +99,10 @@ pub(crate) struct RawWheel {
     zoom: f32,
     /// Trackpad point input, routed like the wheel (zooms when panning is off).
     point_zoom: f32,
+    /// Vertical scroll with the chosen modifier alone (always zooms).
+    modifier_zoom: f32,
+    /// Modifier input was consumed, including horizontal-only or zero-sum scroll.
+    modifier_scroll: bool,
     /// Bracketed two-finger scroll in points (pans when panning is on).
     pan: egui::Vec2,
     shift_pan: egui::Vec2,
@@ -173,13 +177,24 @@ pub(crate) fn immediate_wheel(
     gesture: &mut bool,
     coast: &mut TrackpadCoast,
     shift_orbits: bool,
+    zoom_modifier: Option<egui::Modifiers>,
 ) -> RawWheel {
-    let mut out = RawWheel { zoom: 0.0, point_zoom: 0.0, pan: egui::Vec2::ZERO, shift_pan: egui::Vec2::ZERO, mouse_pan: egui::Vec2::ZERO };
+    let mut out = RawWheel {
+        zoom: 0.0,
+        point_zoom: 0.0,
+        modifier_zoom: 0.0,
+        modifier_scroll: false,
+        pan: egui::Vec2::ZERO,
+        shift_pan: egui::Vec2::ZERO,
+        mouse_pan: egui::Vec2::ZERO,
+    };
     for event in &input.events {
         let egui::Event::MouseWheel { unit, delta, modifiers, phase } = event else { continue };
-        if modifiers.matches_any(options.zoom_modifier) {
+        let modifier_zoom = claims_scroll(*modifiers, zoom_modifier);
+        if !modifier_zoom && modifiers.matches_any(options.zoom_modifier) {
             continue;
         }
+        out.modifier_scroll |= modifier_zoom;
         let point = matches!(unit, egui::MouseWheelUnit::Point);
         match phase {
             egui::TouchPhase::Start => {
@@ -207,6 +222,13 @@ pub(crate) fn immediate_wheel(
             egui::MouseWheelUnit::Line => *delta * options.line_scroll_speed,
             egui::MouseWheelUnit::Page => *delta * page_height,
         };
+        if !points.is_finite() {
+            continue;
+        }
+        if modifier_zoom {
+            out.modifier_zoom += points.y;
+            continue;
+        }
         let shift = modifiers.shift && !modifiers.ctrl && !modifiers.command && !modifiers.alt;
         if point && *gesture && !coast.moves(shift) && shift_orbits {
             continue;
@@ -233,12 +255,18 @@ pub(crate) fn immediate_wheel(
     out
 }
 
+/// Whether the chosen trackpad zoom modifier (Preferences › Navigation, #8322) claims a wheel
+/// event: that key held alone. egui aliases Ctrl/Command on Windows/Linux; macOS can hold both.
+pub(crate) fn claims_scroll(modifiers: egui::Modifiers, zoom_modifier: Option<egui::Modifiers>) -> bool {
+    zoom_modifier.is_some_and(|chosen| modifiers.matches_exact(chosen) && !(modifiers.mac_cmd && modifiers.ctrl))
+}
+
 /// Combined pinch-to-zoom factor for one frame (1 = no pinch input).
 ///
 /// Some input paths deliver pinch as a zoom-modified wheel instead of `Event::Zoom`.
 /// Read the raw movement that [`immediate_wheel`] leaves to the zoom modifier, without
 /// replaying egui's smoothed zoom delta on later frames. Gesture boundaries carry no movement.
-pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions, page_height: f32) -> f32 {
+pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions, page_height: f32, zoom_modifier: Option<egui::Modifiers>) -> f32 {
     let mut factor = 1.0;
     for event in &input.events {
         match event {
@@ -247,7 +275,10 @@ pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions
                     factor *= f;
                 }
             }
-            egui::Event::MouseWheel { unit, delta, modifiers, phase: egui::TouchPhase::Move } if modifiers.matches_any(options.zoom_modifier) => {
+            // A wheel the chosen zoom modifier already turns into zoom is not also a pinch.
+            egui::Event::MouseWheel { unit, delta, modifiers, phase: egui::TouchPhase::Move }
+                if modifiers.matches_any(options.zoom_modifier) && !claims_scroll(*modifiers, zoom_modifier) =>
+            {
                 let points = match unit {
                     egui::MouseWheelUnit::Point => *delta,
                     egui::MouseWheelUnit::Line => *delta * options.line_scroll_speed,
@@ -515,8 +546,15 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     let options = ui.ctx().options(|o| o.input_options);
     let page_height = ui.ctx().viewport_rect().height();
     let trackpad_orbit = trackpad_pan && app.preferences.nav == "fusion";
+    let zoom_modifier = app.preferences.trackpad_zoom_modifier.modifiers();
     let viewport = &mut app.viewport;
-    let raw = ui.input(|i| immediate_wheel(i, options, page_height, &mut viewport.trackpad_gesture, &mut viewport.trackpad_coast, trackpad_orbit));
+    let raw = ui.input(|i| {
+        immediate_wheel(i, options, page_height, &mut viewport.trackpad_gesture, &mut viewport.trackpad_coast, trackpad_orbit, zoom_modifier)
+    });
+    if raw.modifier_scroll {
+        // Apply modifier scroll once, without egui's scroll smoothing or its tail.
+        app.viewport.wheel_zoom_raw_until_idle = true;
+    }
     if trackpad_pan && (raw.pan != egui::Vec2::ZERO || raw.shift_pan != egui::Vec2::ZERO) {
         // Swallow egui's smoothing tail while the trackpad runs (a wheel-only
         // tail ends the moment trackpad input starts; mixed input is rare).
@@ -535,9 +573,9 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         raw.zoom + if trackpad_pan { 0.0 } else { raw.point_zoom }
     } else {
         scroll
-    };
+    } + raw.modifier_zoom;
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
-    let pinch = ui.input(|i| pinch_factor(i, options, page_height));
+    let pinch = ui.input(|i| pinch_factor(i, options, page_height, zoom_modifier));
     let h = rect.height().max(1.0) as f64;
     if inside && pinch != 1.0 {
         app.viewport.orbit_free = None;
@@ -555,7 +593,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             app.cam.zoom_at(f, anchor);
         }
     }
-    if inside && scroll != 0.0 {
+    if inside && scroll.is_finite() && scroll != 0.0 {
         app.viewport.orbit_free = None;
         let f = (-scroll as f64 * 0.0015 * crate::prefs::zoom_sign(app)).exp();
         let anchor = zoom_anchor(app, rect, hover, caps.orbit);
@@ -571,7 +609,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         }
     }
     // Two-finger scroll pans the model with the fingers.
-    if inside && pan != egui::Vec2::ZERO {
+    if inside && pan.is_finite() && pan != egui::Vec2::ZERO {
         app.viewport.orbit_free = None;
         if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
             camera_motion(app, rect, json!({"motion":"pan","delta":[pan.x,pan.y]}));
@@ -1045,7 +1083,66 @@ mod tests {
         let events = raw.events.clone();
         let mut input = egui::InputState::default();
         input.events = raw.events;
-        (super::immediate_wheel(&input, egui::InputOptions::default(), 600.0, gesture, &mut Default::default(), false), events)
+        (
+            super::immediate_wheel(
+                &input,
+                egui::InputOptions::default(),
+                600.0,
+                gesture,
+                &mut Default::default(),
+                false,
+                Some(egui::Modifiers::COMMAND),
+            ),
+            events,
+        )
+    }
+
+    #[test]
+    fn modifier_zoom_routes_only_the_chosen_key_and_vertical_points() {
+        use egui::{Modifiers as M, MouseWheelUnit as U, TouchPhase as P, vec2};
+        let options = egui::InputOptions::default();
+        for chosen in [Some(M::COMMAND), Some(M::ALT), Some(M::CTRL), None] {
+            for held in [
+                M::COMMAND,
+                M::CTRL | M::COMMAND,
+                M::MAC_CMD | M::COMMAND,
+                M::CTRL,
+                M::ALT,
+                M::SHIFT,
+                M::COMMAND | M::SHIFT,
+                M::COMMAND | M::ALT,
+                M::MAC_CMD | M::COMMAND | M::CTRL,
+                M::ALT | M::SHIFT,
+            ] {
+                for unit in [U::Point, U::Line, U::Page] {
+                    for bracket in [false, true] {
+                        let event = |phase| egui::Event::MouseWheel { unit, delta: vec2(8.0, 12.0), modifiers: held, phase };
+                        let mut input = egui::InputState::default();
+                        input.events = if bracket { vec![event(P::Start), event(P::Move), event(P::End)] } else { vec![event(P::Move)] };
+                        let raw = super::immediate_wheel(&input, options, 600.0, &mut false, &mut Default::default(), true, chosen);
+                        let expected = match chosen {
+                            Some(m) if m == M::COMMAND => [M::COMMAND, M::CTRL | M::COMMAND, M::MAC_CMD | M::COMMAND].contains(&held),
+                            Some(m) if m == M::CTRL => [M::CTRL, M::CTRL | M::COMMAND].contains(&held),
+                            Some(m) if m == M::ALT => held == M::ALT,
+                            _ => false,
+                        };
+                        let scale = match unit {
+                            U::Point => 1.0,
+                            U::Line => options.line_scroll_speed,
+                            U::Page => 600.0,
+                        };
+                        assert_eq!(raw.modifier_zoom, if expected { 12.0 * scale } else { 0.0 }, "chosen={chosen:?}, held={held:?}");
+                        if expected {
+                            assert_eq!(raw.pan, egui::Vec2::ZERO);
+                            assert_eq!(raw.mouse_pan, egui::Vec2::ZERO);
+                            assert_eq!(raw.zoom, 0.0);
+                            assert_eq!(raw.point_zoom, 0.0);
+                            assert_eq!(raw.shift_pan, egui::Vec2::ZERO);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1111,7 +1208,7 @@ mod tests {
         assert_eq!(events.last(), Some(&egui::Event::Zoom(1.1)));
         let mut input = egui::InputState::default();
         input.events = events;
-        assert!((super::pinch_factor(&input, egui::InputOptions::default(), 600.0) - 1.1).abs() < 1e-6);
+        assert!((super::pinch_factor(&input, egui::InputOptions::default(), 600.0, None) - 1.1).abs() < 1e-6);
     }
 
     #[test]
@@ -1795,7 +1892,7 @@ mod tests {
                 modifiers: egui::Modifiers::CTRL,
                 phase,
             }];
-            assert_eq!(super::pinch_factor(&input, egui::InputOptions::default(), 600.0), 1.0, "{phase:?} is a gesture boundary, not movement");
+            assert_eq!(super::pinch_factor(&input, egui::InputOptions::default(), 600.0, None), 1.0, "{phase:?} is a gesture boundary, not movement");
         }
     }
 
@@ -1808,7 +1905,7 @@ mod tests {
         let factor = |events: Vec<Event>| {
             let mut input = egui::InputState::default();
             input.events = events;
-            super::pinch_factor(&input, options, 600.0)
+            super::pinch_factor(&input, options, 600.0, None)
         };
         let wheel = |unit, delta, modifiers| Event::MouseWheel { unit, delta, modifiers, phase: TouchPhase::Move };
         let close = |a: f32, b: f32| (a - b).abs() < 1e-4;

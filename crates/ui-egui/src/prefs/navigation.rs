@@ -138,6 +138,25 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 setting::direct_interaction(app, ui);
             });
         });
+        ui_kit::row(ui, app.tr("prefs.trackpad_zoom_modifier"), |ui| {
+            let platform = crate::tool_modifiers::Platform::of(ui.ctx());
+            let choice = &mut app.preferences.trackpad_zoom_modifier;
+            ui_kit::dropdown_menu(ui, "pref_trackpad_zoom_modifier", crate::i18n::tr(choice.label_id(platform)), |ui| {
+                for (index, value) in TrackpadZoomModifier::ALL.into_iter().enumerate() {
+                    if ui_kit::list_picker(
+                        ui,
+                        &format!("trackpad_zoom_modifier_{index}"),
+                        crate::i18n::tr(value.label_id(platform)),
+                        *choice == value,
+                    )
+                    .clicked()
+                    {
+                        *choice = value;
+                    }
+                }
+            })
+            .on_hover_text(crate::i18n::tr("prefs.trackpad_zoom_modifier.help"));
+        });
         let cursor = ui_kit::checkbox(ui, crate::i18n::tr_label("Show tool at cursor"), &mut app.ui.tool_cursor);
         crate::scenario::publish_target("view:tool_cursor", cursor.rect);
         ui_kit::divider(ui, "navigation_view_controls");

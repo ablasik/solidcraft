@@ -553,6 +553,40 @@ pub enum OrbitAround {
     Cursor,
 }
 
+/// The sole modifier that turns vertical scroll into wheel-style zoom.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackpadZoomModifier {
+    Cmd,
+    Alt,
+    Ctrl,
+    /// The default: scroll keeps its usual meaning until a key is chosen.
+    #[default]
+    Off,
+}
+
+impl TrackpadZoomModifier {
+    pub const ALL: [Self; 4] = [Self::Cmd, Self::Alt, Self::Ctrl, Self::Off];
+
+    pub fn modifiers(self) -> Option<egui::Modifiers> {
+        match self {
+            Self::Cmd => Some(egui::Modifiers::COMMAND),
+            Self::Alt => Some(egui::Modifiers::ALT),
+            Self::Ctrl => Some(egui::Modifiers::CTRL),
+            Self::Off => None,
+        }
+    }
+
+    pub fn label_id(self, platform: crate::tool_modifiers::Platform) -> &'static str {
+        match self {
+            Self::Cmd if platform == crate::tool_modifiers::Platform::Mac => "prefs.trackpad_zoom_modifier.cmd",
+            Self::Alt => "prefs.trackpad_zoom_modifier.alt",
+            Self::Cmd | Self::Ctrl => "prefs.trackpad_zoom_modifier.ctrl",
+            Self::Off => "prefs.trackpad_zoom_modifier.off",
+        }
+    }
+}
+
 /// Where the view goes when a sketch ends (Preferences: "When a sketch ends", #7038).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1052,6 +1086,8 @@ preference_settings! {
     smooth_wheel_zoom: bool = true, PAGE_NAVIGATION => check("Smooth wheel zoom", "Turn off to apply each wheel event immediately, without a smoothing tail");
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
     trackpad_pan: bool = true, PAGE_NAVIGATION;
+    /// Hold this modifier alone to zoom with vertical wheel or two-finger scroll.
+    trackpad_zoom_modifier: TrackpadZoomModifier = TrackpadZoomModifier::default(), PAGE_NAVIGATION;
     /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
     pan_reverse_x: bool = false, PAGE_NAVIGATION => check("Reverse horizontal pan direction", "Horizontal two-finger scrolling and the thumb wheel pan the other way");
     /// Vertical trackpad scrolling pans the view the other way (#5240).
@@ -3278,6 +3314,37 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn trackpad_zoom_modifier_roundtrips_and_validates_control_values() {
+        assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        for (id, value) in [
+            ("cmd", TrackpadZoomModifier::Cmd),
+            ("alt", TrackpadZoomModifier::Alt),
+            ("ctrl", TrackpadZoomModifier::Ctrl),
+            ("off", TrackpadZoomModifier::Off),
+        ] {
+            set(&mut app, &json!({"trackpad_zoom_modifier": id})).unwrap();
+            assert_eq!(app.preferences.trackpad_zoom_modifier, value);
+            let saved = serde_json::to_value(&app.preferences).unwrap();
+            assert_eq!(saved["trackpad_zoom_modifier"], id);
+            assert_eq!(lenient(&saved).trackpad_zoom_modifier, value);
+            let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+            restored.load_prefs(&app.prefs());
+            assert_eq!(restored.preferences.trackpad_zoom_modifier, value);
+        }
+        for invalid in [json!("super"), json!(""), json!(42), json!(null)] {
+            assert!(set(&mut app, &json!({"trackpad_zoom_modifier": invalid})).is_err());
+            assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+            assert_eq!(lenient(&json!({"trackpad_zoom_modifier": invalid})).trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+        }
+        app.load_prefs(&json!({"preferences": {"trackpad_zoom_modifier": "future"}}).to_string());
+        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+        app.preferences.trackpad_zoom_modifier = TrackpadZoomModifier::Cmd;
+        reset_preferences(&mut app.preferences, PAGE_NAVIGATION);
+        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+    }
+
     #[test]
     fn navigation_bar_preferences_round_trip_and_recover_hostile_fields() {
         use crate::navigation_bar::{Edge, Idle, Labels, NavigationBar, Position, Size};
