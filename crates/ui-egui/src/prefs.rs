@@ -3228,26 +3228,27 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 mod tests {
     #[test]
     fn navigation_bar_preferences_round_trip_and_recover_hostile_fields() {
-        use crate::navigation_bar::{Idle, Labels, NavigationBar, Position, Size};
+        use crate::navigation_bar::{Edge, Idle, Labels, NavigationBar, Position, Size};
         use serde_json::json;
         assert_eq!(super::lenient(&json!({})).navigation_bar, NavigationBar::default());
         let p = super::lenient(&json!({"navigation_bar": {
             "slots":["pan", "future_slot", "pan", "separator", "separator", "separator", "separator", "separator", 7, "fit"],
-            "position":"bottom_left", "size":"regular", "labels":"labels", "idle":"hide"
+            "position":"bottom_left", "edge":"top", "size":"regular", "labels":"labels", "idle":"hide"
         }}));
         assert_eq!(p.navigation_bar.slots, ["pan", "future_slot", "separator", "separator", "separator", "separator", "fit"]);
         assert_eq!(
-            (p.navigation_bar.position, p.navigation_bar.size, p.navigation_bar.labels, p.navigation_bar.idle),
-            (Position::Left, Size::Regular, Labels::Labels, Idle::Hide)
+            (p.navigation_bar.position, p.navigation_bar.edge, p.navigation_bar.size, p.navigation_bar.labels, p.navigation_bar.idle),
+            (Position::Left, Edge::Top, Size::Regular, Labels::Labels, Idle::Hide)
         );
         let saved = serde_json::to_value(&p).unwrap();
         assert_eq!(serde_json::from_value::<super::Prefs>(saved).unwrap(), p);
-        for field in ["position", "size", "labels", "idle"] {
+        for field in ["position", "edge", "size", "labels", "idle"] {
             let mut value = serde_json::to_value(&p).unwrap();
             value["navigation_bar"][field] = json!({"wrong":"type"});
             let mut expected = p.clone();
             match field {
                 "position" => expected.navigation_bar.position = Position::default(),
+                "edge" => expected.navigation_bar.edge = Edge::default(),
                 "size" => expected.navigation_bar.size = Size::default(),
                 "labels" => expected.navigation_bar.labels = Labels::default(),
                 _ => expected.navigation_bar.idle = Idle::default(),

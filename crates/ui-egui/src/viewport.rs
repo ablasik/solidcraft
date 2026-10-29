@@ -941,7 +941,7 @@ fn hash_look(look: Option<&solidcraft_engine::doc::appearance::Look>, h: &mut im
 }
 
 /// What a body's resolved look depends on: its geometry (imported paint), the body/component
-/// looks, its material, its face appearances, and component colouring.
+/// looks, its material and that material's look, its face appearances, and component colouring.
 fn body_appearance_key(
     doc: &solidcraft_engine::doc::Document,
     b: &solidcraft_engine::doc::ModelBody,
@@ -954,7 +954,9 @@ fn body_appearance_key(
     let name = b.definition_name();
     hash_look(doc.appearances.bodies.get(name), &mut h);
     hash_look(doc.appearances.components.get(&b.component), &mut h);
-    doc.materials.get(name).hash(&mut h);
+    let material = doc.materials.get(name);
+    material.hash(&mut h);
+    hash_look(material.and_then(|m| doc.material_look(m)).as_ref(), &mut h);
     faces.get(name).copied().unwrap_or(0).hash(&mut h);
     colored.hash(&mut h);
     if colored {
@@ -4865,7 +4867,13 @@ fn agent_chip(app: &mut SolveApp, ui: &egui::Ui, view: Rect, taken: &[Rect]) -> 
         let galley = painter.layout_no_wrap(format!("{label} · {computing}"), FontId::proportional(t.font_label), t.text);
         let stop = painter.layout_no_wrap(crate::i18n::tr("ui.agent_chat_stop").to_string(), FontId::proportional(t.font_label), t.text);
         let size = vec2(galley.size().x + stop.size().x + 54.0, galley.size().y.max(stop.size().y) + 8.0);
-        let nav = app.viewport.layout.as_ref().map(|l| l.navigation).filter(|n| n.is_positive() && n.is_finite());
+        // Above the navigation bar while it sits on the bottom edge; a bar on top leaves the bottom free.
+        let nav = app
+            .viewport
+            .layout
+            .as_ref()
+            .map(|l| l.navigation)
+            .filter(|n| n.is_positive() && n.is_finite() && app.preferences.navigation_bar.edge == crate::navigation_bar::Edge::Bottom);
         let (x, bottom) = nav.map_or((view.center().x, view.bottom() - t.space_8), |n| (n.center().x, n.top() - t.space_8));
         let x = x.clamp(view.left() + size.x * 0.5, (view.right() - size.x * 0.5).max(view.left() + size.x * 0.5));
         let mut r = Rect::from_min_size(pos2(x - size.x * 0.5, bottom - size.y), size);
