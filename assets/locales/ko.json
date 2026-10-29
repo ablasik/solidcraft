@@ -1560,6 +1560,8 @@
   "prefs.layout_note": "컴팩트는 패널을 창 가장자리에 고정합니다. 브라우저 반투명은 플로팅에서 사용할 수 있습니다. 어시스턴트 위치는 어시스턴트 페이지에서 바꿀 수 있습니다.",
   "prefs.left": "왼쪽",
   "prefs.left_click": "왼쪽 클릭",
+  "prefs.line_drag_draws_one": "누른 채 드래그하면 선 하나 그리기",
+  "prefs.line_drag_draws_one_note": "선 도구에서 누르고 드래그한 뒤 놓으면 누른 곳에서 놓은 곳까지 선 하나를 그리고 거기서 끝납니다. 클릭하면 이전처럼 이어지는 선을 그립니다. 끄면: 드래그는 클릭처럼 놓은 곳에 점을 둡니다.",
   "prefs.live_input": "실시간 입력",
   "prefs.live_preview": "실시간 미리보기",
   "prefs.max_file_size": "열 수 있는 최대 파일 크기",
