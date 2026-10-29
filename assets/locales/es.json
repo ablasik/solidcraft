@@ -2531,6 +2531,8 @@
   "sketch_text.path_hint": "Curva del boceto que seguirá el texto: haz clic aquí y después en la curva",
   "sketch_text.use_font_file": "Usar el archivo de fuente {path}",
   "solid": "sólido",
+  "status.navigation": "Asignación del ratón: {mapping}",
+  "status.navigation_tip": "Cómo mueve el ratón la vista. Haz clic para elegir otra asignación",
   "the angle must be a number": "el ángulo debe ser un número",
   "the curves must be in one sketch": "las curvas deben estar en un solo boceto",
   "the direction must be an axis, a sketch line or a straight edge": "la dirección debe ser un eje, una línea de boceto o una arista recta",

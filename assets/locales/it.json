@@ -3112,6 +3112,8 @@
   "sketch_text.use_font_file": "Usa il file di carattere {path}",
   "solid": "solido",
   "status.editing": "Modifica di {name}",
+  "status.navigation": "Assegnazione del mouse: {mapping}",
+  "status.navigation_tip": "Come il mouse muove la vista. Fai clic per sceglierne un'altra",
   "status.under_constrained": "Sottovincolato ({count} gradi di libertà)",
   "status.under_constrained_one": "Sottovincolato ({count} grado di libertà)",
   "status.units_tip": "Le unità del progetto. Fai clic per cambiarle",

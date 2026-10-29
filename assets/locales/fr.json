@@ -3128,6 +3128,8 @@
   "sketch_text.use_font_file": "Utiliser le fichier de police {path}",
   "solid": "plein (sans paroi)",
   "status.editing": "Modification de {name}",
+  "status.navigation": "Affectation des boutons de la souris : {mapping}",
+  "status.navigation_tip": "La façon dont la souris déplace la vue. Cliquez pour en choisir une autre",
   "status.under_constrained": "Sous-contraint ({count} degrés de liberté)",
   "status.under_constrained_one": "Sous-contraint ({count} degré de liberté)",
   "status.units_tip": "Les unités de la conception. Cliquez pour les modifier",
