@@ -15,7 +15,7 @@ repository = "https://github.com/bherbruck/solidcraft"
 [workspace.dependencies]
 robust = "1.2"
 # The pure-Rust kernel behind the `solidcore` feature. Local path for now; one line to swap for a git rev.
-solidcore = { path = "/Users/ablasik/Development/solidcraft/work/solidcore-for-app/crates/solidcore" }
+solidcore = { path = "/Users/ablasik/Development/solidcraft/work/app/solidcore-with-our-fixes/crates/solidcore" }
 # internal
 solidcraft-geom = { path = "crates/geom" }
 solidcraft-profile = { path = "crates/profile" }
