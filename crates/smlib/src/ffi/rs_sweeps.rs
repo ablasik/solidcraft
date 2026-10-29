@@ -520,8 +520,8 @@ pub fn loft_to_point(section: &List, apex: &[f64; 3]) -> Result<Handle, i32> {
     // Newell's normal of the loop; every corner and not the apex must lie in its plane.
     let (mut n, mut o) = (Vec3::ZERO, Vec3::ZERO);
     for (a, b) in &ends {
-        n = n + Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
-        o = o + Vec3::new(a.x, a.y, a.z);
+        n += Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+        o += Vec3::new(a.x, a.y, a.z);
     }
     let len = n.length();
     let o = o / ends.len() as f64;
@@ -603,7 +603,7 @@ fn turned(v: Vec3, axis: Vec3, angle: f64) -> Vec3 {
 
 /// The offset at turn `t` of the piecewise linear `law` of (turn, offset) pairs, held at its ends.
 fn offset_at(law: &[f64], t: f64) -> f64 {
-    let pairs: Vec<(f64, f64)> = law.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    let pairs: Vec<(f64, f64)> = law.as_chunks::<2>().0.iter().map(|&[t, o]| (t, o)).collect();
     let (Some(&(t0, o0)), Some(&(t1, o1))) = (pairs.first(), pairs.last()) else { return 0.0 };
     if t <= t0 {
         return o0;
@@ -627,7 +627,7 @@ fn screw(profile: &List, origin: &[f64; 3], direction: &[f64; 3], pitch: f64, tu
     if !(pitch.is_finite() && pitch != 0.0 && turns.is_finite() && turns > 0.0 && tolerance.is_finite() && tolerance > 0.0) {
         return Err(ERR_ARG);
     }
-    let pairs: Vec<(f64, f64)> = law.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    let pairs: Vec<(f64, f64)> = law.as_chunks::<2>().0.iter().map(|&[t, o]| (t, o)).collect();
     if pairs.iter().any(|&(t, o)| !(t >= 0.0 && t <= turns && o.is_finite())) || pairs.windows(2).any(|w| !(w[0].0 < w[1].0)) {
         return Err(ERR_ARG);
     }

@@ -506,7 +506,7 @@ fn flat_net(net: &[Vec3], rim: &[Vec3], tol: f64) -> Option<(Vec3, Vec3)> {
     // Newell's normal of the rim: its length is twice the enclosed area.
     let mut n = Vec3::ZERO;
     for (p, q) in rim.iter().zip(rim.iter().cycle().skip(1)) {
-        n = n + p.cross(*q);
+        n += p.cross(*q);
     }
     let n = n.normalized()?;
     net.iter().all(|p| (*p - origin).dot(n).abs() <= tol).then_some((origin, n))
