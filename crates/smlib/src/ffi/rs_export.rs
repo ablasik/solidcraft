@@ -272,18 +272,13 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
     }
     o.r3(EXTENT, lo);
     o.r3(EXTENT, hi);
-    // Each edge's and vertex's own tolerance, twice as the arrays carry it (as TOLERANCE below),
-    // never below the largest ordinary one: solidcore's tolerances for approximated edges are
-    // what it tracked, not the gap to its faces (up to 4e-5 mm more on a fillet's rail), so
-    // the body's largest ordinary tolerance bounds those. Only one past what import takes
-    // (an edge a trim made 42 mm) stays its own, never the whole body's.
-    let ordinary =
-        vertex_tolerances.iter().chain(&edge_tolerances).copied().chain([b.tolerance()]).filter(|t| *t <= MAX_TOLERANCE).fold(0.0, f64::max);
+    // Each edge's and vertex's own tolerance, twice as the arrays carry it (as TOLERANCE below).
+    // The STEP writer states the loosest ordinary one as the file's uncertainty.
     for t in &vertex_tolerances {
-        o.r(VERTEX_TOLERANCE, 2.0 * t.max(ordinary));
+        o.r(VERTEX_TOLERANCE, 2.0 * t);
     }
     for t in &edge_tolerances {
-        o.r(EDGE_TOLERANCE, 2.0 * t.max(ordinary));
+        o.r(EDGE_TOLERANCE, 2.0 * t);
     }
     // unconfirmed: "twice the largest face, edge and vertex tolerance" over solidcore's zone
     // tolerances (and the body's), as the header words it.

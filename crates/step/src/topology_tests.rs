@@ -1304,6 +1304,7 @@ fn a_dome_with_a_split_rim_keeps_its_whole_turn_on_a_form_that_starts_at_the_sea
             }
         }
     }
+}
 
 /// A quarter of a cylinder's side whose frame is turned 1.4e-5 rad off the face's start, in a file
 /// stating 8e-5 mm: the face's far end lies 5.7e-5 mm past the frame's quarter line. The form must
