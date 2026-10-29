@@ -51,11 +51,13 @@ pub(super) struct State {
     pub(super) copies: u64,
 }
 
-/// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on opt-in upstream fixes (`UpstreamFixes`), for measuring them.
+/// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on more opt-in upstream fixes (`UpstreamFixes`) than the always-on ones, for measuring them.
 fn new_kernel() -> Kernel {
     let mut k = Kernel::default();
-    // With no SOLIDCORE_FIXES: the refusals a taper needs, a blend whose ball does not fit its faces (WR-462) or whose rails leave them (WR-302) is refused as too large, where upstream fails with status 1001 or builds a sliver.
-    let spec = std::env::var("SOLIDCORE_FIXES").unwrap_or_else(|_| "fillet_refuse_ball_not_fitting,fillet_refuse_rails_leaving_faces".into());
+    // Always on: a blend whose ball does not fit its faces (WR-462) or whose rails leave them (WR-302) is refused as too large, so a taper can take over, where upstream fails with status 1001.
+    k.fixes.fillet_refuse_ball_not_fitting = true;
+    k.fixes.fillet_refuse_rails_leaving_faces = true;
+    let spec = std::env::var("SOLIDCORE_FIXES").unwrap_or_default();
     for name in spec.split(',') {
         let all = name == "all";
         if all || name == "fillet_retry_radius_as_first" {
