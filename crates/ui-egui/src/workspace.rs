@@ -570,8 +570,11 @@ fn active_body<'a>(app: &'a crate::SolveApp, state: &'a solidcraft_engine::doc::
         Sel::Face { body, .. } | Sel::Edge { body, .. } => Some(body.as_str()),
         _ => None,
     });
+    // The owners in one pass: asked body by body, each one searched the timeline, and the
+    // ribbon asks this several times a frame.
     selected.or_else(|| {
-        state.bodies.iter().rev().find(|b| app.session.doc.model_body_component(b) == app.session.active_component).map(|b| b.name.as_str())
+        let owners = app.session.doc.model_body_components(state);
+        state.bodies.iter().zip(owners).rev().find(|(_, c)| *c == app.session.active_component).map(|(b, _)| b.name.as_str())
     })
 }
 
@@ -893,6 +896,29 @@ mod tests {
         let spec = solidcraft_engine::find_command("file.save_mesh").expect("file.save_mesh is registered");
         assert_eq!((spec.tab, spec.panel), ("INSERT", "FILES"), "Save As Mesh declares the panel that shows it");
         assert_eq!(destination(spec), Some(("INSERT", "FILES")));
+    }
+
+    /// Without a body picked, the active body is the last one the active component owns, whatever
+    /// the other components hold after it.
+    #[test]
+    fn without_a_selection_the_active_body_is_the_active_components_last() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"body_name":"Top1", "operation":"new", "length":10, "width":10, "height":10})).unwrap();
+        let sub = h.app.run("component.create", json!({"name":"Sub"})).unwrap()["component"].as_u64().unwrap();
+        h.app.run("component.activate", json!({"component":sub})).unwrap();
+        h.app.run("solid.box", json!({"body_name":"Sub1", "operation":"new", "length":5, "width":5, "height":5})).unwrap();
+        h.app.run("component.activate", json!({"component":0})).unwrap();
+        h.app.run("solid.box", json!({"body_name":"Top2", "operation":"new", "length":4, "width":4, "height":4})).unwrap();
+        h.app.run("component.activate", json!({"component":sub})).unwrap();
+        h.app.run("solid.box", json!({"body_name":"Sub2", "operation":"new", "length":3, "width":3, "height":3})).unwrap();
+        h.app.run("select.set", json!({"items":[]})).unwrap();
+        let active = |h: &crate::scenario::Harness| active_body(&h.app, &h.app.session.model.state()).map(str::to_owned);
+        assert_eq!(active(&h).as_deref(), Some("Sub2"));
+        h.app.run("component.activate", json!({"component":0})).unwrap();
+        h.app.run("select.set", json!({"items":[]})).unwrap();
+        assert_eq!(active(&h).as_deref(), Some("Top2"), "the top level's last body, not a later one in Sub");
+        h.app.run("select.set", json!({"items":[{"type":"body","name":"Sub1"}]})).unwrap();
+        assert_eq!(active(&h).as_deref(), Some("Sub1"), "a picked body wins");
     }
 
     #[test]

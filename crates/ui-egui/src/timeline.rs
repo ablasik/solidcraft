@@ -1,6 +1,6 @@
 //! The timeline (bottom): features in order, the rollback marker, errors and warnings.
 
-use crate::ui_kit::{Container, Edge, Surface};
+use crate::ui_kit::{Container, Edge, Status, Surface};
 use egui::{Rect, Sense, UiBuilder, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::doc::{
@@ -370,6 +370,12 @@ pub(crate) fn clipboard_buttons(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) 
     }
 }
 
+/// Where each feature's result is in `results`, by feature id: the first result of an id, as
+/// `Model::result` finds it.
+fn result_index(results: &[solidcraft_engine::doc::FeatureResult]) -> std::collections::HashMap<u64, usize> {
+    results.iter().enumerate().rev().map(|(k, r)| (r.id, k)).collect()
+}
+
 /// The common prefix of a feature tooltip and its copied status message.
 pub(crate) fn status_text(name: &str, ty: &str, error: Option<&str>, warning: Option<&str>) -> String {
     let mut text = format!("{name}  ({ty})");
@@ -382,6 +388,27 @@ pub(crate) fn status_text(name: &str, ty: &str, error: Option<&str>, warning: Op
         text.push_str(&crate::i18n::format("timeline.feature_warning", &[("message", &crate::i18n::tr_diagnostic(warning))]));
     }
     text
+}
+
+/// A feature's mark: an error, else a warning; none while it is suppressed or rolled back, as
+/// it isn't built then.
+pub(crate) fn feature_status(app: &SolveApp, id: u64) -> Option<Status> {
+    let index = app.session.doc.feature_index(id)?;
+    let feature = app.session.doc.features.get(index)?;
+    if feature.suppressed || app.session.doc.marker.is_some_and(|marker| index >= marker) {
+        return None;
+    }
+    let result = app.session.model.result(id)?;
+    if result.error.is_some() { Some(Status::Error) } else { result.warning.as_ref().map(|_| Status::Warning) }
+}
+
+/// The worst mark among `ids`, with the message of the first feature that has it.
+pub(crate) fn worst_status(app: &SolveApp, ids: &[u64]) -> (Option<Status>, Option<String>) {
+    let worst = ids.iter().filter_map(|id| feature_status(app, *id).map(|status| (status, *id))).reduce(|a, b| if b.0 > a.0 { b } else { a });
+    match worst {
+        Some((status, id)) => (Some(status), feature_message(app, id)),
+        None => (None, None),
+    }
 }
 
 /// What a feature's error or warning mark says, as its tooltip shows it (name and type, then
@@ -718,6 +745,9 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
             let mut marker_rect: Option<Rect> = None;
             // Each sketch's solve state, read once for the strip (#7245).
             let sketch_states = crate::sketch_state::SketchStates::of(app);
+            // Each feature's result, found once for the strip: a search per chip made a long
+            // timeline cost the square of its length every frame.
+            let results = result_index(&app.session.model.results);
             for (i, (id, name, icon, suppressed, ty, kind)) in feats.iter().enumerate() {
                 let sketch_state = matches!(kind, TimelineKind::Sketch).then(|| sketch_states.get(*id)).flatten();
                 if i == marker {
@@ -731,7 +761,10 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                 }
                 crate::scenario::publish_handle(&format!("timeline:{name}"), br.center());
                 let resp = ui.interact(br, ui.id().with(("feat", *id)), Sense::click_and_drag());
-                let res = app.session.model.result(*id);
+                // A feature without a result has none; an index that no longer holds this id (a
+                // command run from an earlier chip evaluated again) is searched for.
+                let res =
+                    results.get(id).and_then(|k| app.session.model.results.get(*k).filter(|r| r.id == *id).or_else(|| app.session.model.result(*id)));
                 let err = res.and_then(|r| r.error.clone());
                 let warn = res.and_then(|r| r.warning.clone());
                 let rolled = i >= marker;
@@ -1568,6 +1601,31 @@ mod tests {
 
     /// A feature with a warning mark offers Copy Warning Message, which copies what its tooltip
     /// says; a feature with nothing to report doesn't offer it. In both timelines.
+    /// The strip finds each chip's result in one table: the same result `Model::result` gives,
+    /// the first one when an id has two, and none for a feature without one.
+    #[test]
+    fn each_chip_finds_its_own_result() {
+        let mut h = two_boxes(false);
+        h.app.run("solid.fillet", json!({"edges": [[5, 0, 10]], "radius": 20, "fit": "reduce", "body": "One"})).unwrap();
+        h.frames(2);
+        let model = &h.app.session.model;
+        let index = super::result_index(&model.results);
+        let ids: Vec<u64> = h.app.session.doc.features.iter().map(|f| f.id).collect();
+        assert!(ids.len() >= 3 && model.results.iter().any(|r| r.warning.is_some()), "a warned feature among others");
+        for id in &ids {
+            let found = index.get(id).and_then(|k| model.results.get(*k));
+            assert!(found.is_some_and(|r| std::ptr::eq(r, model.result(*id).unwrap())), "feature {id}");
+        }
+        assert!(!index.contains_key(&u64::MAX), "a feature without a result has none");
+        let mut twice = model.results.clone();
+        let first = twice.iter().position(|r| r.warning.is_some()).unwrap();
+        let mut copy = twice[first].clone();
+        copy.warning = None;
+        twice.push(copy);
+        let index = super::result_index(&twice);
+        assert_eq!(index.get(&twice[first].id), Some(&first), "the first result of an id wins, as in Model::result");
+    }
+
     #[test]
     fn the_feature_menu_copies_a_warning_message() {
         for left in [false, true] {
