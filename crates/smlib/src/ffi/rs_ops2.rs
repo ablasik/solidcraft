@@ -154,10 +154,18 @@ pub fn draft(
     let (mut b, domain) = working(&mut s, h)?;
     let picked = pick_faces(&s.kernel, &mut b, domain, points, tolerance)?;
     let solid_in = is_manifold_solid(&b).map_err(|e| solid_status(&e))?;
+    let span = extent_along(&s.kernel, &mut b, pull).map_err(|e| solid_status(&e))?;
     let mut surfaces = Vec::new();
     for &f in &picked {
         let fu = outer_faceuse(&b, f).map_err(|e| solid_status(&e))?;
         let surface = face_ops::surface(&b, f).map_err(|e| solid_status(&e))?.ok_or(plain(ERR_ARG))?;
+        if let SurfaceKind::Cone(c) = surface.kind()
+            && c.is_cylinder()
+        {
+            let same = eu::faceuse_orientation(&b, fu).map_err(|e| solid_status(&e))? == OrientType::Same;
+            surfaces.push(Surface::from(lean_cylinder(&s.kernel, span, c, same, origin, normal, pull, angle)?));
+            continue;
+        }
         let SurfaceKind::Plane(plane) = surface.kind() else { return Err(plain(ERR_UNSUPPORTED)) };
         // The face's outward normal: the plane's, turned with the outer faceuse.
         let mut n = plane.evaluate_normal();
@@ -305,4 +313,48 @@ pub(super) fn chord_edges(k: &mut Kernel, b: &mut Brep, edges: &[EdgeId], sizes:
         session.do_fillet(k)?;
     }
     stitch_and_orient(k, b, &StitchAndOrientOptions::default())
+}
+
+/// The cylinder `c` (its axis along the pull) as the cone that leans like a drafted plane: its
+/// radius at the neutral plane is the cylinder's, and along the pull it changes at `-tan(angle)`
+/// for a face whose outward normal points away from the axis (`+` towards it), which turns the
+/// outward normal `n` to `n cos(angle) + pull sin(angle)`, as a drafted plane's. The cone runs
+/// `span` either side of the neutral plane.
+fn lean_cylinder(
+    k: &Kernel,
+    span: f64,
+    c: &solidcore::surface::cone::p1::Cone,
+    outer_same: bool,
+    neutral_origin: Point3,
+    neutral_normal: Vec3,
+    pull: Vec3,
+    angle: f64,
+) -> Result<solidcore::surface::cone::p1::Cone, PickError> {
+    let cn = c.canonical();
+    let frame = cn.origin;
+    let z = frame.x_axis().cross(frame.y_axis());
+    let z = z / z.length();
+    if z.dot(pull).abs() < 1.0 - 1e-6 {
+        return Err(plain(ERR_UNSUPPORTED));
+    }
+    let across = z.dot(neutral_normal);
+    if across.abs() < 1e-12 {
+        return Err(plain(ERR_ARG));
+    }
+    let foot = frame.origin() + z * ((neutral_origin - frame.origin()).dot(neutral_normal) / across);
+    // +1 where the outward normal points away from the axis (the surface's normal does, turned with the faceuse and the cone's flip).
+    let sigma = if outer_same != cn.inside_out { 1.0 } else { -1.0 };
+    let slope = -sigma * angle.tan() * z.dot(pull);
+    // The cone keeps the cylinder's frame and so its parameters (the seam edge's interval is in them):
+    // from the frame's origin along z, its radius there that of the cone at the neutral plane
+    // `along` mm back, over the body's span past the plane.
+    let along = (neutral_origin - frame.origin()).dot(neutral_normal) / across;
+    let at_origin = cn.radius - slope * along;
+    let height = span + along.abs();
+    let at_top = at_origin + slope * height;
+    if !(at_origin > 1e-6 && at_top > 1e-6) {
+        return Err(plain(ERR_UNSUPPORTED));
+    }
+    let _ = foot;
+    solidcore::surface::cone::p1::Cone::create_canonical(k, &frame, at_origin, at_top, height, cn.swap_uv, cn.inside_out).map_err(|e| solid_status(&e))
 }
