@@ -287,6 +287,19 @@ mod tests {
         }
     }
 
+    /// Saving the design says where it went, as an export does (#8693).
+    #[test]
+    fn saving_the_design_says_where_it_went() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("Bracket.sc").to_string_lossy().into_owned();
+        h.app.run("file.save", json!({"path": path})).unwrap();
+        assert!(h.app.status.as_ref().is_some_and(|(text, _, error)| *text == format!("Saved {path}") && !error), "{:?}", h.app.status);
+        // A save that fails says so instead.
+        let missing = h.dir.join("missing").join("Bracket.sc").to_string_lossy().into_owned();
+        assert!(h.app.run("file.save", json!({"path": missing})).is_err());
+        assert!(h.app.status.as_ref().is_some_and(|(_, _, error)| *error), "{:?}", h.app.status);
+    }
+
     #[test]
     fn sheet_exports_without_a_sheet_report_an_error_without_a_picker() {
         let mut h = crate::scenario::Harness::new();

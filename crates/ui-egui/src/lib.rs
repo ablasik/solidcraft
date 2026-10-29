@@ -1290,6 +1290,9 @@ impl SolveApp {
                     self.home.add_recent(&p);
                     if matches!(id, "file.save" | "file.save_as") {
                         home::remember_session(&mut self.home, &self.session);
+                        // Say where it went, as an export does (#8693).
+                        let saved = self.tr("ui.design_saved").replace("{path}", &p);
+                        self.set_status(saved, false);
                     }
                 }
             }
