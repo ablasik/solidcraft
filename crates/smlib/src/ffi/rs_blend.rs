@@ -308,7 +308,7 @@ fn run_fillet(
     b: &mut Brep,
     prepare: impl FnOnce(&mut FilletSession<'_>, &mut Kernel) -> Result<(), SolidError>,
 ) -> Result<(), SolidError> {
-    let mut no_room = false;
+    let no_room;
     let fillet = {
         let mut session = FilletSession::new(k, b)?;
         let done = prepare(&mut session, k).and_then(|()| session.do_fillet(k));

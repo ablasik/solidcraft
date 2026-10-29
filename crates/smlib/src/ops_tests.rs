@@ -512,3 +512,36 @@ fn sheets_combine_as_planar_regions() {
     let far = square(30.0);
     assert!(a.boolean2d(&far, BooleanOp::Intersect).unwrap().is_none(), "disjoint sheets share nothing");
 }
+
+/// A square with a half disc on its top side as a planar sheet, the arc analytic or a rational
+/// B-spline, thickened by 2 one-sided and half each way: a valid slab of twice the area.
+#[cfg(any(feature = "native", feature = "solidcore"))]
+#[test]
+fn sheet_with_a_tangent_arc_edge_thickens() {
+    use crate::sweeps::Curve;
+    let line = |a: [f64; 2], b: [f64; 2]| Curve::Line { start: [a[0], a[1], 0.0], end: [b[0], b[1], 0.0] };
+    let analytic = Curve::Arc {
+        center: [5.0, 10.0, 0.0],
+        axis: [0.0, 0.0, 1.0],
+        reference: [1.0, 0.0, 0.0],
+        radius: 5.0,
+        start: 0.0,
+        end: std::f64::consts::PI,
+    };
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let rational = Curve::Nurbs {
+        degree: 2,
+        points: vec![[10.0, 10.0, 0.0, 1.0], [10.0, 15.0, 0.0, w], [5.0, 15.0, 0.0, 1.0], [0.0, 15.0, 0.0, w], [0.0, 10.0, 0.0, 1.0]],
+        knots: vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0],
+    };
+    let want = 2.0 * (100.0 + 12.5 * std::f64::consts::PI);
+    for (name, arc) in [("analytic", analytic), ("rational", rational)] {
+        let sheet = Brep::planar_faces(&[line([0.0, 0.0], [10.0, 0.0]), line([10.0, 0.0], [10.0, 10.0]), arc, line([0.0, 10.0], [0.0, 0.0])]).unwrap();
+        for symmetric in [false, true] {
+            let slab = sheet.thicken(2.0, symmetric).unwrap_or_else(|e| panic!("{name} {symmetric}: {e}"));
+            let check = slab.check(crate::CheckLevel::All).unwrap();
+            assert!(check.is_valid(), "{name}, symmetric {symmetric}: {check}");
+            assert_close(volume(&slab), want, 1e-6, "slab");
+        }
+    }
+}
