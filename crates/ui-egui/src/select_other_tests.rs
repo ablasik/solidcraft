@@ -520,6 +520,31 @@ fn holding_still_opens_the_list_while_a_navigation_mode_is_lit() {
     }
 }
 
+/// A press held still on a line keeps the line lit until the list opens, with Orbit, Pan or
+/// Zoom lit as with none: the press is not navigating yet (#8864).
+#[test]
+fn a_press_held_still_keeps_the_highlight_while_a_navigation_mode_is_lit() {
+    for slot in [None, Some("orbit"), Some("pan"), Some("zoom")] {
+        let (mut h, at) = two_lines();
+        if let Some(slot) = slot {
+            h.step(&json!({"click": {"handle": format!("nav:slot:{slot}")}})).unwrap();
+        }
+        h.step(&json!({"move": at})).unwrap();
+        h.frames(2);
+        assert!(hovered_curve(&h).is_some(), "{slot:?}: the line under the pointer is lit");
+        let pos = egui::pos2(at[0].as_f64().unwrap_or_default() as f32, at[1].as_f64().unwrap_or_default() as f32);
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        h.app.synthetic.push(button(true));
+        h.frames(10);
+        assert!(!crate::select_other::is_open(&h.app), "{slot:?}: not open yet");
+        assert!(hovered_curve(&h).is_some(), "{slot:?}: still lit while the press is held");
+        h.frames(40);
+        assert!(crate::select_other::is_open(&h.app), "{slot:?}: the hold opened the list");
+        h.app.synthetic.push(button(false));
+        h.frames(2);
+    }
+}
+
 /// A drag under a lit mode still moves the view and does not open the list, whether it starts
 /// at once or after the press was held still for longer than egui waits to call it a drag.
 #[test]

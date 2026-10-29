@@ -51,6 +51,12 @@ fillet, chamfer, offset (O), mirror, patterns, move/copy and scale. With trim on
 piece to remove it, or press and drag a path across several pieces: the ones it crosses light up
 and all go when you let go, in one undo step (`sketch.trim.path`).
 
+Line draws a chain: each click adds a segment from the last point, and a right-click or Esc
+ends the chain. To draw one separate line with a press, a drag and the release instead, turn on
+**Preferences › Sketch › Press and drag draws one line**: the line runs from where you press to
+where you let go, snapping and lining up as clicks do, and ends there; clicks still draw a
+chain, and a drag shorter than about 24 points is still a click.
+
 Tools with several variants (line and midpoint line; two-point, three-point, centre and rounded
 rectangle; the circle, arc, slot, polygon and spline variants) share one toolbar button with a
 drop-down. The button and the family's shortcut start the variant you picked last, so a

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "prefs.line_drag_draws_one": "Press and drag draws one line",
+    "prefs.line_drag_draws_one_note": "In the Line tool, pressing, dragging and letting go draws one line from the press to the release, and it ends there. Clicks still draw a chain. Off: a drag places a point where it is let go, as a click does."
+  },
+  "ja": {
+    "prefs.line_drag_draws_one": "押してドラッグすると線を 1 本描く",
+    "prefs.line_drag_draws_one_note": "線ツールで押してドラッグし、離すと、押した位置から離した位置まで線を 1 本描いてそこで終わります。クリックでは従来どおり連続した線を描きます。オフ: ドラッグはクリックと同じく、離した位置に点を置きます。"
+  },
+  "zh": {
+    "prefs.line_drag_draws_one": "按下并拖动绘制一条直线",
+    "prefs.line_drag_draws_one_note": "在直线工具中，按下、拖动再松开，会从按下处到松开处绘制一条直线并在此结束。单击仍会绘制连续的直线。关闭时：拖动与单击一样，在松开处放置一个点。"
+  },
+  "de": {
+    "prefs.line_drag_draws_one": "Drücken und Ziehen zeichnet eine Linie",
+    "prefs.line_drag_draws_one_note": "Im Linienwerkzeug zeichnet Drücken, Ziehen und Loslassen eine Linie vom Drückpunkt bis zum Loslassen, und dort endet sie. Klicks zeichnen weiterhin eine Kette. Aus: Ein Ziehen setzt wie ein Klick einen Punkt dort, wo losgelassen wird."
+  },
+  "ko": {
+    "prefs.line_drag_draws_one": "누른 채 드래그하면 선 하나 그리기",
+    "prefs.line_drag_draws_one_note": "선 도구에서 누르고 드래그한 뒤 놓으면 누른 곳에서 놓은 곳까지 선 하나를 그리고 거기서 끝납니다. 클릭하면 이전처럼 이어지는 선을 그립니다. 끄면: 드래그는 클릭처럼 놓은 곳에 점을 둡니다."
+  },
+  "nl": {
+    "prefs.line_drag_draws_one": "Indrukken en slepen tekent één lijn",
+    "prefs.line_drag_draws_one_note": "In het lijngereedschap tekent indrukken, slepen en loslaten één lijn van het indrukpunt tot het loslaatpunt, en daar eindigt de lijn. Klikken tekent nog steeds een keten. Uit: slepen zet, net als een klik, een punt waar losgelaten wordt."
+  },
+  "ar": {
+    "prefs.line_drag_draws_one": "الضغط والسحب يرسم خطًا واحدًا",
+    "prefs.line_drag_draws_one_note": "في أداة الخط، الضغط ثم السحب ثم الإفلات يرسم خطًا واحدًا من نقطة الضغط إلى نقطة الإفلات وينتهي هناك. لا تزال النقرات ترسم سلسلة. عند الإيقاف: يضع السحب نقطة حيث يُفلت، كما تفعل النقرة."
+  },
+  "he": {
+    "prefs.line_drag_draws_one": "לחיצה וגרירה משרטטות קו אחד",
+    "prefs.line_drag_draws_one_note": "בכלי הקו, לחיצה, גרירה ושחרור משרטטים קו אחד מנקודת הלחיצה עד נקודת השחרור, והוא מסתיים שם. לחיצות עדיין משרטטות שרשרת. כבוי: גרירה מציבה נקודה היכן שמשחררים, כמו לחיצה."
+  },
+  "vi": {
+    "prefs.line_drag_draws_one": "Nhấn và kéo vẽ một đường",
+    "prefs.line_drag_draws_one_note": "Trong công cụ Đường, nhấn, kéo rồi thả sẽ vẽ một đường từ điểm nhấn đến điểm thả, và kết thúc ở đó. Nhấp vẫn vẽ một chuỗi. Tắt: kéo đặt một điểm tại nơi thả, như một lần nhấp."
+  }
+}

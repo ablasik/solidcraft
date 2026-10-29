@@ -1253,6 +1253,10 @@ preference_settings! {
     /// A centre-point arc runs the way the cursor goes round its centre from the start (#6645).
     /// Off: it always runs counter-clockwise from the start, as it did before.
     center_arc_follows_cursor: bool = true, PAGE_SKETCH;
+    /// In the Line tool, a press, a drag and the release draw one line from the press to the
+    /// release and end there (#7247); clicks still draw a chain. Off (the default): a drag is a
+    /// click that moved on the way, placing a point where it is let go (#2448).
+    line_drag_draws_one: bool = false, PAGE_SKETCH => check_id("prefs.line_drag_draws_one");
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;

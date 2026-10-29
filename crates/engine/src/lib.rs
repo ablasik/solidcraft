@@ -183,6 +183,52 @@ struct BodyRename {
     names_only: bool,
 }
 
+/// Bodies or component placements copied in one design, for pasting into another
+/// (`component.paste_from_design`): that design's placed model as it was when they were copied,
+/// so the copy is what was copied, whatever happens to that design (or its tab) after.
+#[derive(Clone, Debug)]
+pub struct ForeignCopy {
+    /// The design's name (it names what the paste adds).
+    pub design: String,
+    /// Its placed model: what its Browser and view showed.
+    pub world: Arc<solidcraft_doc::ModelState>,
+    /// The bodies copied, as its Browser names them (a body seen in another placement under the
+    /// name it has there).
+    pub bodies: Vec<String>,
+    /// The name each of `bodies` has in its component (without the placement a body seen in
+    /// another placement is named after): the name it pastes as.
+    pub names: Vec<String>,
+    /// The component placements copied, by path.
+    pub placements: Vec<Vec<u64>>,
+    /// Each of `placements`: the component placed, the occurrence and where it is in the world.
+    pub placed: Vec<(u64, u64, solidcraft_doc::Mat)>,
+    /// The design, its evaluated model and its placements moved but not yet applied: what a
+    /// pasted component's history is copied from.
+    pub doc: Arc<Document>,
+    pub model: Model,
+    pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
+}
+
+impl ForeignCopy {
+    /// What `session` copies when `bodies` and `placements` are copied in it now.
+    pub fn of(session: &Session, bodies: Vec<String>, placements: Vec<Vec<u64>>) -> ForeignCopy {
+        let frames = session.placed_document().body_frames_with_source(&session.model.state());
+        let names = bodies.iter().map(|b| frames.iter().find(|f| f.0 == *b).map_or_else(|| b.clone(), |f| f.1.clone())).collect();
+        let placed = placements.iter().filter_map(|p| session.occurrence_placement(p).ok()).map(|p| (p.component, p.occurrence, p.world)).collect();
+        ForeignCopy {
+            design: session.doc.name.clone(),
+            world: session.world_state(),
+            bodies,
+            names,
+            placements,
+            placed,
+            doc: session.doc.clone(),
+            model: session.model.clone(),
+            pending_moves: session.pending_moves.clone(),
+        }
+    }
+}
+
 /// One undo step.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -410,6 +456,9 @@ pub struct Session {
     pub sketch_clipboard: Option<cmd::sketch_clipboard::SketchClip>,
     /// Resolved appearance copied by appearance.copy; transient, outside design/history.
     pub appearance_clipboard: Option<solidcraft_doc::appearance::Look>,
+    /// What was copied in another design, to paste here (`component.paste_from_design`). The
+    /// host puts it here; each design's own copies stay in its own clipboard.
+    pub foreign_copy: Option<Arc<ForeignCopy>>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
     /// Whether the section's cut faces are hatched (`inspect.section`'s `hatch`; on by default).
@@ -594,6 +643,7 @@ impl Session {
             clipboard: Vec::new(),
             sketch_clipboard: None,
             appearance_clipboard: None,
+            foreign_copy: None,
             section: None,
             section_hatch: true,
             colored_components: None,
@@ -1437,6 +1487,7 @@ impl Session {
             clipboard: self.clipboard.clone(),
             sketch_clipboard: self.sketch_clipboard.clone(),
             appearance_clipboard: self.appearance_clipboard.clone(),
+            foreign_copy: self.foreign_copy.clone(),
             section: None,
             section_hatch: true,
             colored_components: None,
