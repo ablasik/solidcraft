@@ -94,15 +94,16 @@ pub struct Section {
 const CONFIGURE: &[&str] = &["parameters.change", "config.table", "config.configure"];
 
 /// Commands that stay for agents, MCP and scripts but are not offered to people: the sketch solves
-/// itself after every edit, so a Solve button (and the search hit for it) only confuses.
-pub const AGENT_ONLY: &[&str] = &["sketch.solve"];
+/// itself after every edit, so a Solve button (and the search hit for it) only confuses; drawn 3D
+/// points are moved with the triad that appears when one is clicked, not a Move button.
+pub const AGENT_ONLY: &[&str] = &["sketch.solve", "sketch.move3d"];
 
 pub const SECTIONS: &[Section] = &[
     Section {
         tab: "MODEL",
         panel: "SKETCH",
         promoted: 1,
-        ids: &["sketch.create", "sketch.edit", "sketch.line3d", "sketch.arc3d", "sketch.spline3d", "sketch.point3d", "sketch.move3d"],
+        ids: &["sketch.create", "sketch.edit", "sketch.line3d", "sketch.arc3d", "sketch.spline3d", "sketch.point3d"],
     },
     Section { tab: "MODEL", panel: "CREATE", promoted: 3, ids: &["solid.extrude", "solid.revolve", "solid.hole"] },
     Section {
@@ -1440,5 +1441,15 @@ mod tests {
         h.frames(2);
         assert!(h.app.session.active_sketch.is_some());
         assert_eq!(h.app.ui.tab, "SKETCH");
+    }
+
+    /// Move 3D Point stays for agents, MCP and scripts; people move a drawn 3D point with the
+    /// triad that appears when it is clicked, not a ribbon button.
+    #[test]
+    fn move3d_is_agent_only() {
+        assert!(AGENT_ONLY.contains(&"sketch.move3d"), "sketch.move3d must stay available to agents");
+        for section in SECTIONS.iter().filter(|s| s.panel == "SKETCH") {
+            assert!(!section.ids.contains(&"sketch.move3d"), "{}/{} must not offer sketch.move3d on the ribbon", section.tab, section.panel);
+        }
     }
 }

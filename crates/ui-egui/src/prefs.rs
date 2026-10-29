@@ -241,7 +241,7 @@ impl NavPreset {
         }
     }
 
-    fn translated_label(&self) -> &str {
+    pub(crate) fn translated_label(&self) -> &str {
         if self.id == TOUCHPAD_NAV { crate::i18n::tr("nav.touchpad.label") } else { crate::i18n::tr_label(self.label) }
     }
 }
@@ -1082,6 +1082,8 @@ preference_settings! {
     browser_bodies_folders: BodiesFolders = BodiesFolders::Several, PAGE_INTERFACE;
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, PAGE_NAVIGATION => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's centre)");
+    /// Speed multiplier for wheel zoom, independent of the 3D mouse.
+    wheel_zoom_speed: f32 = 1.0, PAGE_NAVIGATION, accept(0.25..=4.0) => slider("ui.wheel_zoom_speed", 0.25..=4.0, 0.05, |v| format!("{v:.2}×"), "prefs:wheel_zoom_speed");
     /// Spread discrete wheel input across frames (off: apply each event immediately).
     smooth_wheel_zoom: bool = true, PAGE_NAVIGATION => check("Smooth wheel zoom", "Turn off to apply each wheel event immediately, without a smoothing tail");
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
@@ -3081,6 +3083,9 @@ pub fn migrate(mut p: Prefs) -> Prefs {
     if !p.joint_rotation_fine.is_finite() || !(0.001..=180.0).contains(&p.joint_rotation_fine) {
         p.joint_rotation_fine = 0.1;
     }
+    if !accepted::wheel_zoom_speed(&p) {
+        p.wheel_zoom_speed = Prefs::default().wheel_zoom_speed;
+    }
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
         p.orbit_cursor = false;
@@ -3191,7 +3196,11 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     {
         return Err("`stand_up_unknown` must be ask, note or off".into());
     }
-    let new: Prefs = migrate(serde_json::from_value(cur).map_err(|e| e.to_string())?);
+    let new: Prefs = serde_json::from_value(cur).map_err(|e| e.to_string())?;
+    if !accepted::wheel_zoom_speed(&new) {
+        return Err("`wheel_zoom_speed` must be 0.25…4".into());
+    }
+    let new = migrate(new);
     if !UNITS.contains(&new.default_units.as_str()) {
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }

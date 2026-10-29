@@ -63,6 +63,8 @@ pub enum Target {
     Origin,
     /// Document Settings › Units.
     Units,
+    /// The mouse mappings (Preferences › Navigation), from the status bar (#7023).
+    Navigation,
     /// An assembly joint.
     Joint {
         id: u64,
@@ -416,6 +418,13 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
             .map(|u| {
                 let item = cmd(app, "document.units", u).with(json!({ "units": u }));
                 if app.session.doc.units == *u { item.key("current") } else { item }
+            })
+            .collect(),
+        Target::Navigation => crate::prefs::NAV_PRESETS
+            .iter()
+            .map(|preset| {
+                let item = act("ui.navPreset", preset.translated_label(), "").with(json!({ "preset": preset.id }));
+                if app.preferences.nav == preset.id { item.key("current") } else { item }
             })
             .collect(),
         Target::NamedView { name } => crate::browser::view_items(app, name),
@@ -1517,6 +1526,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
         "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.toolbarTab" | "ui.shortcutPin" => {
             crate::toolbar_custom::run(app, &item.id, &p)
+        }
+        "ui.navPreset" => {
+            // Picked here, a preset sets what Preferences › Navigation sets for it.
+            if let Some(preset) = crate::prefs::NAV_PRESETS.iter().find(|preset| p.get("preset").and_then(Value::as_str) == Some(preset.id)) {
+                crate::prefs::choose_nav_preset(&mut app.preferences, preset);
+            }
         }
         "ui.historyPlayButton" => {
             if let Err(e) = crate::prefs::set(app, &json!({ "history_play_button": p["show"] })) {

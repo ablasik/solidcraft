@@ -1,0 +1,42 @@
+{
+  "en": {
+    "status.navigation": "Mouse mapping: {mapping}",
+    "status.navigation_tip": "How the mouse moves the view. Click to choose another mapping"
+  },
+  "ar": {
+    "status.navigation": "تعيين أزرار الفأرة: {mapping}",
+    "status.navigation_tip": "كيف تحرّك الفأرة العرض. انقر لاختيار تعيين آخر"
+  },
+  "de": {
+    "status.navigation": "Mausbelegung: {mapping}",
+    "status.navigation_tip": "Wie die Maus die Ansicht bewegt. Zum Wählen einer anderen Belegung klicken"
+  },
+  "es": {
+    "status.navigation": "Asignación del ratón: {mapping}",
+    "status.navigation_tip": "Cómo mueve el ratón la vista. Haz clic para elegir otra asignación"
+  },
+  "fr": {
+    "status.navigation": "Affectation des boutons de la souris : {mapping}",
+    "status.navigation_tip": "La façon dont la souris déplace la vue. Cliquez pour en choisir une autre"
+  },
+  "he": {
+    "status.navigation": "מיפוי העכבר: {mapping}",
+    "status.navigation_tip": "איך העכבר מזיז את התצוגה. לחצו כדי לבחור מיפוי אחר"
+  },
+  "it": {
+    "status.navigation": "Assegnazione del mouse: {mapping}",
+    "status.navigation_tip": "Come il mouse muove la vista. Fai clic per sceglierne un'altra"
+  },
+  "ja": {
+    "status.navigation": "マウスの割り当て: {mapping}",
+    "status.navigation_tip": "マウスでビューを動かす方法。クリックして別の割り当てを選択"
+  },
+  "vi": {
+    "status.navigation": "Gán chức năng chuột: {mapping}",
+    "status.navigation_tip": "Cách chuột di chuyển khung nhìn. Nhấp để chọn cách gán khác"
+  },
+  "zh": {
+    "status.navigation": "鼠标映射：{mapping}",
+    "status.navigation_tip": "鼠标移动视图的方式。单击可选择其他映射"
+  }
+}
