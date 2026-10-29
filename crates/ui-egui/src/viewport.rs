@@ -5675,6 +5675,11 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let conflict = Conflict::of(app, sk, &ss.report);
     let virtual_corners: Vec<usize> = sk.virtual_corners().into_iter().map(|(i, _)| i).collect();
     let visible = solidcraft_engine::view::SketchPointVisibility::new(sk);
+    let selected: std::collections::HashSet<_> = app
+        .highlighted()
+        .iter()
+        .filter_map(|item| crate::sketch_modify_ui::point_id(&app.session, item).and_then(|id| sk.resolve_point(id)))
+        .collect();
     for (i, p) in sk.points.iter().enumerate() {
         if !visible.takes(p) {
             continue;
@@ -5698,6 +5703,9 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             painter.rect_stroke(Rect::from_center_size(sp, vec2(6.0, 6.0)), 0.0, Stroke::new(1.2, c), egui::StrokeKind::Middle);
         } else {
             painter.rect_filled(Rect::from_center_size(sp, vec2(5.0, 5.0)), 0.0, c);
+        }
+        if selected.contains(&i) {
+            painter.circle_stroke(sp, 6.0, Stroke::new(2.0, t.sel_edge));
         }
     }
     // The markers and the status line are drawn straight onto the view: its side's colours (#4146).
