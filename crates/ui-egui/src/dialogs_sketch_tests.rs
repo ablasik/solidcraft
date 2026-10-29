@@ -14,7 +14,9 @@ fn fixture() -> Harness {
 fn picked(h: &Harness, command: &str) -> Dialog {
     let mut d = Dialog::for_command(&h.app, command).unwrap();
     let sk = h.app.session.doc.sketch(h.app.session.active_sketch.unwrap()).unwrap();
-    if let Kind::SketchModify(k) = &d.kind {
+    if let Kind::SketchModify(k) = &d.kind
+        && !d.inputs.is_empty()
+    {
         d.inputs[0].items = vec![if matches!(k, Mod::Corner { .. }) {
             Sel::SketchPoint { id: sk.points.iter().find(|p| p.id != "origin").unwrap().id.clone() }
         } else {
@@ -87,6 +89,43 @@ form_case!(fillet, "sketch.fillet", ["Radius"]);
 form_case!(chamfer_equal, "sketch.chamfer.equal_distance", ["Chamfer Type", "Distance"]);
 form_case!(chamfer_two, "sketch.chamfer.two_distance", ["Chamfer Type", "Distance 1", "Distance 2"]);
 form_case!(chamfer_angle, "sketch.chamfer.distance_angle", ["Chamfer Type", "Distance 1", "Angle"]);
+form_case!(equation_curve, "sketch.equation_curve", ["Form", "x(t)", "y(t)", "Start", "End", "Tolerance"]);
+
+/// Equation Curve (#8352): OK draws the curve from the window's formulas; its context menu
+/// reopens the window on them, and OK then edits that curve instead of drawing another.
+#[test]
+fn equation_curve_window_draws_and_reopens_on_its_formulas() {
+    let mut h = fixture();
+    h.app.start("sketch.equation_curve");
+    h.settle();
+    let Some(Kind::SketchModify(Mod::Equation { form, y, .. })) = h.app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("no equation window") };
+    *form = 1;
+    *y = "10 + 2 * sin(x / 4)".into();
+    h.settle();
+    h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
+    h.settle();
+    assert!(h.app.dialog.is_none());
+    let sid = h.app.session.active_sketch.unwrap();
+    let sk = h.app.session.doc.sketch(sid).unwrap().clone();
+    let eq = sk.equations.first().cloned().expect("an equation curve");
+    assert_eq!((eq.x.as_deref(), eq.y.as_str(), eq.end.as_str()), (None, "10 + 2 * sin(x / 4)", "2 * pi"));
+    h.app.session.selection = vec![Sel::SketchCurve { id: eq.curve.clone(), sketch: None }];
+    assert!(crate::sketch_modify_ui::selected_equation(&h.app).is_some());
+    assert!(crate::sketch_modify_ui::edit_equation(&mut h.app, &eq.curve));
+    h.settle();
+    let Some(Kind::SketchModify(Mod::Equation { form, y, end, .. })) = h.app.dialog.as_mut().map(|d| &mut d.kind) else {
+        panic!("no equation window")
+    };
+    assert_eq!((*form, y.as_str()), (1, "10 + 2 * sin(x / 4)"));
+    *end = "20".into();
+    let curves = sk.curves.len();
+    h.settle();
+    h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
+    h.settle();
+    let sk = h.app.session.doc.sketch(sid).unwrap();
+    assert_eq!(sk.curves.len(), curves, "an edit, not another curve");
+    assert_eq!(sk.equation_of(&eq.curve).map(|e| e.end.as_str()), Some("20"));
+}
 
 #[test]
 fn create_sketch_uses_card_and_still_starts_immediately_on_plane_pick() {

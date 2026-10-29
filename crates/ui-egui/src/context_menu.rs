@@ -1128,6 +1128,9 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "sketch.edit_text", "Edit Text"));
         v.extend(explode_text(app));
     }
+    if let Some(curve) = crate::sketch_modify_ui::selected_equation(app) {
+        v.push(act("ui.editEquationCurve", "Edit Equation Curve", "equation_curve").with(json!({ "curve": curve })));
+    }
     v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
     v.push(cmd(app, "sketch.transform", "Transform").key("G"));
     if !curves.is_empty() {
@@ -1351,6 +1354,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                     let _ = crate::edit_clipboard::paste_into_group(app, Some(at), into, Some(group), folder);
                 }
                 None => drop(crate::edit_clipboard::paste_into(app, Some(at), item.id == "ui.pasteNew", into)),
+            }
+        }
+        "ui.editEquationCurve" => {
+            if let Some(id) = p.get("curve").and_then(Value::as_str) {
+                crate::sketch_modify_ui::edit_equation(app, id);
             }
         }
         "ui.editSketchPattern" => {

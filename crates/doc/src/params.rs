@@ -896,6 +896,18 @@ impl Document {
                         n += 1;
                     }
                 }
+                // An equation curve's variable hides a parameter of its name: such a parameter is
+                // not what its formulas refer to.
+                for (variable, e) in sketch.equation_exprs_mut() {
+                    if variable == old {
+                        continue;
+                    }
+                    let r = expr::rename_reference(e, old, new);
+                    if r != *e {
+                        *e = r;
+                        n += 1;
+                    }
+                }
                 for e in sketch.text_word_exprs_mut() {
                     let r = crate::text_params::rename_reference(e, old, new);
                     if r != *e {

@@ -187,6 +187,18 @@ While drawing a fit spline, click its starting point after three distinct sample
 it smoothly. Right-click finishes an ordinary natural fit. Offset accepts both ellipse
 handles and dense fitted curves; the second click sets the side and distance from the curve.
 
+**Equation Curve** draws a curve from formulas instead of clicks: x(t) and y(t) over a range of
+t, or y = f(x) over a range of x. The formulas use the expression language and the design's
+parameters, so `x = r * (cos(t) + t * sin(t))`, `y = r * (sin(t) - t * cos(t))` with t from 0 to
+1 is the involute of a base circle of radius `r`. The variable is a plain number: `sin(t)` takes
+it in radians, and a result without a unit is in the design's unit. The curve is a fit point
+spline through points worked out from the formulas, as many as keep it within the tolerance
+(0.01 mm unless you set another), up to 500; a curve that ends where it starts closes smoothly.
+Its points are fixed, so other curves can start at its ends and close a profile for Extrude or
+Revolve, and it can be a sweep path. When a parameter it uses changes, the points follow.
+Right-click the curve and choose **Edit Equation Curve** to change the formulas
+(`sketch.equation_curve` and `sketch.equation_curve.edit` from scripts and agents).
+
 While drawing in a planar sketch, **Construction** (X) changes the line type without
 ending the tool or losing picked points and inline values. The preview and hover feedback
 keep construction dashes and centerline dash-dot patterns visible. With curves selected,

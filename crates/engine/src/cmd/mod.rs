@@ -94,6 +94,7 @@ pub mod sketch_clipboard;
 mod sketch_constraints;
 mod sketch_create;
 mod sketch_ends;
+mod sketch_equation;
 mod sketch_freeform;
 mod sketch_import;
 mod sketch_inspect;
@@ -286,6 +287,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     let mut v: Vec<&'static CommandSpec> = Vec::new();
     v.extend(sketch::COMMANDS.iter());
     v.extend(sketch_create::COMMANDS.iter());
+    v.extend(sketch_equation::COMMANDS.iter());
     v.extend(sketch_constraints::COMMANDS.iter());
     v.extend(sketch_import::COMMANDS.iter());
     v.extend(sketch_inspect::COMMANDS.iter());
