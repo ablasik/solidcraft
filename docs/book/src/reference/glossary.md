@@ -260,6 +260,22 @@ A material sets mass, centre of gravity and strength values. How the body looks 
 - **Elsewhere:** material, physical material.
 - **For translators:** not an appearance.
 
+### moment of inertia
+
+How a body's mass resists turning about an axis: the mass times the square of its distance from
+that axis, summed over the body.
+
+SolidCraft reports the whole inertia tensor about the centre of mass in world axes, with its
+*principal moments* and *principal axes*: the three axes with no products of inertia between
+them. The *first moments* are the mass times the centre of mass.
+
+- **In SolidCraft:** `inertia_g_mm2`, `principal_moments_g_mm2`, `principal_axes`,
+  `first_moment_g_mm` and `about` in `component.properties` and `occurrence.properties`; the
+  Properties window's Moment of inertia section.
+- **Don't use:** rotational inertia, second moment of mass, mass moment.
+- **Elsewhere:** moment of inertia, inertia tensor, mass moment of inertia.
+- **For translators:** not the second moment of area of a cross-section, a different quantity.
+
 ### occurrence
 
 One placed copy of a component inside its parent component.

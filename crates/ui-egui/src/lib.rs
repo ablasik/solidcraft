@@ -1299,6 +1299,7 @@ impl SolveApp {
                     self.edit_in_place.active = None;
                     render_workspace::reset_document(self);
                     dim_view::cancel();
+                    design_properties::close_object(self);
                     timeline::stop_playback(self);
                     self.menu.props = None;
                     sketch_attachment_ui::clear(self);
@@ -1616,6 +1617,11 @@ impl SolveApp {
         }
         if id == "assembly.bom" {
             bom_panel::open(self);
+            return;
+        }
+        // Inspect → Measure → Properties: the window, not a reply nobody sees (#8095).
+        if matches!(id, "component.properties" | "occurrence.properties") {
+            design_properties::open_selected(self);
             return;
         }
         if id == "sketch.finish" {

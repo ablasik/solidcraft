@@ -148,7 +148,7 @@ fn swap_in(app: &mut SolveApp, mut slot: DocSlot) -> DocSlot {
     app.viewport.orbit_free = None;
     app.preview.reset();
     app.viewport.hover = None;
-    app.menu.props = None;
+    crate::design_properties::close_object(app);
     crate::sketch_attachment_ui::clear(app);
     crate::agent_chat::leave_document(app);
     app.agent_chat.swap_document(&mut slot.agent_chat);
@@ -367,7 +367,7 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         reset_chat(app);
         crate::dialogs::cancel(app);
         app.tool = None;
-        app.menu.props = None;
+        crate::design_properties::close_object(app);
         crate::sketch_attachment_ui::clear(app);
         app.session.replace_design(session);
         // The blank design's record of its links goes with it; the new one's start now.

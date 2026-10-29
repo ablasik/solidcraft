@@ -231,6 +231,8 @@ pub struct MenuState {
     pub link_copies: Option<crate::linked_source::Copies>,
     /// The Properties window: title and measurements.
     pub props: Option<(String, Value)>,
+    /// Its measurement while it runs beside the window (#5203).
+    pub props_measuring: Option<crate::design_properties::Measuring>,
     /// The viewport menu opened over something: it offers Select Other.
     pub over_geometry: bool,
     /// The plane under the cursor when the viewport menu opened: it offers a sketch on it.
@@ -1381,16 +1383,8 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 "inspect.measure"
             };
             let params = if command == "inspect.measure" { json!({ "bodies": bodies }) } else { p.clone() };
-            match app.session.execute(command, &params) {
-                Ok(v) => {
-                    let title = v["name"]
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| if bodies.len() == 1 { bodies.join("") } else { format!("{} bodies", bodies.len()) });
-                    app.menu.props = Some((title, v));
-                }
-                Err(e) => app.set_status(e.to_string(), true),
-            }
+            let fallback = if bodies.len() == 1 { bodies.join("") } else { format!("{} bodies", bodies.len()) };
+            crate::design_properties::open_object(app, command, &params, fallback);
         }
         "ui.designProperties" => app.start("document.metadata"),
         "ui.export" => {

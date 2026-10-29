@@ -400,8 +400,11 @@ joint still describes the intended connection.
 
 STEP export writes the component tree as an assembly.
 
-Right-click a component in the Browser and choose **Properties** to inspect
-material-aware mass, volume, surface area, centre of mass and world bounds. Descendants and
+Right-click a component in the Browser and choose **Properties**, or use **Inspect → Measure →
+Properties** for the selected placement or the active component, to inspect material-aware
+mass, volume, surface area, centre of mass, first moments, moment of inertia and world bounds.
+While the window is open, the view marks the centre of mass with the three principal axes
+standing out of it. Descendants and
 repeated instances contribute to assembly totals; pending moves are included. A component
 uses its first placement; `occurrence.properties` selects a specific instance. Root Properties
 measures the complete assembly. Volumes are summed, including overlapping bodies, rather than
