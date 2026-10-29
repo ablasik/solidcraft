@@ -3,7 +3,7 @@
 //! geometry of planes, cylinders, cones, spheres and tori and of lines and circles/ellipses.
 //! Refused (`SM_ERR_INVALID_INPUT`, nothing returned): NURBS and approximated surfaces and
 //! curves, wire and point shells, and bodies whose regions are not yet classified.
-//! Not written yet: the radial arrays, UV trims, NURBS forms and per-item tolerances; the
+//! Not written yet: UV trims, NURBS forms and per-item tolerances; the
 //! consumer reads each of them as absent.
 use std::collections::HashMap;
 use std::f64::consts::PI;
@@ -21,9 +21,11 @@ use solidcore::topology::edge::other_vertex;
 use solidcore::topology::edgeuse::p1::{loopuse_edgeuses, mate, uv_trim_curve};
 use solidcore::topology::trimming_tools::{create_uv_trim_curves, face_uv_curves_present};
 use solidcore::topology::{LoopuseStart, vertexuse::edge_is_wire};
+use solidcore::topology::EdgeuseId;
 use solidcore::{EdgeId, FaceId, SolidError, VertexId};
 
 use super::rs::{SM_ERR_INVALID_INPUT, status};
+use super::rs_ops2::face_frame;
 use crate::flat::*;
 use crate::import::Arrays;
 
@@ -107,6 +109,8 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
     let edge_at = positions(&edges);
 
     // Regions (the infinite one first), their shells and faceuses.
+    // Per face: whether the region its same use faces and the region its other use faces hold material.
+    let mut material_sides: Vec<[Option<bool>; 2]> = vec![[None; 2]; faces.len()];
     let infinite = b.infinite_region();
     let all = regions(b, None).map_err(s)?;
     if all.first().copied() != infinite {
@@ -114,6 +118,7 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
     }
     for (r, &region) in all.iter().enumerate() {
         let region = b.region(region).map_err(s)?;
+        let region_is_material = region.is_void == 0;
         o.i(REGION_SHELL_COUNT, int(region.shells.len())?);
         // is_void: 0 material, 1 void; 2 (unsure) only before the nested-solid classification.
         o.i(
@@ -142,13 +147,16 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
                 let face = fu.face.and_then(|f| face_at.get(&f)).ok_or(REFUSED)?;
                 o.i(FACEUSE_FACE, int(*face)?);
                 o.i(FACEUSE_ORIENTATION, i64::from(fu.orientation == OrientType::Same));
+                let slot = material_sides.get_mut(*face).ok_or(REFUSED)?;
+                *slot.get_mut(usize::from(fu.orientation != OrientType::Same)).ok_or(REFUSED)? = Some(r != 0 && region_is_material);
             }
         }
     }
 
     // Faces: surface, loops of the Same faceuse, edgeuse records.
+    let mut records: Vec<Record> = Vec::new();
     let mut kinds = Kinds;
-    for &f in &faces {
+    for (face_index, &f) in faces.iter().enumerate() {
         let face = b.face(f).map_err(s)?;
         let surface = face.surface.as_ref().ok_or(REFUSED)?;
         let fu = b.faceuse(face.faceuse.ok_or(REFUSED)?).map_err(s)?;
@@ -176,6 +184,7 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
                         let e = eu.edge.and_then(|e| edge_at.get(&e)).ok_or(REFUSED)?;
                         o.i(EDGEUSE_EDGE, int(*e)?);
                         o.i(EDGEUSE_ORIENTATION, i64::from(eu.orientation == OrientType::Same));
+                        records.push(Record { edge: *e, eu: eu_id, forward: eu.orientation == OrientType::Same, face: face_index });
                         write_trim(k, b, &mut o, eu_id, surface)?;
                     }
                 }
@@ -183,6 +192,8 @@ pub fn arrays(k: &Kernel, b: &Brep) -> Result<Arrays, i32> {
             }
         }
     }
+
+    radial_arrays(k, b, &mut o, &edges, &records, &material_sides)?;
 
     // Edges.
     for &e in &edges {
@@ -632,4 +643,100 @@ fn write_trim(
         return Ok(());
     }
     none(o)
+}
+
+/// An edgeuse record as the arrays list it: its edge (position), its use on the face's `same`
+/// faceuse, whether that use runs along the edge, and its face (position).
+struct Record {
+    edge: usize,
+    eu: EdgeuseId,
+    forward: bool,
+    face: usize,
+}
+
+/// Rays closer than this (radians) lie on one ray: faces that touch along the edge.
+const SAME_RAY: f64 = 1e-9;
+
+/// The radial arrays: for each edgeuse record the next record round its edge by the right-hand
+/// rule about the edge's direction, and whether the traversal enters it from its face's `same`
+/// side. A record is the use on the face's `same` faceuse, whose loop runs counter-clockwise about
+/// the outward normal `n`, so the face lies to the left of the use, `n x l` for the use's
+/// direction `l` (the edge's when the use is forward). The traversal moves along `d x u` at a ray
+/// `u` into a face, so it enters from the `same` side exactly when the use runs against the edge.
+/// An edge with two records is a cycle of them; a crowded one has its records sorted by the angle
+/// of `u` about the edge. Faces that touch (the same ray) cannot be told apart by angle: they are
+/// put in the order where the material and the space alternate round the edge.
+fn radial_arrays(k: &Kernel, b: &Brep, o: &mut Out, edges: &[EdgeId], records: &[Record], material: &[[Option<bool>; 2]]) -> Result<(), i32> {
+    let mut by_edge: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
+    for (r, rec) in records.iter().enumerate() {
+        by_edge.get_mut(rec.edge).ok_or(REFUSED)?.push(r);
+    }
+    // Whether the sector (after, before) a record (the traversal leaves it from the side it did not
+    // enter) is material; none for a face with no material on one side only.
+    let side = |r: usize| -> Option<(bool, bool)> {
+        let rec = records.get(r)?;
+        let [same, other] = *material.get(rec.face)?;
+        let (same, other) = (same?, other?);
+        let entered_same = !rec.forward;
+        (same != other).then_some((same != entered_same, same == entered_same))
+    };
+    let mut next = vec![0usize; records.len()];
+    // The normals are found on a scratch copy (the evaluation takes the body mutably).
+    let mut scratch: Option<Brep> = None;
+    for (e, list) in by_edge.iter().enumerate() {
+        let mut order = list.clone();
+        if order.len() > 2 {
+            let [start, end] = edge_vertices(b, *edges.get(e).ok_or(REFUSED)?)?;
+            let d = b.vertex(end).map_err(s)?.point - b.vertex(start).map_err(s)?.point;
+            let d = d / d.length();
+            let mut rays: Vec<(usize, Vec3)> = Vec::new();
+            for &r in &order {
+                let rec = records.get(r).ok_or(REFUSED)?;
+                let work = scratch.get_or_insert_with(|| b.clone());
+                let (n, _) = face_frame(k, work, rec.eu).ok_or(REFUSED)?;
+                rays.push((r, n.cross(if rec.forward { d } else { -d })));
+            }
+            let first = rays.first().map(|(_, u)| *u).ok_or(REFUSED)?;
+            let (e1, e2) = (first, d.cross(first));
+            let mut angled: Vec<(f64, usize)> = rays.iter().map(|(r, u)| (u.dot(e2).atan2(u.dot(e1)), *r)).collect();
+            angled.sort_by(|a, z| a.0.total_cmp(&z.0));
+            // The angle -pi and pi are one ray: bring the first group's twin round to the front.
+            while angled.len() > 1 && angled.first().zip(angled.last()).is_some_and(|(a, z)| a.0 + 2.0 * PI - z.0 < SAME_RAY) {
+                let Some(last) = angled.pop() else { break };
+                angled.insert(0, last);
+            }
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            let mut at = f64::NAN;
+            for (angle, r) in angled {
+                let wrapped = (angle - at).abs() < SAME_RAY || (angle - at + 2.0 * PI).abs() < SAME_RAY;
+                match groups.last_mut() {
+                    Some(g) if wrapped => g.push(r),
+                    _ => groups.push(vec![r]),
+                }
+                at = angle;
+            }
+            // Within a group of touching faces, each record must start the sector the last one ended.
+            let mut done: Vec<usize> = Vec::new();
+            for mut g in groups {
+                let mut chain: Vec<usize> = Vec::new();
+                let mut want = done.last().and_then(|&r| side(r)).map(|(after, _)| after);
+                while !g.is_empty() {
+                    let pick = g.iter().position(|&r| want.is_none() || side(r).is_none_or(|(_, before)| Some(before) == want)).unwrap_or(0);
+                    let r = g.remove(pick);
+                    want = side(r).map(|(after, _)| after);
+                    chain.push(r);
+                }
+                done.extend(chain);
+            }
+            order = done;
+        }
+        for (i, &r) in order.iter().enumerate() {
+            *next.get_mut(r).ok_or(REFUSED)? = *order.get((i + 1) % order.len()).ok_or(REFUSED)?;
+        }
+    }
+    for (r, rec) in records.iter().enumerate() {
+        o.i(EDGEUSE_NEXT_RADIAL, int(*next.get(r).ok_or(REFUSED)?)?);
+        o.i(EDGEUSE_RADIAL_ENTRY, i64::from(!rec.forward));
+    }
+    Ok(())
 }

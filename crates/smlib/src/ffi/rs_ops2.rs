@@ -188,7 +188,7 @@ pub fn draft(
 
 /// The outward unit normal, at `u`'s edge's midpoint, of the face the edgeuse `u` bounds, and the
 /// unit direction into that face square to the edge.
-fn face_frame(k: &Kernel, b: &mut Brep, u: EdgeuseId) -> Option<(Vec3, Vec3)> {
+pub(super) fn face_frame(k: &Kernel, b: &mut Brep, u: EdgeuseId) -> Option<(Vec3, Vec3)> {
     let edge = eu::edge(b, u).ok()??;
     let face = eu::face(b, u).ok()??;
     let fu = outer_faceuse(b, face).ok()?;
