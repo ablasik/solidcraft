@@ -44,6 +44,10 @@ pub enum Target {
     OriginPlane {
         name: String,
     },
+    /// An origin axis (X, Y or Z).
+    OriginAxis {
+        name: String,
+    },
     Component {
         id: u64,
     },
@@ -375,6 +379,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Feature { id } => feature_items(app, *id),
         Target::Plane { id } => plane_items(app, *id),
         Target::OriginPlane { name } => origin_plane_items(app, name),
+        Target::OriginAxis { name } => origin_axis_items(app, name),
         Target::Component { id } => component_items(app, *id),
         Target::Occurrence { path } => occurrence_items(app, path),
         Target::Group { id, scope } => crate::browser::group_items(app, *id, scope),
@@ -787,6 +792,12 @@ fn origin_plane_items(app: &SolveApp, name: &str) -> Vec<Item> {
         Item::sep(),
         act("ui.originPart", "Show/Hide", "eye").key("V").with(json!({ "keys": [name], "show": !visible })),
     ]
+}
+
+/// An origin axis: Show/Hide, as on a plane (an axis takes no sketch) (#8382).
+fn origin_axis_items(app: &SolveApp, name: &str) -> Vec<Item> {
+    let visible = !app.session.visibility.hidden_origin.iter().any(|h| h == name);
+    vec![act("ui.originPart", "Show/Hide", "eye").key("V").with(json!({ "keys": [name], "show": !visible }))]
 }
 
 /// An assembly joint: edit, drive, suppress, delete.
