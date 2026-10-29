@@ -550,10 +550,11 @@ fn sheet_with_a_tangent_arc_edge_thickens() {
 /// law that follows the room (the taper of a fillet that does not fit), the plate imported as the
 /// kernel gives it: the solver's trace of the blend goes wrong for some laws (the rail doubles
 /// back near x = 32.6), and what came out was the strip of material the round removes, passing
-/// SMLib's check. It is the rounded plate or a refusal.
+/// SMLib's check. Rounded plate now: the trace refuses a step that lands far short of its aim
+/// (WR-500, `fillet_trace_rejects_short_step`).
 #[cfg(any(feature = "native", feature = "solidcore"))]
 #[test]
-fn tapered_round_is_the_plate_or_refused() {
+fn tapered_round_keeps_the_plate() {
     use crate::sweeps::{Curve, DraftCorner};
     let corners = [[0.0, 0.0, 0.0], [40.0, 0.0, 0.0], [40.0, 2.0, 0.0], [0.0, 20.0, 0.0]];
     let loops: Vec<Curve> = (0..4).map(|i| Curve::Line { start: corners[i], end: corners[(i + 1) % 4] }).collect();
@@ -563,9 +564,8 @@ fn tapered_round_is_the_plate_or_refused() {
         let mut radii = [3.0; 11];
         radii[9] = penultimate;
         radii[10] = 1.8;
-        if let Ok(round) = plate.fillet_variable([20.0, 0.0, 15.0], 0.1, [0.0, 0.0, 15.0], 3, &knots, &radii) {
-            let v = volume(&round);
-            assert!(v > 6400.0 && v < 6600.0, "penultimate radius {penultimate}: volume {v}");
-        }
+        let round = plate.fillet_variable([20.0, 0.0, 15.0], 0.1, [0.0, 0.0, 15.0], 3, &knots, &radii).unwrap();
+        let v = volume(&round);
+        assert!(v > 6500.0 && v < 6540.0, "penultimate radius {penultimate}: volume {v}");
     }
 }
