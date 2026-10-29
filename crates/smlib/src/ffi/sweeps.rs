@@ -441,6 +441,4 @@ pub fn sweep_stations(_: &List, _: &[f64], _: i32) -> Result<Handle, i32> {
 }
 
 #[cfg(feature = "solidcore")]
-pub use super::rs_sweeps::{
-    extrude, loft, loft_to_point, planar_faces, revolve, screw_sweep, screw_sweep_radial, sweep, sweep_placed,
-};
+pub use super::rs_sweeps::{extrude, loft, loft_to_point, planar_faces, revolve, screw_sweep, screw_sweep_radial, sweep, sweep_placed};

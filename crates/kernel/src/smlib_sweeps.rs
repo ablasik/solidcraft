@@ -1175,7 +1175,6 @@ mod imp {
         Ok(((t1 + t2).normalized().ok_or_else(|| KernelError::Invalid("path corner".into()))?, turn))
     }
 
-
     /// Where a column of a loft pairs an arc with another kind of curve (a circle section against a
     /// square's lines), each arc in it becomes a cubic Bézier chain (15 degrees a span) that
     /// runs round at a steady rate, so the ruling pairs points by distance round the arc, as a

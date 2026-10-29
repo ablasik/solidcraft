@@ -26,7 +26,7 @@ use solidcore::{EntityRef, FaceId};
 
 use super::ops::{ERR_NOT_SOLID, ERR_UNSUPPORTED};
 use super::rs::{state, status};
-use super::sweeps::{DRAFT_CORNER_ROUND, CURVE_ARC, CURVE_LINE, CURVE_NURBS, List};
+use super::sweeps::{CURVE_ARC, CURVE_LINE, CURVE_NURBS, DRAFT_CORNER_ROUND, List};
 use super::{ERR_ARG, Handle};
 
 fn point(a: &[f64]) -> Result<Point3, i32> {
@@ -197,7 +197,8 @@ pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, 
         let cs = curves(&mut s.kernel, profile)?;
         let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
         let height = if along > 0.0 { distance } else { -distance };
-        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, corner == DRAFT_CORNER_ROUND).map_err(|e| status(&e))?;
+        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, corner == DRAFT_CORNER_ROUND)
+            .map_err(|e| status(&e))?;
         return finish(b, cap);
     }
     let mut s = state();

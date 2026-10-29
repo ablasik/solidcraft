@@ -2,18 +2,18 @@
 //! the C API does: the nearest within the tolerance, by more than the body's tolerance nearer than
 //! any other. Faces moved or drafted, unequal chamfers and chord blends are in `rs_ops2`.
 use solidcore::blend::fillet_executive::p1::is_radius_supported;
+use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_geom::p1::FilletErrorType;
+use solidcore::blend::fillet_solver::p1::{FilletSurfaceGenerator, FilletSurfaceGeneratorType, MakeSurfaceBlendSih};
 use solidcore::blend::fillet_standard_solver::p1::{FilletLaw, FilletLawKind};
 use solidcore::geom::extent1d::Extent1d;
-use solidcore::nurbs::b_spline_curve::p1::BSplineCurve;
-use solidcore::nurbs::crv_basic::Curve as NurbCurve;
-use solidcore::nurbs::math::{CPoint, NOW};
-use solidcore::blend::fillet_executive::session::FilletSession;
-use solidcore::blend::fillet_solver::p1::{FilletSurfaceGenerator, FilletSurfaceGeneratorType, MakeSurfaceBlendSih};
 use solidcore::geom::object::ObjectRef;
 use solidcore::geom::tools::find_face;
 use solidcore::kernel::Kernel;
 use solidcore::math::{Point3, Vec3};
+use solidcore::nurbs::b_spline_curve::p1::BSplineCurve;
+use solidcore::nurbs::crv_basic::Curve as NurbCurve;
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::query::api_queries::{edge_closest_point, surface_closest_point};
 use solidcore::topology::brep::p2::is_manifold_solid;
 use solidcore::topology::brep::p5::{StitchAndOrientOptions, stitch_and_orient};
@@ -23,7 +23,9 @@ use solidcore::topology::face::p2::surface as face_surface;
 use solidcore::topology::{Brep, BrepId, EdgeId, FaceId};
 use solidcore::{EntityRef, SolidError};
 
-use super::ops::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_NO_ROOM, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, ERR_UNSUPPORTED, Pick, PickError};
+use super::ops::{
+    BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND, ERR_NO_ROOM, ERR_PICK_AMBIGUOUS, ERR_PICK_NONE, ERR_UNSUPPORTED, Pick, PickError,
+};
 use super::rs::{State, named_ref, state, status};
 use super::rs_ops::copy_of;
 use super::rs_ops2::finish;

@@ -16,12 +16,12 @@ use solidcore::math::{Point2, Point3, Vec3};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::topology::Brep;
+use solidcore::topology::EdgeuseId;
 use solidcore::topology::brep::p1::regions;
 use solidcore::topology::edge::other_vertex;
 use solidcore::topology::edgeuse::p1::{loopuse_edgeuses, mate, uv_trim_curve};
 use solidcore::topology::trimming_tools::{create_uv_trim_curves, face_uv_curves_present};
 use solidcore::topology::{LoopuseStart, vertexuse::edge_is_wire};
-use solidcore::topology::EdgeuseId;
 use solidcore::{EdgeId, FaceId, SolidError, VertexId};
 
 use super::rs::{SM_ERR_INVALID_INPUT, status};

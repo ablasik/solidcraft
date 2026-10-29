@@ -475,7 +475,8 @@ fn face_of(s: &NurbsSurface, corners: &[Vec3]) -> Result<Body> {
     // corners (an arc meeting a line at 180 degrees) is singular there, and an offset of it, a
     // thickening, has no normal to go along.
     let net: Vec<Vec3> = (0..nu).flat_map(|i| (0..nv).map(move |j| (i, j))).filter_map(|(i, j)| s.point(i, j).project()).collect();
-    let rim: Vec<Vec3> = row(0).iter().chain(&column(nu - 1)).chain(row(nv - 1).iter().rev()).chain(column(0).iter().rev()).filter_map(|h| h.project()).collect();
+    let rim: Vec<Vec3> =
+        row(0).iter().chain(&column(nu - 1)).chain(row(nv - 1).iter().rev()).chain(column(0).iter().rev()).filter_map(|h| h.project()).collect();
     if let Some((origin, n)) = flat_net(&net, &rim, size * 1e-9) {
         let u = (c[1] - c[0]).cross(n).cross(n) * -1.0;
         let u = u.normalized().or_else(|| n.cross(Vec3::X).normalized()).or_else(|| n.cross(Vec3::Y).normalized());
@@ -497,7 +498,6 @@ fn face_of(s: &NurbsSurface, corners: &[Vec3]) -> Result<Body> {
     let body = surface_body(&parts.canonical()?.brep)?;
     crate::surfaces::all_new(body, &[])
 }
-
 
 /// The plane the control points `net` all lie within `tol` of, as a point on it and its unit
 /// normal turned the way the closed polygon `rim` runs round it, if there is one.

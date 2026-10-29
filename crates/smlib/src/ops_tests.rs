@@ -540,7 +540,8 @@ fn sheet_with_a_tangent_arc_edge_thickens() {
     };
     let want = 2.0 * (100.0 + 12.5 * std::f64::consts::PI);
     for (name, arc) in [("analytic", analytic), ("rational", rational)] {
-        let sheet = Brep::planar_faces(&[line([0.0, 0.0], [10.0, 0.0]), line([10.0, 0.0], [10.0, 10.0]), arc, line([0.0, 10.0], [0.0, 0.0])]).unwrap();
+        let sheet =
+            Brep::planar_faces(&[line([0.0, 0.0], [10.0, 0.0]), line([10.0, 0.0], [10.0, 10.0]), arc, line([0.0, 10.0], [0.0, 0.0])]).unwrap();
         for symmetric in [false, true] {
             let slab = sheet.thicken(2.0, symmetric).unwrap_or_else(|e| panic!("{name} {symmetric}: {e}"));
             let check = slab.check(crate::CheckLevel::All).unwrap();
