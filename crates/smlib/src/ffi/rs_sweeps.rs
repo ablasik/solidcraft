@@ -1,6 +1,6 @@
 //! Extrusion, revolution and sweeps on solidcore. The profile's curve list becomes `solidcore` curves
 //! (lines, arcs and circles placed on their planes, NURBS curves); a drafted extrusion is built
-//! only from one whole circle, any other is refused ([`ERR_UNSUPPORTED`]).
+//! only from one whole circle or a polygon of lines (not `Round`), any other is refused ([`ERR_UNSUPPORTED`]).
 use solidcore::curve::curve::Curve;
 use solidcore::curve::curve::p2::CurveKind;
 use solidcore::geom::axis2_placement::Axis2Placement;
@@ -26,7 +26,7 @@ use solidcore::{EntityRef, FaceId};
 
 use super::ops::{ERR_NOT_SOLID, ERR_UNSUPPORTED};
 use super::rs::{state, status};
-use super::sweeps::{CURVE_ARC, CURVE_LINE, CURVE_NURBS, List};
+use super::sweeps::{DRAFT_CORNER_ROUND, CURVE_ARC, CURVE_LINE, CURVE_NURBS, List};
 use super::{ERR_ARG, Handle};
 
 fn point(a: &[f64]) -> Result<Point3, i32> {
@@ -141,19 +141,33 @@ fn finish(b: solidcore::Brep, cap: bool) -> Result<Handle, i32> {
     Ok(Handle::new(b))
 }
 
-pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, _corner: i32, cap: bool, _at: &mut [f64; 3]) -> Result<Handle, i32> {
+pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, corner: i32, cap: bool, _at: &mut [f64; 3]) -> Result<Handle, i32> {
     if !distance.is_finite() || direction.iter().any(|v| !v.is_finite()) || !draft.is_finite() {
         return Err(ERR_ARG);
     }
     if draft != 0.0 {
         // A taper needs the native shim's corner refusals (a corner that cannot close) and its
         // curvature rule, which solidcore's taper extrusion lacks. Both are moot for one whole
-        // circle, which has no corner: that is built, any other profile is refused.
+        // circle, which has no corner, and for a polygon of lines, whose corners all close by
+        // continuing the lines (or by an arc for `Round`): those are built, any other profile
+        // is refused.
         let records = records(profile);
-        let [(CURVE_ARC, r)] = records.as_slice() else { return Err(ERR_UNSUPPORTED) };
-        let (axis, dir) = (Vec3::new(r[3], r[4], r[5]), Vec3::new(direction[0], direction[1], direction[2]));
-        if r[11] - r[10] < std::f64::consts::TAU - 1e-12 {
-            return Err(ERR_UNSUPPORTED);
+        let circle = match records.as_slice() {
+            [(CURVE_ARC, r)] if r[11] - r[10] >= std::f64::consts::TAU - 1e-12 => Some(r),
+            rs if rs.iter().all(|(k, _)| *k == CURVE_LINE) => None,
+            _ => return Err(ERR_UNSUPPORTED),
+        };
+        let dir = Vec3::new(direction[0], direction[1], direction[2]);
+        // The normal the extrusion computes: a circle's axis, a polygon's winding (Newell).
+        let axis = match circle {
+            Some(r) => Vec3::new(r[3], r[4], r[5]),
+            None => records.iter().try_fold(Vec3::ZERO, |n, (_, r)| {
+                let (a, b) = (point(r)?, point(&r[3..])?);
+                Ok::<_, i32>(n + Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)))
+            })?,
+        };
+        if !(axis.length() > 0.0) {
+            return Err(ERR_ARG);
         }
         if !(draft.abs() < std::f64::consts::FRAC_PI_2 - 1e-6) || !(distance > 1e-9) {
             return Err(ERR_ARG);
@@ -163,11 +177,27 @@ pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, 
         if along.abs() < 1.0 - 1e-9 {
             return Err(ERR_ARG);
         }
+        if circle.is_none() {
+            if corner == DRAFT_CORNER_ROUND || !cap {
+                return Err(ERR_UNSUPPORTED);
+            }
+            let ring = records.iter().map(|(_, r)| point(r)).collect::<Result<Vec<_>, i32>>()?;
+            let (dir, n) = (dir / dir.length(), axis / axis.length());
+            let top = taper_ring(&ring, n, -distance * draft.tan()).ok_or(ERR_UNSUPPORTED)?;
+            let lift = dir * distance;
+            let top: Vec<Point3> = top.iter().map(|p| *p + lift).collect();
+            let mut loops = vec![ring.clone(), top.clone()];
+            loops.extend((0..ring.len()).map(|i| {
+                let j = (i + 1) % ring.len();
+                vec![ring[i], ring[j], top[j], top[i]]
+            }));
+            return stitched_solid(&loops);
+        }
         let mut s = state();
         let cs = curves(&mut s.kernel, profile)?;
         let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
         let height = if along > 0.0 { distance } else { -distance };
-        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, false).map_err(|e| status(&e))?;
+        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, corner == DRAFT_CORNER_ROUND).map_err(|e| status(&e))?;
         return finish(b, cap);
     }
     let mut s = state();
@@ -502,8 +532,14 @@ pub fn loft_to_point(section: &List, apex: &[f64; 3]) -> Result<Handle, i32> {
     if (Vec3::new(top.x, top.y, top.z) - o).dot(n / len).abs() <= eps {
         return Err(ERR_ARG);
     }
+    let mut loops = vec![ends.iter().map(|(a, _)| *a).collect::<Vec<_>>()];
+    loops.extend(ends.iter().map(|(a, b)| vec![*a, *b, top]));
+    stitched_solid(&loops)
+}
+
+/// A solid from planar polygons (corner lists, closed): a planar face on each, stitched and oriented.
+fn stitched_solid(loops: &[Vec<Point3>]) -> Result<Handle, i32> {
     let mut s = state();
-    let cs = curves(&mut s.kernel, section)?;
     let mut b = new_brep(&mut s.kernel, tol::USE_DEFAULT, tol::USE_DEFAULT).map_err(|e| status(&e))?;
     let region = b.infinite_region();
     let mut notify = ArenaNotifyState::new(&b);
@@ -512,19 +548,50 @@ pub fn loft_to_point(section: &List, apex: &[f64; 3]) -> Result<Handle, i32> {
     let this_face = |f: FaceId| key_of(EntityRef::Face(f));
     let mut marks = Marks::default();
     let mut fenv = FaceBuildEnv { env: &mut env, marks: &mut marks, this_face: &this_face };
-    let tol = 1.0e-5;
-    create_planar_face_with_3d_curves(&mut s.kernel, &mut b, region, &cs, tol, &mut fenv).map_err(|e| status(&e))?;
-    for (p0, p1) in &ends {
-        let side = [
-            Curve::from(create_line_segment(*p0, *p1).map_err(|e| status(&e))?),
-            Curve::from(create_line_segment(*p1, top).map_err(|e| status(&e))?),
-            Curve::from(create_line_segment(top, *p0).map_err(|e| status(&e))?),
-        ];
-        create_planar_face_with_3d_curves(&mut s.kernel, &mut b, region, &side, tol, &mut fenv).map_err(|e| status(&e))?;
+    for corners in loops {
+        let lines = (0..corners.len())
+            .map(|i| {
+                let (a, b) = (corners.get(i).ok_or(ERR_ARG)?, corners.get((i + 1) % corners.len()).ok_or(ERR_ARG)?);
+                Ok(Curve::from(create_line_segment(*a, *b).map_err(|e| status(&e))?))
+            })
+            .collect::<Result<Vec<_>, i32>>()?;
+        create_planar_face_with_3d_curves(&mut s.kernel, &mut b, region, &lines, 1.0e-5, &mut fenv).map_err(|e| status(&e))?;
     }
     stitch_and_orient(&mut s.kernel, &mut b, &StitchAndOrientOptions::default()).map_err(|e| status(&e))?;
     b.refresh_cached_topology();
     finish(b, true)
+}
+
+/// The polygon `ring` (in order, normal `n` by its winding) offset by `d` in its plane, outward when
+/// positive, each corner moved to where the offset edges cross. `None` where an edge would
+/// collapse or turn round (an inward offset past what the shape allows) or a corner is a reversal.
+fn taper_ring(ring: &[Point3], n: Vec3, d: f64) -> Option<Vec<Point3>> {
+    let m = ring.len();
+    let edge = |i: usize| -> Option<Vec3> {
+        let (a, b) = (ring.get(i)?, ring.get((i + 1) % m)?);
+        let e = Vec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+        (e.length() > 0.0).then(|| e / e.length())
+    };
+    let out = |i: usize| edge(i).map(|e| e.cross(n));
+    let mut top = Vec::with_capacity(m);
+    for i in 0..m {
+        let (o0, o1) = (out((i + m - 1) % m)?, out(i)?);
+        let k = 1.0 + o0.dot(o1);
+        if k < 1e-9 {
+            return None;
+        }
+        let (p, s) = (ring.get(i)?, (o0 + o1) * (d / k));
+        top.push(Point3::new(p.x + s.x, p.y + s.y, p.z + s.z));
+    }
+    // Every offset edge must still run the way its edge does.
+    for i in 0..m {
+        let (a, b) = (top.get(i)?, top.get((i + 1) % m)?);
+        let e = Vec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+        if e.dot(edge(i)?) <= 1e-9 {
+            return None;
+        }
+    }
+    Some(top)
 }
 
 /// `v` turned by `angle` about the unit `axis` (Rodrigues).
