@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Número de peza",
   "ui.design_properties.project": "Proxecto",
   "ui.design_properties.revision": "Revisión",
+  "ui.design_saved": "Gardado en {path}",
   "ui.diameter": "Diámetro",
   "ui.dimension": "Cota",
   "ui.direct_interaction": "Interacción directa",

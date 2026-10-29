@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Nombor bahagian",
   "ui.design_properties.project": "Projek",
   "ui.design_properties.revision": "Semakan",
+  "ui.design_saved": "Disimpan ke {path}",
   "ui.diameter": "Diameter",
   "ui.dimension": "Dimensi",
   "ui.direct_interaction": "Interaksi langsung",

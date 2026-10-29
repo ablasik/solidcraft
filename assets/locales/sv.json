@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Artikelnummer",
   "ui.design_properties.project": "Projekt",
   "ui.design_properties.revision": "Revision",
+  "ui.design_saved": "Sparad i {path}",
   "ui.diameter": "Diameter",
   "ui.dimension": "Mått",
   "ui.direct_interaction": "Direktinteraktion",

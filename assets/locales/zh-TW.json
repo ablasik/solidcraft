@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "零件編號",
   "ui.design_properties.project": "專案",
   "ui.design_properties.revision": "修訂版本",
+  "ui.design_saved": "已儲存至 {path}",
   "ui.diameter": "直徑",
   "ui.dimension": "尺寸",
   "ui.direct_interaction": "直接互動",

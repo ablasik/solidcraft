@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Număr piesă",
   "ui.design_properties.project": "Proiect",
   "ui.design_properties.revision": "Revizie",
+  "ui.design_saved": "Salvat în {path}",
   "ui.diameter": "Diametru",
   "ui.dimension": "Cotă",
   "ui.direct_interaction": "Interacțiune directă",

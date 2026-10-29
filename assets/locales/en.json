@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "Part number",
   "ui.design_properties.project": "Project",
   "ui.design_properties.revision": "Revision",
+  "ui.design_saved": "Saved {path}",
   "ui.diameter": "Diameter",
   "ui.dimension": "Dimension",
   "ui.direct_interaction": "Direct interaction",

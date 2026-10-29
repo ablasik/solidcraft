@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Référence",
   "ui.design_properties.project": "Projet",
   "ui.design_properties.revision": "Indice",
+  "ui.design_saved": "Enregistré dans {path}",
   "ui.diameter": "Diamètre",
   "ui.dimension": "Cote",
   "ui.direct_interaction": "Interaction directe",

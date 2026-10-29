@@ -3647,6 +3647,7 @@
   "ui.design_properties.part_number": "Parça numarası",
   "ui.design_properties.project": "Proje",
   "ui.design_properties.revision": "Revizyon",
+  "ui.design_saved": "{path} konumuna kaydedildi",
   "ui.diameter": "Çap",
   "ui.dimension": "Ölçü",
   "ui.direct_interaction": "Doğrudan etkileşim",

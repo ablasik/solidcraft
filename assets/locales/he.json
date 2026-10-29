@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "מק\"ט",
   "ui.design_properties.project": "פרויקט",
   "ui.design_properties.revision": "גרסה",
+  "ui.design_saved": "נשמר ב־{path}",
   "ui.diameter": "קוטר",
   "ui.dimension": "מידה",
   "ui.direct_interaction": "אינטראקציה ישירה",

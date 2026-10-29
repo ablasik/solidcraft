@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Cikkszám",
   "ui.design_properties.project": "Projekt",
   "ui.design_properties.revision": "Revízió",
+  "ui.design_saved": "Mentve ide: {path}",
   "ui.diameter": "Átmérő",
   "ui.dimension": "Méret",
   "ui.direct_interaction": "Közvetlen interakció",

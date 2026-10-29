@@ -3648,6 +3648,7 @@
   "ui.design_properties.part_number": "Onderdeelnummer",
   "ui.design_properties.project": "Project",
   "ui.design_properties.revision": "Revisie",
+  "ui.design_saved": "Opgeslagen in {path}",
   "ui.diameter": "Diameter",
   "ui.dimension": "Maat",
   "ui.direct_interaction": "Directe interactie",

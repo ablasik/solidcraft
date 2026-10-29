@@ -3141,6 +3141,7 @@
   "ui.design_properties.part_number": "Teilenummer",
   "ui.design_properties.project": "Projekt",
   "ui.design_properties.revision": "Revision",
+  "ui.design_saved": "Gespeichert unter {path}",
   "ui.diameter": "Durchmesser",
   "ui.dimension": "Maß",
   "ui.direct_interaction": "Direkte Bearbeitung",

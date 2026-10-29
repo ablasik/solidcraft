@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Номер деталі",
   "ui.design_properties.project": "Проєкт",
   "ui.design_properties.revision": "Редакція",
+  "ui.design_saved": "Збережено в {path}",
   "ui.diameter": "Діаметр",
   "ui.dimension": "Розмір",
   "ui.direct_interaction": "Пряма взаємодія",

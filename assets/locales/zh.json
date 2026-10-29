@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "零件号",
   "ui.design_properties.project": "项目",
   "ui.design_properties.revision": "版本",
+  "ui.design_saved": "已保存到 {path}",
   "ui.diameter": "直径",
   "ui.dimension": "尺寸",
   "ui.direct_interaction": "直接交互",

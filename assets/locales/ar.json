@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "رقم القطعة",
   "ui.design_properties.project": "المشروع",
   "ui.design_properties.revision": "المراجعة",
+  "ui.design_saved": "تم الحفظ في {path}",
   "ui.diameter": "القطر",
   "ui.dimension": "البُعد",
   "ui.direct_interaction": "التفاعل المباشر",

@@ -3057,6 +3057,7 @@
   "ui.design_properties.part_number": "Número de pieza",
   "ui.design_properties.project": "Proyecto",
   "ui.design_properties.revision": "Revisión",
+  "ui.design_saved": "Guardado en {path}",
   "ui.diameter": "Diámetro",
   "ui.dimension": "Cota",
   "ui.direct_interaction": "Interacción directa",

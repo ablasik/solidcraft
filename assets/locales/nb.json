@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Delenummer",
   "ui.design_properties.project": "Prosjekt",
   "ui.design_properties.revision": "Revisjon",
+  "ui.design_saved": "Lagret i {path}",
   "ui.diameter": "Diameter",
   "ui.dimension": "Mål",
   "ui.direct_interaction": "Direkte interaksjon",

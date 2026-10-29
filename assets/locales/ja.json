@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "部品番号",
   "ui.design_properties.project": "プロジェクト",
   "ui.design_properties.revision": "リビジョン",
+  "ui.design_saved": "{path} に保存しました",
   "ui.diameter": "直径",
   "ui.dimension": "寸法",
   "ui.direct_interaction": "ダイレクト操作",

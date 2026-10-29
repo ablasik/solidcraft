@@ -3773,6 +3773,7 @@
   "ui.design_properties.part_number": "Mã số chi tiết",
   "ui.design_properties.project": "Dự án",
   "ui.design_properties.revision": "Lần sửa đổi (Revision)",
+  "ui.design_saved": "Đã lưu vào {path}",
   "ui.diameter": "Đường kính",
   "ui.dimension": "Kích thước",
   "ui.direct_interaction": "Tương tác trực tiếp",

@@ -3644,6 +3644,7 @@
   "ui.design_properties.part_number": "Codice parte",
   "ui.design_properties.project": "Progetto",
   "ui.design_properties.revision": "Revisione",
+  "ui.design_saved": "Salvato in {path}",
   "ui.diameter": "Diametro",
   "ui.dimension": "Quota",
   "ui.direct_interaction": "Interazione diretta",
