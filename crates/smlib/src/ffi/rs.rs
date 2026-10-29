@@ -54,6 +54,8 @@ pub(super) struct State {
 /// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on opt-in upstream fixes (`UpstreamFixes`), for measuring them.
 fn new_kernel() -> Kernel {
     let mut k = Kernel::default();
+    // Not upstream, and wanted always: four equal rounds meeting at a point get the sphere through their arcs.
+    k.fixes.fillet_corner_sphere_from_four_arcs = true;
     let spec = std::env::var("SOLIDCORE_FIXES").unwrap_or_default();
     for name in spec.split(',') {
         let all = name == "all";
