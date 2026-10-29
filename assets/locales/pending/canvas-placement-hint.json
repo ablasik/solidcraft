@@ -1,0 +1,26 @@
+{
+  "en": {
+    "canvas.decal_place_hint": "Click a face to place the decal",
+    "canvas.place_hint": "Click a plane or face to place the canvas"
+  },
+  "ar": {
+    "canvas.decal_place_hint": "انقر على وجه لوضع الملصق",
+    "canvas.place_hint": "انقر على مستوى أو وجه لوضع الصورة المرجعية"
+  },
+  "he": {
+    "canvas.decal_place_hint": "יש ללחוץ על פאה כדי למקם את המדבקה",
+    "canvas.place_hint": "יש ללחוץ על מישור או פאה כדי למקם את תמונת הייחוס"
+  },
+  "ja": {
+    "canvas.decal_place_hint": "面をクリックしてデカールを配置",
+    "canvas.place_hint": "平面または面をクリックしてキャンバスを配置"
+  },
+  "vi": {
+    "canvas.decal_place_hint": "Nhấp vào một mặt để đặt hình dán",
+    "canvas.place_hint": "Nhấp vào mặt phẳng hoặc mặt để đặt ảnh tham chiếu"
+  },
+  "zh": {
+    "canvas.decal_place_hint": "单击一个面以放置贴花",
+    "canvas.place_hint": "单击平面或面以放置画布"
+  }
+}

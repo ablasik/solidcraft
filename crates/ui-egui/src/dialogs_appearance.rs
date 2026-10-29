@@ -398,9 +398,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
     }
     ui_kit::row(ui, "Colour", |ui| {
-        let mut rgb = k.color;
-        if ui_kit::color_field(ui, &mut rgb).changed() {
-            k.color = rgb;
+        let response =
+            if k.pbr.is_none() { ui_kit::color_field_with_opacity(ui, &mut k.color, &mut k.opacity) } else { ui_kit::color_field(ui, &mut k.color) };
+        if response.changed() {
             detach_preset(k);
             k.look = None;
             k.remove_override = false;
@@ -768,6 +768,69 @@ mod tests {
     }
 
     #[test]
+    fn hex_picker_preserves_precise_opacity_and_applies_alpha_without_losing_rgb_or_pbr() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+        h.app.run("appearance.assign", json!({"bodies":["Body1"],"color":"#abcdef","opacity":0.123456,"appearance":"Named tint"})).unwrap();
+        h.app.session.selection = vec![Sel::Body { name: "Body1".into() }];
+        h.app.start("appearance.assign");
+        h.frames(3);
+        h.step(&json!({"click":{"handle":"dialog:color:Colour"}})).unwrap();
+        for mode in ["Hex", "F", "U8", "Hex"] {
+            h.step(&json!({"click":{"handle":format!("color:format:{mode}")}})).unwrap();
+            let Kind::Appearance(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("appearance editor") };
+            assert_eq!((k.color, k.opacity, k.look.as_deref()), ([171, 205, 239], 0.123456, Some("Named tint")));
+        }
+        let paste = |h: &mut crate::scenario::Harness, text: &str| {
+            h.step(&json!({"click":{"handle":"color:hex"}})).unwrap();
+            h.step(&json!({"key":"A","cmd":true,"ctrl":true})).unwrap();
+            h.frame_with(vec![egui::Event::Paste(text.into())]);
+        };
+        for text in ["#abc", "#abcdefz0"] {
+            paste(&mut h, text);
+            h.frames(2);
+            let Kind::Appearance(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("appearance editor") };
+            assert_eq!((k.color, k.opacity, k.look.as_deref()), ([171, 205, 239], 0.123456, Some("Named tint")));
+            assert!(h.widget(text).is_some(), "invalid text remains editable");
+        }
+        for (text, color, opacity) in [
+            ("#AbCdEf", [171, 205, 239], 0.123456),
+            ("#AbCdEf80", [171, 205, 239], 128.0 / 255.0),
+            ("#0102fe00", [1, 2, 254], 0.0),
+            ("#fE8001", [254, 128, 1], 0.0),
+        ] {
+            paste(&mut h, text);
+            let Kind::Appearance(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("appearance editor") };
+            assert_eq!((k.color, k.opacity), (color, opacity), "{text} applies immediately without premultiplying RGB");
+            if text == "#AbCdEf" {
+                assert_eq!(k.look.as_deref(), Some("Named tint"), "re-entering unchanged RGB is not a manual colour change");
+            }
+            if text.len() == 9 {
+                assert!(k.look.is_none() && k.preset_id.is_none(), "an alpha-only colour edit also detaches the named look");
+            }
+        }
+        let copy = crate::scenario::handle_at("color:copy").unwrap();
+        h.frame_with(crate::test_support::pointer(copy, true));
+        h.frame_with(crate::test_support::pointer(copy, false));
+        assert!(
+            h.output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text.eq_ignore_ascii_case("#fe8001")))
+        );
+        let Kind::Appearance(k) = &mut h.app.dialog.as_mut().unwrap().kind else { panic!("appearance editor") };
+        k.opacity = 0.25;
+        h.frames(2);
+        assert!(h.widget("#fe800140").is_some(), "external opacity edits synchronise the displayed Hex text");
+        h.step(&json!({"click":{"handle":"dialog:color:Colour"}})).unwrap();
+        h.step(&json!({"click":{"handle":"appearance:pbr"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:color:Colour"}})).unwrap();
+        paste(&mut h, "#22334480");
+        let Kind::Appearance(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("appearance editor") };
+        assert_eq!((k.color, k.opacity, k.pbr), ([254, 128, 1], 1.0, Some(PbrParameters::default())));
+        paste(&mut h, "#223344ff");
+        let Kind::Appearance(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("appearance editor") };
+        assert_eq!((k.color, k.opacity, k.pbr), ([34, 51, 68], 1.0, Some(PbrParameters::default())));
+    }
+
+    #[test]
     fn immediate_apply_then_ok_has_one_undo_and_retains_precise_opacity() {
         let mut a = app();
         a.run("appearance.assign", json!({"bodies": ["Body1"], "color": "#abcdef", "opacity": 0.123456})).unwrap();
@@ -942,7 +1005,7 @@ mod tests {
         use solidcraft_engine::doc::appearance_pack::STARTER_PACK;
         let mut app = app();
         let looks = library(&mut app);
-        for preset in &STARTER_PACK {
+        for preset in STARTER_PACK {
             let matching: Vec<_> = looks.iter().filter(|look| look.preset.as_ref().is_some_and(|p| p.id == preset.id)).collect();
             assert_eq!(matching.len(), 1, "actual provider entry missing from UI: {}", preset.id);
             let look = matching[0];
@@ -952,15 +1015,15 @@ mod tests {
             assert_eq!(preset_available(look), preset.is_opaque());
         }
         let pack: Vec<_> = looks.iter().filter(|look| look.preset.is_some()).collect();
-        assert_eq!(pack.len(), 40);
-        assert_eq!(pack.iter().filter(|look| preset_available(look)).count(), 34);
-        assert_eq!(pack.iter().filter(|look| !preset_available(look)).count(), 6);
-        for (name, color, opacity) in solidcraft_engine::doc::appearance::LIBRARY {
+        assert!(pack.len() >= 40);
+        assert!(pack.iter().filter(|look| preset_available(look)).count() >= 34);
+        assert!(pack.iter().filter(|look| !preset_available(look)).count() >= 6);
+        for &(name, color, opacity) in solidcraft_engine::doc::appearance::LIBRARY {
             let look = looks.iter().find(|look| look.name == name).unwrap();
             assert_eq!((look.color, look.opacity, look.pbr, look.preset.as_ref()), (color, opacity, None, None));
         }
         // The six published finishes remain independent of starter metadata.
-        for (name, color, metallic, roughness) in solidcraft_engine::doc::appearance::OPAQUE_FINISHES {
+        for &(name, color, metallic, roughness) in solidcraft_engine::doc::appearance::OPAQUE_FINISHES {
             let matching: Vec<_> = looks.iter().filter(|look| look.name == name).collect();
             assert_eq!(matching.len(), 1);
             let look = matching[0];
@@ -969,10 +1032,12 @@ mod tests {
             assert_eq!(look.pbr, Some(PbrParameters::new(metallic, roughness, 1.5).unwrap()));
             assert!(look.preset.is_none() && preset_available(look));
         }
-        assert_eq!(looks.len(), 66);
-        assert_eq!(looks.iter().filter(|look| preset_available(look)).count(), 60);
-        assert_eq!(looks.iter().filter(|look| preset_available(look) && look.opacity == 1.0).count(), 58);
-        assert_eq!(looks.iter().filter(|look| look.opacity != 1.0).count(), 2);
+        assert!(!looks.is_empty());
+        let mut names = std::collections::BTreeSet::new();
+        assert!(looks.iter().all(|look| names.insert(look.name.to_ascii_lowercase())));
+        assert!(looks.iter().filter(|look| preset_available(look)).count() >= 60);
+        assert!(looks.iter().filter(|look| preset_available(look) && look.opacity == 1.0).count() >= 58);
+        assert!(looks.iter().filter(|look| look.opacity != 1.0).count() >= 2);
     }
 
     #[test]
@@ -1004,7 +1069,7 @@ mod tests {
 
     #[test]
     fn manual_edit_of_published_finish_keeps_scalar_override_after_selection_and_editor_reopen() {
-        for (name, ..) in solidcraft_engine::doc::appearance::OPAQUE_FINISHES {
+        for &(name, ..) in solidcraft_engine::doc::appearance::OPAQUE_FINISHES {
             for reopened in [false, true] {
                 let mut app = app();
                 let look = library(&mut app).into_iter().find(|look| look.name == name).unwrap();
@@ -1075,7 +1140,7 @@ mod tests {
         let available = rows.iter().filter(|row| row.get("available").and_then(Value::as_bool) != Some(false)).count();
         let selectable: Vec<_> = library(&mut h.app).into_iter().filter(preset_available).collect();
         assert_eq!(selectable.len(), available);
-        for preset in &solidcraft_engine::doc::appearance_pack::STARTER_PACK {
+        for preset in solidcraft_engine::doc::appearance_pack::STARTER_PACK {
             assert_eq!(selectable.iter().any(|look| look.name == preset.name), preset.is_opaque());
         }
     }

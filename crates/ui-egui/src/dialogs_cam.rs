@@ -94,9 +94,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CamForm, inputs: &[Se
     let s = &app.session;
     let (cams, followers) = (joints_of(s, &[JointKind::Revolute]), joints_of(s, &[JointKind::Slider, JointKind::Revolute]));
     if cams.is_empty() || followers.len() < 2 && followers.iter().all(|j| cams.iter().any(|c| c.0 == j.0)) {
-        form_row(ui, "", |ui| {
-            ui.label(RichText::new(crate::i18n::tr_label("needs a joint that turns and one that slides or swings")).color(t.text_dim));
-        });
+        crate::ui_kit::status_line(ui, "needs a joint that turns and one that slides or swings", crate::ui_kit::StatusTone::Dim);
         return false;
     }
     // A profile picked on a part chooses the joint that part turns on, once.

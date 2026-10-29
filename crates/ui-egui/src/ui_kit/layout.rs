@@ -57,22 +57,90 @@ pub(super) fn in_catalog(ui: &Ui) -> bool {
     ui.stack().iter().any(|node| node.tags().contains("sc_catalog"))
 }
 
-/// Quiet full-width library footer with the shared information glyph.
-pub(crate) fn catalog_footer(ui: &mut Ui, text: &str) {
+/// One-line library footer with the shared information glyph.
+pub(crate) fn catalog_footer_height(ui: &Ui) -> f32 {
     let t = Tokens::get();
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.control_height), egui::Sense::hover());
+    let line = ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(t.font_small)));
+    (line + t.space_16).max(t.control_height)
+}
+
+/// Single-line catalog note. Attach further guidance to the returned response.
+pub(crate) fn catalog_footer(ui: &mut Ui, text: &str) -> Response {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), catalog_footer_height(ui)), egui::Sense::hover());
     t.secondary_hline(ui.painter(), rect.x_range(), rect.top(), t.dialog_rule);
-    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_6, rect.center().y), vec2(t.space_12, t.space_12));
+    let icon =
+        egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_6, rect.top() + t.space_8 + t.font_small * 0.5), vec2(t.space_12, t.space_12));
     ui.painter().circle_stroke(icon.center(), t.space_4, t.control_border_stroke(t.form_dim));
     ui.painter().text(icon.center(), egui::Align2::CENTER_CENTER, "i", crate::fonts::semibold(t.font_badge), t.form_dim);
-    paint_text(
-        ui,
-        egui::Rect::from_min_max(egui::pos2(icon.right() + t.space_6, rect.top()), rect.max),
-        text,
-        egui::FontId::proportional(t.font_small),
-        t.form_dim,
-        false,
-    );
+    let mut job =
+        egui::text::LayoutJob::simple(text.to_owned(), egui::FontId::proportional(t.font_small), t.form_dim, (rect.width() - t.space_24).max(1.0));
+    job.wrap.max_rows = 1;
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(rect.left_top() + vec2(t.space_24, t.space_8), galley, t.form_dim);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
+    crate::scenario::publish_rect("catalog:footer", rect);
+    response
+}
+
+/// A short note with further guidance on its information icon and text.
+pub(crate) fn catalog_footer_with_tip(ui: &mut Ui, text: &str, tip: &str) {
+    catalog_footer(ui, text).on_hover_text(tip);
+}
+
+/// A filling catalog body above a measured, bottom-anchored footer. Long detail
+/// cards scroll independently so the body retains its requested minimum height.
+pub(crate) struct CatalogLayout {
+    id: egui::Id,
+    key: String,
+    bounds: egui::Rect,
+    footer_height: f32,
+    min_body_height: f32,
+}
+
+impl CatalogLayout {
+    pub(crate) fn new(ui: &Ui, id: &str, min_rows: usize) -> Self {
+        let key = id.to_owned();
+        let id = ui.make_persistent_id(id);
+        let t = Tokens::get();
+        let min_body_height = min_rows as f32 * (t.control_height + t.space_10) + min_rows.saturating_sub(1) as f32 * ui.spacing().item_spacing.y;
+        Self {
+            id,
+            key,
+            bounds: ui.available_rect_before_wrap(),
+            footer_height: ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0),
+            min_body_height,
+        }
+    }
+
+    pub(crate) fn body<R>(&self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let gap = ui.spacing().item_spacing.y;
+        let height = (ui.available_height() - self.footer_height - gap).max(self.min_body_height).min(ui.available_height()).max(0.0);
+        let scroll = egui::ScrollArea::vertical()
+            .id_salt(self.id.with("body"))
+            .max_height(height)
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, false])
+            .show(ui, add);
+        scenario::publish_rect(&format!("{}:body", self.key), scroll.inner_rect);
+        scroll.inner
+    }
+
+    pub(crate) fn footer(&self, ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+        let scroll = egui::ScrollArea::vertical()
+            .id_salt(self.id.with("footer"))
+            .max_height(ui.available_height().max(0.0))
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, add);
+        let height = scroll.content_size.y;
+        ui.data_mut(|data| data.insert_temp(self.id, height));
+        if (height - self.footer_height).abs() > 0.5 {
+            ui.ctx().request_discard("catalog footer measurement changed");
+        }
+        scenario::publish_rect(&format!("{}:content", self.key), self.bounds);
+        scenario::publish_rect(&format!("{}:footer", self.key), scroll.inner_rect);
+    }
 }
 
 /// Read the enclosing row accessibility label. Tokens: `none`.
@@ -101,6 +169,28 @@ pub(super) fn publish(ui: &Ui, response: &Response, kind: egui::WidgetType) {
 /// Aligned label/control row, 28 pt. Tokens: `control_height, form_label_width, font_label, dialog_label, space_8`.
 pub(crate) fn row<R>(ui: &mut Ui, text: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
     sized_row(ui, text, row_height(), control)
+}
+
+/// Semantic ink for a form's explanatory message.
+#[derive(Clone, Copy)]
+pub(crate) enum StatusTone {
+    Dim,
+    Warning,
+    Error,
+}
+
+/// Full-width, wrapping status or refusal text. Place directly in the form, outside a `row`:
+/// rows clip their controls to one line. Tokens: `font_label, text_dim, warning, error`.
+pub(crate) fn status_line(ui: &mut Ui, text: &str, tone: StatusTone) -> Response {
+    let t = Tokens::get();
+    let ink = match tone {
+        StatusTone::Dim => t.text_dim,
+        StatusTone::Warning => t.warning,
+        StatusTone::Error => t.error,
+    };
+    let response = ui.add(egui::Label::new(RichText::new(crate::i18n::tr_label(text)).size(t.font_label).color(ink)).wrap());
+    scenario::publish_rect(&format!("dialog:status:{text}"), response.rect);
+    response
 }
 
 /// Declarative expression row; retains the field's completion and accepted Enter. Tokens: `row, field`.
@@ -272,6 +362,18 @@ pub(crate) fn section_heading(ui: &mut Ui, title: &str) {
 
 pub(crate) fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     section_count(ui, id, title, default_open, None::<usize>, add)
+}
+
+/// Section with a renderer/method tag. Shares disclosure, typography and badge tokens with section_count.
+pub(crate) fn section_method<R>(
+    ui: &mut Ui,
+    id: impl egui::AsIdSalt,
+    title: &str,
+    default_open: bool,
+    method: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    section_count(ui, id, title, default_open, Some(method), add)
 }
 
 /// Section heading with an optional count badge; disclosure state uses the same identity.
@@ -552,6 +654,17 @@ pub(crate) enum Text<'a> {
     Value(&'a str, bool),
 }
 
+fn note_galley(ui: &Ui, text: &str) -> std::sync::Arc<egui::Galley> {
+    let t = Tokens::get();
+    ui.painter().layout(text.to_owned(), egui::FontId::proportional(t.font_small), t.form_dim, dimension(ui.available_width()))
+}
+
+/// Reserve the actual wrapped note height when budgeting a bounded card's scroll area.
+#[cfg(test)]
+pub(crate) fn note_height(ui: &Ui, text: &str) -> f32 {
+    note_galley(ui, text).size().y + Tokens::get().space_4 * 2.0
+}
+
 pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
     if crate::prefs_search::querying(ui) {
         let heading = matches!(style, Text::Heading(_));
@@ -608,7 +721,7 @@ pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
             .inner
     } else if matches!(style, Text::Hint(_) | Text::Note(_) | Text::MonoNote(_)) {
         let width = dimension(ui.available_width());
-        let galley = ui.painter().layout(text.to_owned(), font, ink, width);
+        let galley = if matches!(style, Text::Note(_)) { note_galley(ui, text) } else { ui.painter().layout(text.to_owned(), font, ink, width) };
         let padding = if matches!(style, Text::Note(_) | Text::MonoNote(_)) { t.space_4 } else { 0.0 };
         let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + padding * 2.0), egui::Sense::hover());
         ui.painter().galley(egui::pos2(rect.left(), rect.top() + padding), galley, ink);

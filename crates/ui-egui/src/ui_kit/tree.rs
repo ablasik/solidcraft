@@ -32,12 +32,18 @@ pub(crate) struct Row<'a> {
     pub(crate) selected: bool,
     pub(crate) dim: bool,
     pub(crate) color: Option<Color32>,
+    /// Draw the icon in this one colour instead of its artwork (a sketch's solve state, #7245).
+    pub(crate) icon_ink: Option<Color32>,
+    /// The row's tooltip (a sketch's solve state), after its full name when that is cut short.
+    pub(crate) tip: Option<&'a str>,
     /// Component rows: is it the active one?
     pub(crate) radio: Option<bool>,
     /// Trailing badges: "lock", "pin".
     pub(crate) badges: &'a [&'a str],
     /// A button right after the name: (icon, tooltip label), e.g. a feature's profile sketch.
     pub(crate) action: Option<(&'a str, &'a str)>,
+    /// A message id the row's tooltip names it by (a body row: mesh, surface or solid body).
+    pub(crate) kind_tip: Option<&'a str>,
     /// Lit by the selection or the 3D view's pointer: the item's own row, or a row leading to it.
     pub(crate) mark: Mark,
     /// Optional document appearance and shared trailing text slots.
@@ -213,7 +219,11 @@ pub(crate) fn tree_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         let ir = Rect::from_min_size(pos2(x, cy - 8.0), vec2(t.space_16, t.space_16));
         // Icons are full-colour images (a tint colour only sets their opacity): a hidden or
         // faded row draws its icon faint, like its label.
-        icons::paint_icon(ui.painter(), ir, row.icon, if row.dim { DIM_ICON_OPACITY } else { 1.0 });
+        let opacity = if row.dim { DIM_ICON_OPACITY } else { 1.0 };
+        match row.icon_ink {
+            Some(ink) => icons::paint_ink(ui.painter(), ir, row.icon, ink.gamma_multiply(opacity)),
+            None => icons::paint_icon(ui.painter(), ir, row.icon, opacity),
+        }
         x += 21.0;
     }
     if let Some(color) = row.swatch {
@@ -298,13 +308,16 @@ pub(crate) fn tree_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         3 => Some(if row.radio == Some(true) { crate::i18n::tr("ui.active_component") } else { crate::i18n::tr("ui.activate") }),
         _ => None,
     };
-    let resp = match tip {
-        Some(t) => resp.on_hover_text(t),
-        None if !row.secondary.is_empty() || !row.count.is_empty() => {
+    let state = row.kind_tip.map(crate::i18n::tr).or(row.tip);
+    let resp = match (tip, state) {
+        (Some(t), _) => resp.on_hover_text(t),
+        (None, Some(state)) if elided => resp.on_hover_text(format!("{label_display}\n{state}")),
+        (None, Some(state)) => resp.on_hover_text(state),
+        (None, None) if !row.secondary.is_empty() || !row.count.is_empty() => {
             resp.on_hover_text(format!("{label_display}\n{}\n{}", row.secondary, row.count))
         }
-        None if elided => resp.on_hover_text(label_display.to_string()),
-        None => resp,
+        (None, None) if elided => resp.on_hover_text(label_display.to_string()),
+        (None, None) => resp,
     };
     out.on_control = press_on != 0 || over_action(ui.input(|i| i.pointer.press_origin()));
     out.clicked = resp.clicked() && click_on == 0 && !action_click;

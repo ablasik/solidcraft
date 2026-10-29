@@ -55,6 +55,17 @@ fn navigation_sample(ui: &mut Ui, size: crate::navigation_bar::Size) {
 
 // One entry per element/variant: names, rendering and geometry expectations stay together.
 const ELEMENTS: &[Element] = &[
+    element!("viewport_status_item", "viewport_status:sample:item", Some("viewport_status:sample:close"), |ui, _| {
+        let item = StatusItem {
+            id: "sample".into(),
+            kind: StatusKind::Mode,
+            name: "Draft".into(),
+            setting: "Z · 1°".into(),
+            has_key: true,
+            editable: false,
+        };
+        viewport_status_item(ui, &item, &mut StatusPresentation::default());
+    }),
     element!("sphere_thumbnail", |ui, _| {
         ui.horizontal(|ui| {
             for kind in [FinishKind::Matte, FinishKind::Satin, FinishKind::Gloss, FinishKind::Metal, FinishKind::Glass] {
@@ -118,6 +129,30 @@ const ELEMENTS: &[Element] = &[
             button(ui, "Reset to default", Button::Normal);
         });
     }),
+    element!("linear_color_field", |ui, _| {
+        row(ui, "Zenith", |ui| linear_color_field(ui, &mut [0.5, 0.64, 0.81], 1e6));
+    }),
+    element!("section_method", |ui, _| {
+        section_method(ui, "gallery_method", "Atmosphere", true, "GPU", |ui| {
+            text(ui, "Participating medium", Text::Inline);
+        });
+    }),
+    element!("segments_availability", |ui, state| {
+        segmented(
+            ui,
+            &mut state.selected,
+            &["World", "Colour", "Gradient", "Clear"],
+            Segments { enabled: &[false, true, false, true], compact: true, ..Default::default() },
+        );
+    }),
+    element!("read_only_text", |ui, _| {
+        read_only_text(ui, "{\n  \"samples\": 256\n}");
+    }),
+    element!("method_section_sampling", |ui, state| {
+        method_section(ui, "gallery_method", "Path tracing", "GPU", Some("Needs GPU path tracing"), |ui| {
+            checkbox(ui, "Reduce noise", &mut state.checked);
+        });
+    }),
     element!("tree_row_rect", |ui, _| {
         for (index, row) in [
             Row { label: "Objects", ..Default::default() },
@@ -159,14 +194,21 @@ const ELEMENTS: &[Element] = &[
     element!("text_button", |ui, _| {
         text_button(ui, "Reset", true);
     }),
-    element!("color_hex_field", |ui, _| {
-        color_hex_field(ui, &mut [52, 92, 160], None);
-    }),
     element!("mixed_slider", |ui, _| {
         mixed_slider(ui, &mut 0.5, 0.0..=1.0, None);
     }),
     element!("searchable_icon_dropdown", |ui, _| {
         searchable_icon_dropdown(ui, "spin", "Replace…", &mut String::new(), &[]);
+    }),
+    element!("number_pair", |ui, _| {
+        let (mut w, mut h) = (1920, 1080);
+        number_pair(ui, "Size", [&mut w, &mut h], 1..=16384, 1.0, "");
+    }),
+    element!("progress_action", |ui, _| {
+        progress_action(ui, "Rendering · 62%", 0.62, "Cancel");
+    }),
+    element!("settings_choice_row", |ui, _| {
+        settings_choice_row(ui, &SettingsChoice { key: "gallery:radio_row", title: "Preview", summary: "1280 × 720", detail: "Preview size" }, true);
     }),
     element!("icon_label_action", |ui, _| {
         icon_label_action(ui, "Render Image", Some("play"), true, true);
@@ -206,6 +248,15 @@ const ELEMENTS: &[Element] = &[
         let actions =
             [TreeAction { icon: "lookat", hover_only: true, label: "Solo", reason: Some("Not available yet"), target: "gallery:tree:solo" }];
         tree_row(ui, ui.id().with("tree_actions"), &Row { label: "Light", actions: &actions, ..Default::default() });
+    }),
+    element!("selection_actions", |ui, _| {
+        let actions = [
+            StageAction { icon: Some("chain"), label: "Appearance Chain", enabled: true, primary: false, reason: None },
+            StageAction { icon: Some("reorder"), label: "Replace All", enabled: true, primary: false, reason: None },
+            StageAction { icon: Some("star"), label: "Favourite Look", enabled: true, primary: true, reason: None },
+            StageAction { icon: Some("suppress"), label: "Hide", enabled: true, primary: false, reason: None },
+        ];
+        selection_actions(ui, "Boss", &actions);
     }),
     element!("catalog_scope", |ui, state| {
         catalog_scope(ui, |ui| {
@@ -255,6 +306,63 @@ const ELEMENTS: &[Element] = &[
         let mut value = 0.5;
         mixed_scalar_field(ui, &mut value, 0.0..=1.0, Some("Mixed"));
     }),
+    element!("check_line", |ui, _s| {
+        check_line(ui, "gallery:check_ok", "Ready", false);
+    }),
+    element!("check_line_warning", |ui, _s| {
+        check_line(ui, "gallery:check_warning", "Transparency approximation", true);
+    }),
+    element!("check_line_error", |ui, _s| {
+        check_status_line(ui, "gallery:check_error", "Image size exceeds the renderer limit", CheckStatus::Error);
+    }),
+    element!("check_status_line", |ui, _| {
+        check_status_line(ui, "gallery:status_ok", "Ready", CheckStatus::Ok);
+        check_status_line(ui, "gallery:status_warning", "Transparency approximation", CheckStatus::Warning);
+        check_status_line(ui, "gallery:status_error", "Image size exceeds the renderer limit", CheckStatus::Error);
+    }),
+    element!("segmented_unavailable", |ui, s| {
+        segmented(
+            ui,
+            &mut s.selected,
+            &["Draft", "Custom"],
+            Segments { disabled_reasons: &[Some("waiting for the quality contract"), None], ..Default::default() },
+        );
+    }),
+    element!("review_and_apply", |ui, state| {
+        ReviewAndApply {
+            title: "Review native studio",
+            name: "Soft enveloping studio",
+            subtitle: "Native studio · whole scene",
+            replaces: "Lighting, environment, exposure and stage",
+            kept: "Camera, sampling, dimensions, optical bindings and geometry",
+            acknowledgement: "Confirm replacing saved state",
+            apply: "Apply studio",
+            copy: false,
+            notice: None,
+        }
+        .content(ui, &mut state.checked, |_| {});
+    }),
+    element!("catalog_footer_height", |ui, _| {
+        let expected = catalog_footer_height(ui);
+        catalog_footer(ui, "Click to apply to the selection.");
+        assert_eq!(crate::scenario::rect_of("catalog:footer").unwrap().height(), expected);
+    }),
+    element!("catalog_footer_with_tip", |ui, _| {
+        catalog_footer_with_tip(ui, "Click to apply to the selection.", "Paint and drag assignment are not supported yet.");
+    }),
+    element!("catalog_layout", |ui, _| {
+        ui.allocate_ui(egui::vec2(ui.available_width(), 300.0), |ui| {
+            let layout = CatalogLayout::new(ui, "gallery:catalog", 3);
+            layout.body(ui, |ui| {
+                for index in 0..12 {
+                    MenuItem::new("catalog_item", &format!("Surface {index}"), "grid").search_row(ui, "", "Authored map", None);
+                }
+            });
+            layout.footer(ui, |ui| {
+                catalog_footer(ui, "Select a surface to review.");
+            });
+        });
+    }),
     element!("sphere_grid", |ui, _| {
         let sphere = Sphere { color: Tokens::get().render_accent, kind: FinishKind::Satin, opacity: None };
         let tiles = ["gallery:grid:a", "gallery:grid:b", "gallery:grid:c"].map(|id| SphereTile {
@@ -264,8 +372,31 @@ const ELEMENTS: &[Element] = &[
             selected: id.ends_with('b'),
             users: 1,
             tip: "Satin",
+            badge: None,
         });
         sphere_grid(ui, &tiles);
+    }),
+    element!("sphere_grid_drag", |ui, _| {
+        let tiles = [SphereTile {
+            id: "gallery:drag-grid",
+            name: "Copper",
+            sphere: Sphere { color: Tokens::get().render_accent, kind: FinishKind::Metal, opacity: None },
+            selected: true,
+            users: 1,
+            tip: "Drag to apply",
+            badge: None,
+        }];
+        sphere_grid_drag(ui, &tiles);
+    }),
+    element!("sphere_cursor", |ui, _| {
+        let sphere = Sphere { color: Tokens::get().render_accent, kind: FinishKind::Satin, opacity: None };
+        sphere_thumbnail(ui, "gallery:cursor-sample", sphere, Tokens::get().control_height);
+        sphere_cursor(ui, sphere);
+    }),
+    element!("note_height", |ui, _| {
+        let label = "A wrapped note reserves its measured height in a bounded card.";
+        let _height = note_height(ui, label);
+        text(ui, label, Text::Note("gallery:measured-note"));
     }),
     element!("sphere_tile", "gallery:tile", Some("gallery:tile"), |ui, _| {
         SphereTile {
@@ -275,6 +406,7 @@ const ELEMENTS: &[Element] = &[
             selected: true,
             users: 3,
             tip: "Satin metal",
+            badge: Some("Library"),
         }
         .show(ui);
     }),
@@ -514,7 +646,7 @@ const ELEMENTS: &[Element] = &[
             let side = Tokens::get().space_24;
             for control in HistoryTransport::ALL {
                 let (rect, _) = ui.allocate_exact_size(vec2(side, side), egui::Sense::hover());
-                control.show(ui, rect);
+                control.show(ui, rect, false);
             }
         });
     }),
@@ -998,11 +1130,20 @@ const ELEMENTS: &[Element] = &[
     element!("search_field", |ui, s| {
         search_field(ui, ui.id().with("search"), &mut s.value, "Search");
     }),
+    element!("menu_filter", |ui, s| {
+        menu_filter(ui, ui.id().with("menu_filter"), &mut s.value, "Filter");
+    }),
     element!("cell_editor", |ui, s| {
         cell_editor(ui, ui.id().with("cell"), &mut s.value, "Expression", true);
     }),
     element!("color_field", |ui, _| {
         color_field(ui, &mut [120, 150, 180]);
+    }),
+    element!("color_field_with_opacity", |ui, _| {
+        color_field_with_opacity(ui, &mut [120, 150, 180], &mut 0.5);
+    }),
+    element!("mixed_color_field", |ui, _| {
+        mixed_color_field(ui, &mut [120, 150, 180], Some(&mut 0.5), Some("Mixed"));
     }),
     element!("slider", |ui, _| {
         slider(ui, &mut 0.5, 0.0..=1.0, Default::default());
@@ -1159,6 +1300,11 @@ const ELEMENTS: &[Element] = &[
     element!("dropdown", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
         row(ui, "Gallery", |ui| {
             dropdown(ui, "gallery", &mut s.selected, &["One", "Two"]);
+        });
+    }),
+    element!("dropdown_picked", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            dropdown_picked(ui, "gallery_picked", &mut s.selected, &["One", "Two"]);
         });
     }),
     element!("selection_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, _| {
@@ -1335,6 +1481,15 @@ const ELEMENTS: &[Element] = &[
     }),
     element!("caption", "dialog:caption:Gallery", None, |ui, _| {
         caption(ui, "Gallery", "Construction");
+    }),
+    element!("status_line", "dialog:status:needs a joint that turns and one that slides", None, |ui, _| {
+        status_line(ui, "needs a joint that turns and one that slides", StatusTone::Dim);
+    }),
+    element!("status_line_warning", |ui, _| {
+        status_line(ui, "Pick two different components before creating a joint.", StatusTone::Warning);
+    }),
+    element!("status_line_error", |ui, _| {
+        status_line(ui, "The interference check could not finish. Check the selected bodies.", StatusTone::Error);
     }),
     element!("figure_rows", "dialog:figure:gallery", Some("dialog:Gallery"), |ui, s| {
         let Sample { value, second, .. } = s;
@@ -2042,6 +2197,7 @@ fn confirm_radial_and_history_rows_keep_multitone_artwork() {
                             warning: false,
                             reference: false,
                             accent: crate::theme::TabAccent::for_tab(&Tokens::get(), "MODEL"),
+                            ink: None,
                         }
                         .paint(
                             ui.painter(),

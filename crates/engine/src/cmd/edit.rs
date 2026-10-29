@@ -29,6 +29,15 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .params("checkpoint: id; forget?: bool (true = drop it without going back). Goes back to it, undo history included"),
     CommandSpec::new("timeline.compute_all", "Compute All", compute_all).at("SOLID", "MODIFY").icon("compute").noundo(),
+    CommandSpec::new("timeline.play", "Play History", crate::checked!("timeline.play", play))
+        .at("INSPECT", "HISTORY")
+        .icon("timeline_play")
+        .noundo()
+        .doc_only()
+        .enabled(super::not_in_sketch)
+        .contract(&PLAY_CONTRACT)
+        .output(crate::schema::output_schema_for::<crate::schema::edit::TimelinePlayResult>)
+        .params("action?: toggle|play|stop (default toggle) → action: validated display request; the connected UI plays from the marker to the end with a half-second pause per rebuilt step. Headless callers only validate the request; no dialog, document edit or animation clock is created"),
     CommandSpec::new("timeline.delete", "Delete", delete)
         .at("SOLID", "MODIFY")
         .icon("delete")
@@ -86,6 +95,13 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("select.same_look", "Select Same Look", select_same_look).icon("select").noundo().doc_only()
         .params("body?: world body name, face?: face index; defaults to the current body/face selection → selects objects using the resolved appearance"),
 ];
+
+const PLAY_CONTRACT: crate::schema::TypedContract<crate::schema::edit::TimelinePlayParams> = crate::schema::TypedContract::new();
+
+fn play(_s: &mut Session, p: &Value) -> Result<Value> {
+    let request: crate::schema::edit::TimelinePlayParams = serde_json::from_value(p.clone()).map_err(|e| bad("timeline.play", e.to_string()))?;
+    serde_json::to_value(crate::schema::edit::TimelinePlayResult { action: request.action }).map_err(|e| EngineError::Other(e.to_string()))
+}
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {
     let Some(prev) = s.undo.pop() else { return Err(EngineError::Other("nothing to undo".into())) };

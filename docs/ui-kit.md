@@ -1,5 +1,17 @@
 # SolidCraft UI kit
 
+`viewport_status_item` and `viewport_status_row` draw persistent viewport pills on
+`Surface::ViewportStatus`. Callers supply translated names, formatted settings,
+kind, stable identity and key availability, and dispatch returned clear/edit actions.
+The row keeps supplied order and anchors to the top centre of the free viewport.
+Its presentation state only remembers which key card is open. The `ui.status_fixture`
+control method provides named specimens for UI scenarios and live visual review.
+
+| Component | Use |
+| --- | --- |
+| `method_section` | Section with a GPU/CPU tag; unsupported contents stay faded with a readable reason. |
+| `read_only_text` | Bounded, selectable code box for read-only diagnostic JSON. |
+
 `crates/ui-egui/src/ui_kit/` contains the tokenised controls used by feature dialogs,
 preferences, manager cards, prompts, context menus and the sketch palette. Import through
 `crate::ui_kit::{...}`. Most controls are crate-visible; the container API is public so platform apps use the same hosts.
@@ -28,6 +40,13 @@ rules. Its compass is 110 pt; the 48 pt Shots strip clears the docks by 8 pt.
 
 ## Composition and rules
 
+| Component | Contract |
+| --- | --- |
+| `ReviewAndApply` | Shared resource card, wrapping Replaces/Kept rows, variant content, acknowledgement, Cancel and a gated apply action. Physical plans offer Copy plan. Composes `Confirm`. Gallery: `review_and_apply`. |
+| `SphereTile::badge` | Optional availability text on a three-column library tile, alongside the user-count badge. Uses theme tokens. |
+| `catalog_footer`, `catalog_footer_with_tip`, `catalog_footer_height` | One-line information note with ellipsis and full guidance on hover; optional separate tooltip text. |
+| `CatalogLayout` | Fills the remaining panel height with a scroll body above a measured bottom footer. Optional minimum search-row count keeps lists usable while a long detail card scrolls independently. |
+
 - Every outer host uses `ui_kit::Container` with a semantic `Surface`. The shell
   publishes the layout once per frame; `Container::floating()` and `frame()` own
   adaptive placement policy and chrome. `Panel`, `Window`, `Confirm` and `Menu`
@@ -36,6 +55,10 @@ rules. Its compass is 110 pt; the 48 pt Shots strip clears the docks by 8 pt.
   scans new crates/apps automatically, including macro bodies and alias chains. See the [container audit and migration inventory](ui-container-audit.md).
 
 - Colours, typography, dimensions and spacing come from `theme::Tokens`.
+- `Container::selection_card` extends the navigation host with a bounded, rounded
+  selection pill. `selection_actions` composes its name chip and quiet icon actions;
+  callers supply command data and dispatch the chosen action. `Container::tooltip`
+  shares the library samples' tooltip frame and padding.
 - Sliders only via `ui_kit::slider`; `Slider` options change behaviour, never appearance.
   Raw sliders and duplicate track/thumb painters are forbidden in the UI and apps.
 - `scope(ui, add)` supplies form styling. `row(ui, label, add)` aligns labels and
@@ -128,9 +151,11 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | status: `completion_text` | Compact strip readout with an optional green completion tick and caller-supplied result identity | `font_small`, `control_height`, `form_ink/success/dim`, `space_4/14` |
 | metrics: `row_height`, `table_row_height`, `header_height` | Shared control/header heights | `control_height`, `space_8`, `form_header_height` |
 | layout: `scope`, `row` | Form styling and aligned label/control columns | `form_label_width`, `form_gap_y`, `control_*`, `font_label`, `dialog_label`, `space_4/8` |
+| `status_line`, `StatusTone` | Full-width, wrapping status or refusal text in dim, warning or error ink. Translates source labels; already translated messages also work. Place directly in the form, outside `row`, so its height grows with the whole message. Rect: `dialog:status:TEXT`. | `font_label`, `text_dim`, `warning`, `error` |
 | `caption` | Dim caption aligned beneath a control | `font_small`, `text_dim`, label-column tokens |
 | `figure_rows`, `FigureSlot` | A caller-painted figure in the label column beside a stack of captioned expression fields (the Hole dialog's section); the caller gets each field's rect and hover/focus state to draw leaders and light the part it sizes. Fields keep their `dialog:<label>` handles; the block publishes `dialog:figure:<id>` and its picture `dialog:figure_picture:<id>` | `control_height`, `form_label_width`, `font_small`, `form_dim`, `space_2/4`, label gap |
-| `section`, `section_count`, `search_fold`, `divider` | Persisted small-caps disclosure with chevron, optional count badge and trailing hairline; `search_fold` is that row for shortcut matches during Preferences search, closed until opened; full-width rule | `control_height`, `dialog_rule`, `font_caption`, tracking, spacing |
+| `linear_color_field` | Linear RGB swatch with precise channel fields; clips only the preview to display gamut and preserves HDR values until edited | `control_height`, `space_4`, shared colour popover |
+| `section`, `section_count`, `section_method`, `search_fold`, `divider` | Persisted small-caps disclosure with chevron, optional count or method tag and trailing hairline; `search_fold` is that row for shortcut matches during Preferences search, closed until opened; full-width rule | `control_height`, `dialog_rule`, `font_caption`, tracking, spacing |
 | `list_row` | Picked item with a remove target | `control_height`, `font_label`, icon/spacing tokens |
 | `text`, `Text` | Hint, note, report, inline or cell text; see variants below | `font_small/label`, `text/dim/error`, `control_height`, `space_4` |
 | `text_lines` | Virtualized read-only licence/report lines, horizontal overflow | `font_small`, `text`, `control_height` |
@@ -141,6 +166,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `password_field` | Stable secret editor; excludes the secret from scenario/accessibility metadata | field tokens |
 | `message_field` | Growing message editor; owner retains scroll and Enter routing | field tokens |
 | `cell_editor`, `bounded_cell_editor`, `search_field`, `library_cell` | Stable-ID inline/search editors; bounded variant caps Unicode characters; `library_cell` attaches a Library dropdown inside the editor border | field tokens, `text/error` |
+| `menu_filter` | The filter at the top of a long menu: search glyph, frameless editor and a rule under them, so it does not read as an entry; the caller filters and owns focus | `space_8/16`, `font_label`, `form_dim/ink`, `dialog_rule` |
 | `text_area` | Bounded multiline JSON/data editor | field tokens |
 | `dropdown`, `dropdown_menu`, `compact_dropdown_menu` | Indexed choices or caller-supplied menu controls | `control_height`, `text_dim`, form tokens |
 | `searchable_dropdown`, `SearchOption` | Filtered choices, custom-value action and pending message | dropdown tokens |
@@ -151,8 +177,8 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `length_field`, `angle_field` | Length in design units, angle in degrees | form control/font tokens |
 | `slider` + `Slider` options | One token-painted track/thumb over native slider/value interaction; optional step, caller formatting, whole-step manipulation and hidden value editor | `control_height`, `space_24/8/4/2`, form control/font tokens |
 | `placement_field` | Stable focus ID; drawing tool owns Enter/Tab validation and completion | `control_fill`, `font_body`, `text`, `control_height`, spacing |
-| `color_field`, `color_popover` | Opaque document RGB swatch and kit popover; global U8/F segments, copy, gamma-byte or linear RGB fields, painter-drawn HSV square/hue and current strip; outside click dismisses | `control_*`, `form_*`, `border`, `on_accent`, `space_*` |
-| choice: `segmented`, `Segments` | Equal text choices; `states` supplies mixed selection, `compact` clips instead of falling back to a dropdown, `primary` uses accent/on-accent for the selected segment | `control_*`, `selected_bg/ink`, `font_label`, `space_4/8` |
+| `color_field`, `color_field_with_opacity`, `mixed_color_field`, `color_popover` | Document RGB swatch and kit popover; global U8/F/Hex segments, active-format copy, gamma-byte or linear RGB fields or one Hex editor, painter-drawn HSV square/hue and current strip; outside click dismisses. The opacity-aware field edits the caller's separate `f64` opacity, never premultiplied RGB. Six Hex digits preserve exact opacity; eight set alpha to `aa / 255`. RGB-only callers reject non-FF alpha without applying RGB. Incomplete text remains editable without changing the last valid colour. The mixed-aware wrapper adds a non-editable label and reports accepting the first colour as an edit, so the caller can set all selected targets. | `control_*`, `form_*`, `border`, `on_accent`, `space_*` |
+| choice: `segmented`, `Segments` | Equal text choices; `states` supplies mixed selection, `enabled` keeps unsupported choices faded and inert, `disabled_reasons` also disables choices and supplies hover explanations, `compact` clips instead of falling back to a dropdown, `primary` uses accent/on-accent for the selected segment | `control_*`, `selected_bg/ink`, `font_label`, `space_4/8` |
 | `segmented_icons`, `IconSegment` | Equal icon choices and mixed states | segment tokens, icon palette |
 | `checkbox`, `checkbox_indeterminate`, `checkbox_row`, `checkbox_grid`, `options` | One box/tick painter for inline, mixed, full-row, grid and menu choices | `space_14/3/2`, `radius_sm`, `control_fill/border`, `form_primary/ink`, `hover`, `on_accent` |
 | `text_emphasis` | Bold/italic with translated accessible names | form control/font tokens |
@@ -160,7 +186,7 @@ table. Panel/Window/Confirm compositions also have dedicated geometry and intera
 | `list_picker` | Selectable row with caller identity and native checked state | `control_height`, form selection tokens |
 | `thumbnail_choice`, `ThumbnailChoice`, `add_choice` | Shared selection-chip variant with 52 × 30 preview, selected tab accent, modified dot, progress ring and dashed add action for bottom strips; `Panel::strip_contents` reserves right actions and scrolls choices | `control_height`, spacing, radii, `TabAccent`, control/semantic tokens |
 | `popup_list`, `PopupOption` | Focus-neutral suggestions; owner retains keyboard routing | `space_2`, `form_label_width`, `control_height`, form tokens |
-| sphere: `sphere_thumbnail`, `SphereTile`, `sphere_grid`, `sphere_preview` | Deterministic lit material samples; matte/satin/gloss/metal/glass finishes. Catalog tiles centre a 48 pt sphere in a 56 pt rounded cell with a two-line name, active-tab selection ring, user-count badge and shared Container tooltip. The grid owns three columns and token gaps. The Inspector preview composes a sphere, name, informational chips and replacement action in the shared list card. | `control_height`, `radius_xl`, `space_2/3/4/8/16`, `font_small/badge`, `control_fill`, `dialog_rule`, active-tab accent, `on_accent` |
+| sphere: `sphere_thumbnail`, `SphereTile`, `sphere_grid`, `sphere_preview`, `sphere_preview_with_source` | Deterministic lit material samples; matte/satin/gloss/metal/glass finishes. Catalog tiles centre a token-sized sphere above two full lines of text with an optional source badge, active-tab selection ring, user-count badge and shared Container tooltip. The grid owns three columns and token gaps. The Inspector preview composes a sphere, name, informational chips and replacement action in the shared list card; the source variant supports an interactive inheritance menu. | `control_height`, `radius_xl`, `space_2/3/4/6/8/16`, `font_small/badge`, `control_fill`, `dialog_rule`, active-tab accent, `on_accent` |
 | `color_swatch`, `swatch_grid`, `color_thumbnail` | 30 pt draggable samples, 6 pt grid step gap, selected outer ring and checker pattern under transparent colours; caller payloads retained; local-library thumbnails use 16 pt | `control_height/radius`, `border`, `form_primary`, `control_fill`, `space_2/6/8` |
 | `assistant_entry`, `AssistantEntryState` | Application-bar chat icon with quiet, ready, busy, auth, stopped and approval count marks; caller owns state and target | `app_bar`, `agent_ok/busy`, `warning/error`, `font_badge` |
 | actions: `button`, `Button` | Secondary action: `Normal`, `Small`, or `Enabled(bool)` | native sizing, form font/control tokens |
@@ -721,13 +747,24 @@ For CPU-rendered review images, run
 
 `catalog_scope` supplies compact catalog metrics to the shared search field, segments,
 icon segments and category chips. `catalog_footer` draws the quiet information hint.
+`CatalogLayout::new(ui, id, min_rows)` reserves the measured footer height and gives
+`body` all remaining space without shrinking to its items. Call `footer` after
+`body`; changes to the footer's natural height request another layout pass.
+Use `min_rows = 3` for a search list with selected-item details below it; the
+detail card scrolls when necessary. The kit publishes `{id}:content`, `:body`
+and `:footer` rectangles for layout checks.
+`SphereTile` reserves two full font rows below the sphere. Names wrap at word
+boundaries with an ellipsis after the second line; `{id}:label` and `:galley`
+expose the caption allocation and laid-out text bounds.
 Catalog title marks use the active workspace accent; tile captions, usage badges and
 selection outlines share the sphere widgets. Feature code supplies data and commands,
 while the kit owns every dimension, colour and inset.
 
 The Appearance Inspector uses the shared `inspector_header` (selection icon/name,
 workspace chip, Menu and close action) and `Panel::editor_footer` (48 pt pinned
-band). `color_hex_field` pairs the colour popover with a bounded hex editor;
+band). `mixed_color_field` uses the one shared colour popover with a non-editable
+mixed-value label, not an outer Hex editor. Non-PBR Appearance passes exact opacity;
+PBR passes no opacity and remains opaque. All Hex parsing and draft state stay in the kit.
 `mixed_slider` pairs the standard slider with the mixed-aware scalar editor.
 `editor_section` uses a 24 pt heading and 6 pt field gaps.
 `workspace_chip`, `text_button`, `section_heading`, `pending_section`,
@@ -739,3 +776,12 @@ shared token paint and hit targets. All are exercised in the kit gallery.
 | method_section | Compact, initially collapsed editor section with a method tag; unsupported contents remain inspectable and disabled, with a translated reason visible even when collapsed. Uses editor_section typography and spacing. |
 | vector3_field | Three bounded number fields divide the row's control column evenly, retaining the shared parser, focus and bevels. Used for RGB absorption and world-space origin/repeat vectors. |
 | sphere_preview_with_source | Sample card with an interactive source tag, retaining the sphere, name, usage badge and trailing action. Appearance uses the tag to inspect its inheritance chain. |
+
+The compact `settings_choice_row` variant reuses the shared settings radio-card painter
+for preset lists: 40 pt rows, right-aligned summaries and the active workspace accent.
+`progress_action` keeps a status caption, bounded progress track and Cancel action on
+one row inside a Navigation card. `Container::below_navigation_row` reserves that card
+and its shared gap above an inline result toolbar.
+
+`number_pair` extends the shared value-pair row to bounded numeric fields (such as
+image width and height), preserving label alignment, clipping and number-field behavior.

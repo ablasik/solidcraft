@@ -68,6 +68,8 @@ pub(crate) struct HistoryChip<'a> {
     /// its name is in secondary text.
     pub reference: bool,
     pub accent: TabAccent,
+    /// Draw the icon in this one colour instead of its artwork: a sketch's solve state (#7245).
+    pub ink: Option<egui::Color32>,
 }
 
 /// Share the feature classification across chips and name rows. Surface aliases also
@@ -136,7 +138,10 @@ impl HistoryChip<'_> {
         };
         let icon =
             Rect::from_center_size(if names { pos2(rect.left() + t.space_8 + side / 2.0, rect.center().y) } else { rect.center() }, vec2(side, side));
-        icons::paint_accented(&p, icon, self.icon, feature_icon_accent(self.kind, self.icon), 1.0);
+        match self.ink {
+            Some(ink) => icons::paint_ink(&p, icon, self.icon, ink),
+            None => icons::paint_accented(&p, icon, self.icon, feature_icon_accent(self.kind, self.icon), 1.0),
+        }
         if names {
             let ink = if self.selected {
                 self.accent.ink
@@ -188,52 +193,72 @@ pub(crate) fn history_marker(p: &Painter, rect: Rect, vertical: bool, accent: Ta
     p.circle(centre, outer_radius - t.space_2 / 2.0, if vertical { t.panel } else { t.timeline }, Stroke::new(t.space_2, accent.color));
 }
 
-/// The same four rollback controls are used in every History orientation.
-#[derive(Clone, Copy)]
+/// The same controls are used in every History orientation: first, previous, Play History, next
+/// and last, or the four without Play when `history_play_button` is off.
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) enum HistoryTransport {
     First,
     Back,
+    Play,
     Forward,
     Last,
 }
 
 impl HistoryTransport {
     pub const ALL: [Self; 4] = [Self::First, Self::Back, Self::Forward, Self::Last];
+    pub const WITH_PLAY: [Self; 5] = [Self::First, Self::Back, Self::Play, Self::Forward, Self::Last];
+
+    /// The controls History shows: the four, or five with the Play button preference on.
+    pub fn shown(play: bool) -> &'static [Self] {
+        if play { &Self::WITH_PLAY } else { &Self::ALL }
+    }
 
     pub fn id(self) -> &'static str {
         match self {
             Self::First => "first",
             Self::Back => "back",
+            Self::Play => "play",
             Self::Forward => "forward",
             Self::Last => "last",
         }
     }
 
-    fn label(self) -> &'static str {
+    fn label(self, playing: bool) -> &'static str {
         crate::i18n::tr(match self {
             Self::First => "ui.history_first",
             Self::Back => "ui.history_back",
+            Self::Play if playing => "cmd.timeline_stop",
+            Self::Play => "cmd.timeline_play",
             Self::Forward => "ui.history_forward",
             Self::Last => "ui.history_last",
         })
     }
 
-    pub fn show(self, ui: &mut egui::Ui, rect: Rect) -> egui::Response {
+    /// `playing` turns the Play button into Stop; the other controls ignore it.
+    pub fn show(self, ui: &mut egui::Ui, rect: Rect, playing: bool) -> egui::Response {
         let t = Tokens::get();
         let response = ui.interact(rect, ui.id().with(("history_transport", self.id())), egui::Sense::click());
         crate::scenario::publish_target(&format!("history:{}", self.id()), rect);
         if response.hovered() {
             ui.painter().rect_filled(rect, t.radius_sm, t.hover);
         }
-        icons::glyphs::transport_glyph(ui.painter(), rect.center(), self.id(), t.icon);
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), self.label()));
-        response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(self.label())
+        let glyph = if self == Self::Play && playing { "pause" } else { self.id() };
+        icons::glyphs::transport_glyph(ui.painter(), rect.center(), glyph, t.icon);
+        let label = self.label(playing);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+        response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(label)
     }
 }
 
 pub(crate) fn history_transport_width() -> f32 {
     let t = Tokens::get();
     t.space_24 * HistoryTransport::ALL.len() as f32 + t.space_2 * (HistoryTransport::ALL.len() - 1) as f32
+}
+
+/// The width of `count` transport buttons side by side (five with Play History shown).
+pub(crate) fn history_controls_width(count: usize) -> f32 {
+    let t = Tokens::get();
+    t.space_24 * count as f32 + t.space_2 * count.saturating_sub(1) as f32
 }
 
 /// Thin and minimum named widths; wider named panels retain their measured width.
@@ -573,6 +598,7 @@ mod tests {
                             warning: false,
                             reference: false,
                             accent,
+                            ink: None,
                         }
                         .paint(ui.painter(), rect, style)
                     });
@@ -634,6 +660,7 @@ mod tests {
                             warning: false,
                             reference: false,
                             accent: TabAccent::for_tab(&t, "MODEL"),
+                            ink: None,
                         }
                         .paint(ui.painter(), rect, style);
                     }

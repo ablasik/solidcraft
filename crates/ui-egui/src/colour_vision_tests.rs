@@ -259,6 +259,7 @@ fn groups(t: &Tokens) -> Vec<Group> {
                 ("sketch", t.sketch),
                 ("sketch_fixed", t.sketch_fixed),
                 ("sketch_locked", t.sketch_locked),
+                ("sketch_conflict", t.sketch_conflict),
                 ("sketch_projected", t.sketch_projected),
                 ("sketch_lost", t.sketch_lost),
                 ("sketch_construction", t.sketch_construction),
@@ -269,7 +270,12 @@ fn groups(t: &Tokens) -> Vec<Group> {
         ),
         group(
             "sketch points",
-            &[("sketch_point", t.sketch_point), ("sketch_point_free", t.sketch_point_free), ("sketch_locked", t.sketch_locked)],
+            &[
+                ("sketch_point", t.sketch_point),
+                ("sketch_point_free", t.sketch_point_free),
+                ("sketch_locked", t.sketch_locked),
+                ("sketch_conflict", t.sketch_conflict),
+            ],
             &[("viewport_top", t.viewport_top)],
         ),
         group(
@@ -766,6 +772,7 @@ fn each_mode_changes_only_its_table() {
         "sketch_accent",
         "preview_sketch",
         "form_success_fill",
+        "sketch_conflict",
     ];
     let mut red_green_light =
         red_green_both.into_iter().filter(|name| !["surface_accent", "mesh_accent", "form_accent"].contains(name)).collect::<Vec<_>>();
@@ -788,6 +795,7 @@ fn each_mode_changes_only_its_table() {
                 "construction_geom",
                 "glyph_text",
                 "preview_sketch",
+                "sketch_conflict",
                 "analysis.hatch",
             ]),
         ),
@@ -804,6 +812,7 @@ fn each_mode_changes_only_its_table() {
                 "construction_geom",
                 "glyph_text",
                 "preview_sketch",
+                "sketch_conflict",
                 "analysis.hatch",
             ]),
         ),

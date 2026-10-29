@@ -33,7 +33,7 @@ use crate::tool_modifiers::ModifierCombo;
 use crate::ui_kit;
 use crate::viewport::NavMode;
 
-pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
+pub const UNITS: &[&str] = &["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
 pub const TOUCHPAD_NAV: &str = "touchpad";
 /// A mouse button that can drag the camera.
@@ -100,7 +100,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 10] = [
+pub const NAV_PRESETS: &[NavPreset] = &[
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -233,7 +233,7 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// Stable control-channel names; presentation labels may be shorter.
-pub const PAGES: [&str; 9] = ["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
+pub const PAGES: &[&str] = &["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_INTERFACE: usize = 1;
 pub const PAGE_DESIGN: usize = 2;
@@ -243,7 +243,7 @@ pub const PAGE_SKETCH: usize = 5;
 pub const PAGE_GRAPHICS: usize = 6;
 pub const PAGE_AI: usize = 7;
 pub const PAGE_PLUGINS: usize = 8;
-const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 9] = [
+const WINDOW_PAGES: &[ui_kit::WindowPage<SolveApp>] = &[
     ui_kit::WindowPage { icon: "settings", label: "ui.general", group: None, handle: "prefs:page:General", scroll: true, draw: window_page::<0> },
     ui_kit::WindowPage {
         icon: "settings_palette",
@@ -434,7 +434,7 @@ fn window_page<const INDEX: usize>(ui: &mut egui::Ui, app: &mut SolveApp) {
     page(app, ui, &Tokens::get());
 }
 
-pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
+pub const THEMES: &[(&str, &str)] = &[("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 /// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
 pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
@@ -560,6 +560,48 @@ fn same_orientation(a: Camera, b: Camera) -> bool {
     let near = 0.5_f64.to_radians().cos();
     let ((ar, au, ab), (br, bu, bb)) = (a.basis(), b.basis());
     ar.dot(br) > near && au.dot(bu) > near && ab.dot(bb) > near
+}
+
+/// How the offer to stand a file up is made when its header names no program known to save Y up
+/// (Preferences: "For files from unknown programs", #7717). A file from SolidWorks is asked in the
+/// dialog (only the note when it already stands on Z, unless this is Ask); SolidCraft's own files
+/// are never offered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StandUpUnknown {
+    /// The "Stand this part up?" dialog for every file from another program, without looking at
+    /// how it rests, as before #7717 (a SolidWorks file too).
+    Ask,
+    /// No offer: the context menu's Turn Up Axis still stands the file up.
+    Off,
+    /// A small note over the view, only when the file seems to lie on its back, that goes by
+    /// itself and never blocks input (the default). A saved value this version doesn't know reads
+    /// as this.
+    #[default]
+    #[serde(other)]
+    Note,
+}
+
+impl StandUpUnknown {
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Note, Self::Off];
+
+    /// The choice as `ui.prefs` and the saved preferences spell it.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Note => "note",
+            Self::Off => "off",
+        }
+    }
+
+    /// The message id of the choice's label.
+    pub fn label_id(self) -> &'static str {
+        match self {
+            Self::Ask => "prefs.stand_up_unknown.ask",
+            Self::Note => "prefs.stand_up_unknown.note",
+            Self::Off => "prefs.stand_up_unknown.off",
+        }
+    }
 }
 
 /// Which program reads the 3D mouse on Linux when both spacenavd and the device itself (hidraw)
@@ -819,6 +861,9 @@ preference_settings! {
     /// Draw reference geometry such as inactive sketches and datum planes through shaded bodies.
     /// Off by default to preserve the depth-tested viewport behaviour.
     reference_geometry_through_bodies: bool = false, PAGE_GRAPHICS => check_id("settings.reference_geometry_through_bodies");
+    /// A small dot at every vertex wherever edges are drawn (#7834). Off by default: the viewport
+    /// draws edges only, as it always has.
+    vertex_markers: bool = false => check("Vertex markers", "Show a small dot at every vertex wherever edges are drawn");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     display_quality: String = "normal".into(), PAGE_GRAPHICS;
@@ -888,6 +933,9 @@ preference_settings! {
     sketch_tab_always: bool = false, PAGE_INTERFACE => check_id("prefs.sketch_tab_always");
     /// Where a dialog's OK and Cancel sit: under its inputs (the default) or in its title row (#6708).
     dialog_buttons: crate::ui_kit::DialogButtons = Default::default(), PAGE_INTERFACE;
+    /// Where notices and offers stack: the view's bottom-right corner (the default) or the bottom
+    /// centre, as before #7893.
+    toast_place: crate::viewport::ToastPlace = Default::default(), PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
@@ -905,6 +953,9 @@ preference_settings! {
     timeline_left_width: f32 = 130.0, PAGE_INTERFACE;
     /// Share the browser column, vertically, instead of a separate left column.
     timeline_under_browser: bool = false, PAGE_INTERFACE;
+    /// Compact history: the browser lists each component's features in history order with the
+    /// marker, and neither timeline is shown.
+    history_in_browser: bool = false, PAGE_INTERFACE;
     /// Fold the shared-column history to its header.
     timeline_collapsed: bool = false, PAGE_INTERFACE;
     /// The browser's share of the column's height when History sits under it, which the user
@@ -914,6 +965,9 @@ preference_settings! {
     timeline_left_browser_collapsed: bool = false, PAGE_INTERFACE;
     /// Whether the History at the left lists a sketch under the feature built from it.
     history_sketches: HistorySketches = HistorySketches::default(), PAGE_INTERFACE;
+    /// A Play History button in the History controls, between Previous and Next (#3688). Off
+    /// gives the four controls History had before; right-clicking the controls toggles it too.
+    history_play_button: bool = true, PAGE_INTERFACE => check_id("prefs.history_play_button");
     /// The vertical history (left, or under the browser) starts with the active component's Bodies
     /// folder and the Origin, as the browser shows them (#6490). The bottom strip is unchanged.
     timeline_origin_bodies: bool = false, PAGE_INTERFACE;
@@ -949,6 +1003,9 @@ preference_settings! {
     pan_reverse_x: bool = false, PAGE_NAVIGATION => check("Reverse horizontal pan direction", "Horizontal two-finger scrolling and the thumb wheel pan the other way");
     /// Vertical trackpad scrolling pans the view the other way (#5240).
     pan_reverse_y: bool = false, PAGE_NAVIGATION => check("Reverse vertical pan direction", "Vertical two-finger scrolling pans the other way");
+    /// Shift with two-finger trackpad scrolling orbits the view the other way, both ways at once,
+    /// as natural scrolling turns it (#8410).
+    orbit_reverse: bool = false, PAGE_NAVIGATION => check("Reverse trackpad orbit direction", "Shift with two-finger scrolling orbits the other way");
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
     look_at_anim: bool = true, PAGE_NAVIGATION => check("Animate view changes", "Axis view, Look At, Home and Fit");
     look_at_speed: f32 = 1.0, PAGE_NAVIGATION, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
@@ -956,9 +1013,15 @@ preference_settings! {
     up_axis: String = "z".into(), PAGE_DESIGN;
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
+    /// How the offer is made for a file whose header names no program known to save Y up: a note
+    /// over the view (the default), the dialog, or nothing (#7717).
+    stand_up_unknown: StandUpUnknown = StandUpUnknown::default(), PAGE_DESIGN;
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
     /// switches the extent to To Object (off: picks only add profiles, as before).
     extrude_auto_to_object: bool = false, PAGE_DESIGN => check("Extrude to a picked target", "In Extrude, with a profile picked, picking a face, vertex or parallel plane off its plane switches the extent to To Object");
+    /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
+    /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
+    auto_operation: bool = true, PAGE_DESIGN => check_id("prefs.auto_operation");
     /// Placing a Single hole snaps to the middle of the face and the centres of its round edges
     /// (`hole_place`). Off by default: a hole goes where it is clicked.
     hole_snaps: bool = false, PAGE_DESIGN => check("Snap to face and edge centres");
@@ -1066,6 +1129,9 @@ preference_settings! {
     sketch_tracking_guides: bool = true, PAGE_SKETCH;
     /// Whether Alt/Option also frees gizmo / canvas manipulator arrows (Primary always does).
     manipulator_free_alt: bool = true, PAGE_SKETCH;
+    /// A sketch's icon in History and the browser takes the colour of its solve state, and its
+    /// tooltip names the state (#7245). Off: every sketch has the same icon, as before.
+    sketch_state_icons: bool = true, PAGE_SKETCH => check_id("prefs.sketch_state_icons");
     /// A sketch tool's shortcut pressed again before the first point steps to the tool's next
     /// creation mode (#2459). Off (the default): the key starts the tool again, as it always has.
     shortcut_cycles_modes: bool = false, PAGE_SKETCH;
@@ -1085,11 +1151,18 @@ preference_settings! {
         "Also place them from the origin (fully constrained)",
         "Each new shape is also dimensioned from the sketch origin until nothing of it is left free. A shape already attached to the origin or to placed geometry gets none."
     );
+    /// A centre-point arc runs the way the cursor goes round its centre from the start (#6645).
+    /// Off: it always runs counter-clockwise from the start, as it did before.
+    center_arc_follows_cursor: bool = true, PAGE_SKETCH;
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
     selection_shift_add_only: bool = false, PAGE_SKETCH;
     /// Prefer movable sketch points on exact selection ties; off keeps point insertion order.
     prefer_free_sketch_points: bool = true, PAGE_SKETCH;
+    /// While the open sketch's constraints conflict, the curves and points a failing constraint
+    /// holds, and its glyph or dimension, are drawn in `sketch_conflict` (#7244). Off: only the
+    /// glyphs and dimensions are red, in `error`, as before.
+    sketch_conflict_colour: bool = true, PAGE_SKETCH => check_id("prefs.sketch_conflict_colour");
     /// Drive Joints shows the moved parts' old place as a ghost (its Show ghost box, #5905).
     drive_joints_ghost: bool = true, PAGE_DESIGN;
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
@@ -1672,6 +1745,11 @@ pub fn pan_sign_y(app: &SolveApp) -> f32 {
     if app.preferences.pan_reverse_y { -1.0 } else { 1.0 }
 }
 
+/// +1, or −1 when Shift with two-finger scrolling orbits the other way (#8410).
+pub fn orbit_sign(app: &SolveApp) -> f64 {
+    if app.preferences.orbit_reverse { -1.0 } else { 1.0 }
+}
+
 /// Whether the configured suppress-snap chord is held.
 pub fn suppress_sketch_snap_held(app: &SolveApp, m: Modifiers) -> bool {
     let c = app.preferences.suppress_sketch_snap;
@@ -1696,14 +1774,17 @@ pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
 }
 
-/// The model point under a screen position. Over empty space: the centre of the visible bodies
-/// and sketches (what Fit frames), or the view's centre when nothing is visible.
+/// The model point under a screen position: on a face, vertex, edge or sketch curve, the point
+/// the cursor is on (on an edge or a curve too, not its middle, which can be far off along a long
+/// one). Over empty space: the centre of the visible bodies and sketches (what Fit frames), or
+/// the view's centre when nothing is visible.
 pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
     use crate::viewport::Hit;
     for h in crate::viewport::pick(app, proj, at) {
         match h {
-            Hit::Face { point, .. } | Hit::Vertex { point, .. } => return point,
-            Hit::Edge { mid, .. } => return mid,
+            Hit::Face { point, .. } | Hit::Vertex { point, .. } | Hit::Edge { point, .. } | Hit::SketchCurve { point, .. } => {
+                return point;
+            }
             _ => {}
         }
     }
@@ -1759,7 +1840,7 @@ pub fn show_mm_bare(app: &SolveApp, v: f64) -> String {
 }
 
 /// The window system choices (`Prefs::window_system`, #3083).
-pub const WINDOW_SYSTEMS: [&str; 3] = ["auto", "wayland", "x11"];
+pub const WINDOW_SYSTEMS: &[&str] = &["auto", "wayland", "x11"];
 /// winit's issue for dropping files onto a window on native Wayland, which the note links to.
 pub const WAYLAND_DROP_ISSUE: &str = "https://github.com/rust-windowing/winit/issues/1881";
 
@@ -1770,11 +1851,12 @@ pub const WAYLAND_DROP_ISSUE: &str = "https://github.com/rust-windowing/winit/is
 fn window_system_row(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let label = |id: &str| crate::i18n::tr(&format!("ui.window_system_{id}")).to_string();
-    let labels = WINDOW_SYSTEMS.map(label);
+    let labels: Vec<_> = WINDOW_SYSTEMS.iter().copied().map(label).collect();
+    let labels: Vec<_> = labels.iter().map(String::as_str).collect();
     // The note below says that it applies after a restart, and which one runs now.
     let response = ui.allocate_ui_with_layout(egui::vec2(t.form_card_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
         let mut selected = WINDOW_SYSTEMS.iter().position(|id| *id == app.preferences.window_system).unwrap_or(0);
-        if ui_kit::segmented(ui, &mut selected, &labels.each_ref().map(String::as_str), ui_kit::Segments::default())
+        if ui_kit::segmented(ui, &mut selected, &labels, ui_kit::Segments::default())
             && let Some(id) = WINDOW_SYSTEMS.get(selected)
         {
             app.preferences.window_system = (*id).into();
@@ -1916,7 +1998,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .actions("OK", "Cancel", Some("Apply"));
     let window = if capturing { window.keep_open_on_escape() } else { window };
     let mut selected = app.prefs_window.section;
-    let (closed, action) = window.show_pages_with_header(ctx, &mut selected, &WINDOW_PAGES, app, search_header, clear_search, |ui| {
+    let (closed, action) = window.show_pages_with_header(ctx, &mut selected, WINDOW_PAGES, app, search_header, clear_search, |ui| {
         if ui_kit::button(ui, crate::i18n::tr("ui.restore_defaults"), ui_kit::Button::Normal)
             .on_hover_text(crate::i18n::tr("ui.reset_the_settings_on_this_page"))
             .clicked()
@@ -2572,14 +2654,14 @@ fn button_job_picker(
 }
 
 /// The control channel's `ui.prefs`: `open` (a page name) opens the dialog there, `button`
-/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer
-/// (`false` leaves the file as it is, like "Leave it"), `theme_import` (a theme file's JSON or
+/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer,
+/// dialog or note (`false` leaves the file as it is, like "Leave it"), `theme_import` (a theme file's JSON or
 /// text) adds a theme and turns it on, `theme_remove` (an id) removes an imported one and
 /// `theme_export: true` returns the theme on now as `theme_file`, `theme_follow` (a path, or
 /// `""` to stop) follows a theme file on the desktop (#7573); any other keys set preferences.
 /// `open: "Interface/Navigation bar"` opens Interface and scrolls to its bar editor.
-/// Returns them all, the open page, the offer, the theme ids and the followed file
-/// (`theme_followed`, `theme_follow_error`).
+/// Returns them all, the open page, the offer (and whether it is the note), the theme ids and the
+/// followed file (`theme_followed`, `theme_follow_error`).
 pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut rest = p.as_object().cloned().unwrap_or_default();
     if let Some(page) = rest.remove("open") {
@@ -2626,6 +2708,7 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     if let Some(o) = out.as_object_mut() {
         o.insert("dialog".into(), json!(app.prefs_window.open.then(|| PAGES.get(app.prefs_window.section).copied().unwrap_or_default())));
         o.insert("stand_up_offer".into(), json!(app.stand_up));
+        o.insert("stand_up_note".into(), json!(app.stand_up.is_some() && app.stand_up_note));
         o.insert("dark".into(), json!(app.ui.dark));
         o.insert("viewport_dark".into(), json!(app.viewport_dark()));
         o.insert("theme_ids".into(), json!(theme_choices(app).into_iter().map(|(id, _)| id).collect::<Vec<_>>()));
@@ -2758,18 +2841,41 @@ pub fn take_theme_paste(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Files dropped on the theme Import tile are themes to import, not designs to open (#8226).
 pub fn take_theme_drops(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(rect) = app.prefs_window.import_tile.filter(|_| app.prefs_window.open) else { return };
-    if !ctx.input(|i| !i.raw.dropped_files.is_empty() && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))) {
+    if !theme_drop_target(app, ctx) || !ctx.input(|i| !i.raw.dropped_files.is_empty()) {
         return;
     }
     let files = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
     for f in files.iter().take(8) {
-        let text = f
-            .bytes()
-            .and_then(|b| if b.len() > crate::theme_files::MAX_BYTES { Err("the file is too large for a theme".into()) } else { Ok(b) })
-            .and_then(|b| String::from_utf8(b).map_err(|_| "not a theme file".to_string()));
-        import_theme_text(app, text);
+        // The browser reads dropped files only asynchronously: the web shell takes them first and
+        // hands a theme's bytes to `import_theme_bytes` (#8226), so none reach this on wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        match f.bytes() {
+            Ok(bytes) => import_theme_bytes(app, bytes),
+            Err(e) => import_theme_text(app, Err(e.to_string())),
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = f;
     }
+}
+
+/// Whether files dropped now land on the Import tile: the Preferences window is open and the
+/// pointer was last seen over the tile.
+pub fn theme_drop_target(app: &SolveApp, ctx: &egui::Context) -> bool {
+    app.prefs_window
+        .import_tile
+        .filter(|_| app.prefs_window.open)
+        .is_some_and(|rect| ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p)))
+}
+
+/// A file dropped on the Import tile, as bytes: imported when it is a theme, refused with the reason
+/// otherwise.
+pub fn import_theme_bytes(app: &mut SolveApp, bytes: Vec<u8>) {
+    let text = if bytes.len() > crate::theme_files::MAX_BYTES {
+        Err("the file is too large for a theme".to_string())
+    } else {
+        String::from_utf8(bytes).map_err(|_| "not a theme file".to_string())
+    };
+    import_theme_text(app, text);
 }
 
 pub fn import_theme(app: &mut SolveApp, v: &serde_json::Value) -> Result<String, String> {
@@ -2901,6 +3007,11 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if let Some(value) = p.get("navigation_bar") {
         crate::navigation_bar::validate(value)?;
+    }
+    if let Some(v) = p.get("stand_up_unknown")
+        && !StandUpUnknown::ALL.iter().any(|c| v.as_str() == Some(c.id()))
+    {
+        return Err("`stand_up_unknown` must be ask, note or off".into());
     }
     let new: Prefs = migrate(serde_json::from_value(cur).map_err(|e| e.to_string())?);
     if !UNITS.contains(&new.default_units.as_str()) {
@@ -4416,9 +4527,11 @@ mod tests {
             ("ribbon_labels", json!(false), PAGE_INTERFACE),
             ("sketch_tab_always", json!(true), PAGE_INTERFACE),
             ("dialog_buttons", json!("top"), PAGE_INTERFACE),
+            ("toast_place", json!("centre"), PAGE_INTERFACE),
             ("timeline_left", json!(true), PAGE_INTERFACE),
             ("timeline_under_browser", json!(true), PAGE_INTERFACE),
             ("history_sketches", json!("under_feature"), PAGE_INTERFACE),
+            ("history_play_button", json!(false), PAGE_INTERFACE),
             ("browser_float", json!(true), PAGE_INTERFACE),
             ("dialog_place", json!("left_column"), PAGE_INTERFACE),
             ("color_vision", json!("protan"), PAGE_INTERFACE),
@@ -4428,7 +4541,9 @@ mod tests {
             ("nav", json!("blender"), PAGE_NAVIGATION),
             ("look_at_anim", json!(false), PAGE_NAVIGATION),
             ("selection_shift_add_only", json!(true), PAGE_SKETCH),
+            ("sketch_conflict_colour", json!(false), PAGE_SKETCH),
             ("suppress_sketch_snap", json!(ModifierCombo::NONE), PAGE_SKETCH),
+            ("sketch_state_icons", json!(false), PAGE_SKETCH),
             ("sketch_tracking_guides", json!(false), PAGE_SKETCH),
             ("msaa", json!(8), PAGE_GRAPHICS),
         ];
@@ -4934,6 +5049,31 @@ mod tests {
         h.frames(2);
         assert!(!folded(&h), "a folded Preferences window unfolds when it opens");
         assert!(crate::scenario::rect_of("prefs:ok").is_some());
+    }
+
+    /// Letters typed in the font list's own Search box narrow the list. Preferences' search takes
+    /// typing only when no text field has the keyboard, so it must not take these.
+    #[test]
+    fn typing_in_the_font_lists_search_narrows_the_list_not_the_page() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        // Found by searching, as the setting is far down the page.
+        h.step(&json!({"text": "font"})).expect("search");
+        h.frames(3);
+        let combo = crate::scenario::handle_at("prefs:ui_font").expect("the search finds the font row");
+        h.call("ui.click", json!({"x":combo.x,"y":combo.y}));
+        h.frames(2);
+        let search = format!("dialog:{} search", crate::i18n::tr("prefs.font"));
+        let field = crate::scenario::handle_at(&search).expect("the font list is open");
+        h.call("ui.click", json!({"x":field.x,"y":field.y}));
+        h.frames(2);
+        h.step(&json!({"text": "Comic"})).expect("type");
+        h.frames(2);
+        assert_eq!(h.app.prefs_window.filter, "font", "the Preferences search took the letters");
+        assert_eq!(h.app.prefs_window.font_filter, "Comic", "the font list's search keeps them");
+        assert!(crate::scenario::handle_at(&search).is_some(), "the font list stays open");
+        h.call("ui.prefs", json!({"button":"cancel"}));
     }
 
     #[test]
@@ -5669,6 +5809,19 @@ mod tests {
     }
 
     #[test]
+    fn orbit_reverse_defaults_off_persists_and_flips_the_sign() {
+        assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().orbit_reverse);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(orbit_sign(&app), 1.0);
+        set(&mut app, &json!({"orbit_reverse": true})).unwrap();
+        assert_eq!(orbit_sign(&app), -1.0);
+        assert_eq!((pan_sign_x(&app), pan_sign_y(&app)), (1.0, 1.0));
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.preferences.orbit_reverse);
+    }
+
+    #[test]
     fn pan_reverse_y_defaults_off_persists_and_flips_the_sign() {
         assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().pan_reverse_y);
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
@@ -5875,9 +6028,11 @@ mod tests {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.open_path(&path);
         assert!(app.stand_up.is_none(), "SolidCraft's own exports already have Z up");
-        // Another originating system keeps the offer.
+        // Another originating system is offered (asked in the dialog, without looking at how the
+        // flat box rests).
         let text = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'")).unwrap();
+        app.preferences.stand_up_unknown = StandUpUnknown::Ask;
         app.open_path(&path);
         let offered = app.stand_up.clone().unwrap_or_default();
         assert_eq!(offered.len(), 1, "the file's body is offered");
@@ -5957,6 +6112,56 @@ mod tests {
         orbit(&mut app, rect, 40.0, 25.0, Some(at));
         let s = crate::viewport::projection(&app, rect).to_screen(pivot).unwrap();
         assert!(s.distance(at) < 2.0, "{s:?}");
+    }
+
+    /// A drag that starts on an edge turns around the edge's point under the cursor, not its
+    /// middle, and that point stays still on screen.
+    #[test]
+    fn orbiting_from_an_edge_turns_around_the_point_under_the_cursor() {
+        use crate::viewport::Hit;
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.run("solid.box", json!({"length": 200, "width": 40, "height": 40})).unwrap();
+        app.preferences.orbit_around = OrbitAround::Cursor;
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        app.fit_view();
+        let proj = crate::viewport::projection(&app, rect);
+        let st = app.session.world_state();
+        let m = st.bodies[0].mesh();
+        // A spot a fifth of the way along a visible edge, well away from its middle on screen.
+        let found = m.edges.iter().filter(|e| e.len() >= 2).find_map(|e| {
+            let (a, b) = (e[0], e[e.len() - 1]);
+            let at = proj.to_screen(a + (b - a) * 0.2)?;
+            let mid = proj.to_screen(crate::viewport::polyline_mid(e))?;
+            let first =
+                crate::viewport::pick(&app, &proj, at).into_iter().find(|h| matches!(h, Hit::Face { .. } | Hit::Edge { .. } | Hit::Vertex { .. }));
+            (rect.contains(at) && at.distance(mid) > 100.0 && matches!(first, Some(Hit::Edge { .. }))).then_some((at, mid))
+        });
+        let (at, mid) = found.unwrap();
+        let pivot = pivot_under(&app, &proj, at);
+        let on_screen = proj.to_screen(pivot).unwrap();
+        assert!(on_screen.distance(at) < 6.0, "the pivot is under the cursor: {on_screen:?} vs {at:?}");
+        assert!(on_screen.distance(mid) > 90.0, "not the edge's middle");
+        orbit(&mut app, rect, 40.0, 25.0, Some(at));
+        assert_eq!(app.viewport.orbit_pivot, Some(pivot));
+        let after = crate::viewport::projection(&app, rect).to_screen(pivot).unwrap();
+        assert!(after.distance(on_screen) < 2.0, "{on_screen:?} -> {after:?}");
+    }
+
+    /// On a sketch line too: the line's point under the cursor, not the view's middle.
+    #[test]
+    fn orbiting_from_a_sketch_line_turns_around_the_point_under_the_cursor() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        app.run("sketch.line", json!({"points": [[-100, 0], [100, 0]]})).unwrap();
+        app.run("sketch.finish", json!({})).unwrap();
+        app.preferences.orbit_around = OrbitAround::Cursor;
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        app.fit_view();
+        let proj = crate::viewport::projection(&app, rect);
+        let on_line = Vec3::new(-60.0, 0.0, 0.0);
+        let at = proj.to_screen(on_line).unwrap();
+        let pivot = pivot_under(&app, &proj, at);
+        assert!(pivot.dist(on_line) < 2.0, "{pivot:?}");
     }
 
     /// A drag that starts over empty space turns around the visible geometry's centre, not a

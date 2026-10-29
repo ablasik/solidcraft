@@ -37,6 +37,8 @@
   preset in Preferences switches to SolidWorks, Inventor, Alias, Maya, Blender, Tinkercad, OpenSCAD, HFSS or Touchpad style). On a
   trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
+  On Linux, pinch needs the native Wayland window system
+  (see [Troubleshooting](troubleshooting.md)).
   With the **Fusion** preset and two-finger pan enabled, hold **Shift** while scrolling with
   two fingers to orbit freely instead of panning. No click is needed. Releasing Shift returns
   to panning, even during the same gesture. Shift does not snap this gesture to standard views;
@@ -103,12 +105,23 @@
   the dialog's title row, right of the title, where they stay while sections open and close;
   Cancel then also takes the place of the close button. Enter and Esc work as before.
 - **Timeline** (bottom). Every feature in order. Double-click to edit, drag the marker to roll
-  back, and drag features to reorder them. Preferences can put the timeline vertically at the
+  back, and drag features to reorder them. A sketch's icon, here and in the browser, takes the
+  colour of its state: the sketch colour while it is under constrained, the fully constrained
+  colour, or red while its constraints conflict; its tooltip names the state (Preferences ›
+  Sketch › **Sketch icons in the colour of their state**, on by default, turns this off).
+  Preferences can put the timeline vertically at the
   far left of the viewport, beside the browser. Its seam handle switches between icon
   chips and compact feature names; the browser can collapse to a rail beside either width.
   Docked under the browser, the two share the column: drag the seam between them to give either
   more height, and the split is remembered.
-  Previous, Play and Next sit at the top. Double-click Previous to roll to the start.
+  Its controls jump to the beginning, step back one feature, play, step forward one feature or
+  jump to the end. **Play History**, in the middle of those controls and under
+  **Inspect → History**, advances through the remaining features, pausing half a second after
+  each rebuilt step appears. It becomes **Stop History** while running; it is also in command
+  search and can be assigned a shortcut in Preferences → Keyboard Shortcuts. Click Stop History
+  or press Escape to stop playback; navigation and editing stop it too. To keep the controls to
+  four, right-click them and choose **Hide Play Button**, or clear the setting under
+  Preferences → Interface.
   Interface › **Sketches** › **Under their feature** lists a sketch in the vertical timeline one
   level in, under the first feature built from it, behind that feature's fold arrow. Dragging the
   feature takes its sketch along. A later feature built from the same sketch gets a row that

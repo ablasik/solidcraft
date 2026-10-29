@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 
-use egui::{Shape, Stroke};
+use egui::Stroke;
 use serde_json::json;
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{CurveKind, Sketch};
@@ -246,7 +246,7 @@ pub fn show(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let to = |p: Vec2| proj.to_screen(ss.plane.to_world(p));
     let tk = Tokens::get();
     if let (Some(a), Some(b)) = (to(i.guide.0), to(i.guide.1)) {
-        painter.add(Shape::dashed_line(&[a, b], Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
+        painter.extend(crate::viewport::dashed_line(&[a, b], painter.clip_rect(), Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
     }
 }
 
@@ -339,7 +339,7 @@ pub(crate) fn track_and_show(app: &mut SolveApp, painter: &egui::Painter, proj: 
         && let (Some(a), Some(b)) = (proj.to_screen(ss.plane.to_world(a)), proj.to_screen(ss.plane.to_world(b)))
     {
         let tk = Tokens::get();
-        painter.add(Shape::dashed_line(&[a, b], Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
+        painter.extend(crate::viewport::dashed_line(&[a, b], painter.clip_rect(), Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
         painter.circle_stroke(a, 4.0, Stroke::new(1.0, tk.rubber_band));
     }
 }

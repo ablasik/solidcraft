@@ -1,7 +1,8 @@
 //! Render shell requests. The UI applies validated echoes without design edits.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use std::borrow::Cow;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +67,82 @@ pub struct AngleReadoutResult {
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// `view.next_tab` and `view.previous_tab` take no parameters (#8565).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TabStepParams {}
+
+/// What `view.next_tab` and `view.previous_tab` return. The window shows the design tab `step`
+/// places along the strip, going round at either end; the design is not changed and nothing is
+/// added to undo.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TabStep {
+    /// 1: the tab to the right; -1: the tab to the left.
+    pub step: i8,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Validated request and echoed result of `view.render_select`.
+#[derive(Debug, Serialize)]
+pub struct RenderSelect {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for RenderSelect {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            kind: String,
+            id: Option<String>,
+        }
+        let request = Request::deserialize(d)?;
+        let identified = matches!(request.kind.as_str(), "light" | "shot");
+        if !matches!(request.kind.as_str(), "nothing" | "environment" | "light" | "shot" | "output" | "wear" | "sampling" | "effects" | "check")
+            || identified != request.id.is_some()
+            || request.id.as_ref().is_some_and(|id| id.trim().is_empty() || id.len() > 1024)
+        {
+            return Err(serde::de::Error::custom("expected a Browser kind and an id only for light or shot"));
+        }
+        Ok(Self { kind: request.kind, id: request.id })
+    }
+}
+
+impl JsonSchema for RenderSelect {
+    fn schema_name() -> Cow<'static, str> {
+        "RenderSelect".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["nothing", "environment", "output", "wear", "sampling", "effects", "check"]},
+                        "id": {"type": "null"}
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["light", "shot"]},
+                        "id": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": super::types::not_blank_pattern(),
+                               "description": "A nonblank identity, at most 1024 UTF-8 bytes."}
+                    },
+                    "required": ["kind", "id"],
+                    "additionalProperties": false
+                }
+            ]
+        })
+    }
 }
 
 #[cfg(test)]

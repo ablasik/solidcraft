@@ -238,6 +238,8 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
                 | "view.grid"
                 | "view.ground_shadow"
                 | "view.navigation_bar"
+                | "view.next_tab"
+                | "view.previous_tab"
                 | "view.layout"
                 | "view.navigate"
                 | "view.ambient_occlusion"
@@ -245,6 +247,7 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
                 | "view.angle_readout"
                 | "view.graphics_preset"
                 | "view.history_layout"
+                | "timeline.play"
                 | "browser.expand_all"
                 | "browser.collapse_all"
         )
@@ -270,11 +273,11 @@ const MAX_BATCH: usize = 10_000;
 /// Commands that load a file: through `engine.execute` they go to the app's file loader
 /// (`file_load::control`: off the window thread, with progress and Cancel), which a batch would
 /// bypass.
-const LOADS_A_FILE: [&str; 3] = ["doc.open", "file.insert_step", "file.insert_mesh"];
+const LOADS_A_FILE: [&str; 4] = ["doc.open", "file.insert_step", "file.insert_mesh", "pointcloud.insert"];
 
-/// Edit in Place and Finish Edit go to another design's tab: a batch's rollback, or a script's
-/// later steps, would land in the wrong design.
-const SWITCHES_DESIGN: [&str; 2] = ["component.edit_in_place", "component.finish_edit"];
+/// Edit in Place, Finish Edit and the next or previous tab go to another design's tab: a batch's
+/// rollback, or a script's later steps, would land in the wrong design.
+const SWITCHES_DESIGN: [&str; 4] = ["component.edit_in_place", "component.finish_edit", "view.next_tab", "view.previous_tab"];
 
 /// `command` names the command `id`, in any of the spellings the engine takes.
 fn is_command(command: Option<&str>, id: &str) -> bool {
@@ -462,6 +465,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
     let f = |k: &str| p.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
     let b = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
     match method {
+        "ui.status_fixture" => wrap(crate::viewport_status_fixture::control(app, p)),
         "ui.workspace" => {
             if let Some(workspace) = s("workspace") {
                 if !matches!(workspace, "design" | "render") {
@@ -1222,6 +1226,29 @@ mod tests {
 
     use super::*;
     use crate::Services;
+
+    #[test]
+    fn viewport_status_fixture_rejects_hostile_presets_without_mutating_the_session() {
+        let mut h = crate::scenario::Harness::new();
+        let revision = h.app.session.revision;
+        for params in [Value::Null, json!([]), json!({}), json!({"preset":false}), json!({"preset":[]}), json!({"preset":"unknown"})] {
+            let reply = h.call("ui.status_fixture", params);
+            assert_eq!(reply["ok"], false, "{reply}");
+            assert_eq!(h.app.session.revision, revision);
+        }
+        let reply = h.call("ui.status_fixture", json!({"preset":"mode"}));
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(h.app.session.revision, revision);
+        assert!(h.app.session.analysis.is_none());
+        for preset in ["off", "mode"] {
+            h.call("ui.status_fixture", json!({"preset":preset}));
+            h.call("ui.resize", json!({"width":200,"height":600}));
+            h.frames(4);
+            assert_eq!(h.app.session.revision, revision);
+            h.call("ui.resize", json!({"width":1400,"height":900}));
+            h.frames(4);
+        }
+    }
 
     #[test]
     fn touchpad_automation_moves_with_modifiers_and_releases_without_buttons() {

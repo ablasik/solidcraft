@@ -13,6 +13,7 @@ pub const DOCUMENTED: &[&str] = &[
     "face.delete",
     "material.assign",
     "parameters.change",
+    "pointcloud.insert",
     "solid.align",
     "solid.chamfer",
     "solid.combine",
@@ -37,6 +38,7 @@ pub const DOCUMENTED: &[&str] = &[
     "solid.sweep",
     "timeline.compute_all",
     "timeline.delete",
+    "timeline.play",
 ];
 
 /// The help for `command` in the current language, when it has any.

@@ -227,6 +227,7 @@ pub enum ModAction {
     TextSingleLetter = 7,
     TextHandleConstrain = 8,
     IsoCurveAlternate = 9,
+    ExtendPair = 10,
 }
 
 impl ModAction {
@@ -241,6 +242,7 @@ impl ModAction {
         Self::TextSingleLetter,
         Self::TextHandleConstrain,
         Self::IsoCurveAlternate,
+        Self::ExtendPair,
     ];
 
     pub const fn id(self) -> &'static str {
@@ -255,6 +257,7 @@ impl ModAction {
             Self::TextSingleLetter => "text_single_letter",
             Self::TextHandleConstrain => "text_handle_constrain",
             Self::IsoCurveAlternate => "isocurve_alternate",
+            Self::ExtendPair => "extend_pair",
         }
     }
 
@@ -623,6 +626,20 @@ mod tests {
         assert!(set.contains(ModAction::IsoCurveAlternate));
         let bare = resolve(&[], None, held, Trigger::Press);
         assert!(!bare.contains(ModAction::IsoCurveAlternate));
+    }
+
+    #[test]
+    fn extend_shift_is_the_pair_action_and_not_a_midpoint_snap() {
+        let held = Held { shift: true, ..Default::default() };
+        let press = resolve(&[], descriptor("sketch.extend"), held, Trigger::Press);
+        assert!(press.contains(ModAction::ExtendPair));
+        let plain = resolve(&[], descriptor("sketch.extend"), Held::default(), Trigger::Press);
+        assert!(!plain.contains(ModAction::ExtendPair));
+        // Sketch scopes give Shift the midpoint snap while drawing; Extend's own entry turns it off.
+        let live = resolve(&[Scope::SketchDraw, Scope::SketchDrag], descriptor("sketch.extend"), held, Trigger::Live);
+        assert!(!live.contains(ModAction::TargetMidpoint));
+        let drawing = resolve(&[Scope::SketchDraw, Scope::SketchDrag], descriptor("sketch.line"), held, Trigger::Live);
+        assert!(drawing.contains(ModAction::TargetMidpoint));
     }
 
     #[test]

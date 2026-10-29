@@ -202,8 +202,8 @@ pub fn pin(app: &SolveApp, at: Vec2) {
 }
 
 /// Move a draft's text to `at`. Where the text goes can change what the dimension measures
-/// (two points or a slanted line: across from them the distance between them, above or below
-/// the horizontal one, beside them the vertical one), so a value nothing was typed into yet
+/// (two points or a slanted line: inside the box they span the distance between them, above or
+/// below it the horizontal one, beside it the vertical one), so a value nothing was typed into yet
 /// becomes what the new dimension measures; carrying the old one over would preview, and on
 /// Enter apply, the aligned length as a horizontal or vertical span, moving the picked points.
 fn move_text(app: &SolveApp, e: &mut Edit, at: Vec2) {
@@ -656,7 +656,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
         let expr = c.param.as_ref().and_then(|p| display_doc.param(p)).map(|p| p.expr.as_str());
         let failing = source.report.failing.contains(&c.id);
         let col = if failing {
-            tk.error
+            crate::viewport::Conflict::glyph_colour(app, &tk)
         } else if is_sel(&c.id) || hover.as_deref() == Some(c.id.as_str()) {
             tk.accent
         } else if c.driven {
@@ -951,9 +951,12 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 Ok(reply) => {
                     clear_picks(app);
-                    match reply.get("defined").and_then(serde_json::Value::as_str) {
-                        Some(name) => app.set_status(format!("Dimension applied; parameter `{name}` defined"), false),
-                        None => app.set_status("Dimension applied", false),
+                    // A new dimension defines its parameter; an edited one renames its own (#4071).
+                    let named = reply.get("renamed").and_then(|r| r.get("to")).and_then(serde_json::Value::as_str);
+                    match (reply.get("defined").and_then(serde_json::Value::as_str), named) {
+                        (Some(name), _) => app.set_status(format!("Dimension applied; parameter `{name}` defined"), false),
+                        (None, Some(name)) => app.set_status(format!("Dimension applied; parameter named `{name}`"), false),
+                        (None, None) => app.set_status("Dimension applied", false),
                     }
                 }
             }

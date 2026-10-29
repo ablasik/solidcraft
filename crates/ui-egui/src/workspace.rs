@@ -171,7 +171,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "INSERT",
         panel: "FILES",
         promoted: 3,
-        ids: &["file.insert_step", "file.insert_mesh", "component.insert_design", "file.save_mesh", "file.send_to_slicer"],
+        ids: &["file.insert_step", "file.insert_mesh", "pointcloud.insert", "component.insert_design", "file.save_mesh", "file.send_to_slicer"],
     },
     Section { tab: "INSERT", panel: "IMAGES", promoted: 3, ids: &["canvas.insert", "canvas.decal", "canvas.edit"] },
     Section { tab: "INSERT", panel: "2D", promoted: 2, ids: &["sketch.insert_dxf", "sketch.insert_svg"] },
@@ -199,7 +199,7 @@ pub const SECTIONS: &[Section] = &[
             "inspect.continuity",
         ],
     },
-    Section { tab: "INSPECT", panel: "HISTORY", promoted: 2, ids: &["timeline.dependents", "document.inspect"] },
+    Section { tab: "INSPECT", panel: "HISTORY", promoted: 3, ids: &["timeline.play", "timeline.dependents", "document.inspect"] },
     Section {
         tab: "MANAGE",
         panel: "PARAMETERS",
@@ -323,9 +323,6 @@ const LEGACY_RENDER_SECTIONS: &[Section] = &[
             "render.library.surface.prepare",
             "render.library.surface.unbind",
             "render.library.physical.prepare",
-            "appearance.paint",
-            "appearance.pick_up",
-            "appearance.replace",
         ],
     },
     Section {
@@ -370,9 +367,6 @@ const LEGACY_RENDER_SECTIONS: &[Section] = &[
 /// Compact source labels for painted big buttons only. Menus, search and tooltips
 /// retain the engine label. Route these through `tr_label`, like other UI labels.
 pub const RIBBON_LABELS: &[(&str, &str)] = &[
-    ("appearance.paint", "Paint"),
-    ("appearance.pick_up", "Pick Up"),
-    ("appearance.replace", "Replace"),
     ("render.batch", "All Shots"),
     ("render.cancel", "Cancel"),
     ("render.export", "Export Image"),
@@ -424,6 +418,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("parts.resize", "Resize Part"),
     ("plastic.assign_rule", "Assign Rule"),
     ("plastic.manage_rules", "Plastic Rules"),
+    ("pointcloud.insert", "Point Clouds"),
     ("render.scene", "Scene"),
     ("sheet.export_bend_table", "Bend Table"),
     ("sheet.export_dxf", "Export DXF"),

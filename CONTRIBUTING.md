@@ -278,6 +278,11 @@ Some files gain an item in many pull requests at once. They are kept so that two
 each add an item only meet when their items are neighbours, which spares everyone a conflict
 and a fresh CI run:
 
+- **Growing Rust lists**: use slices (`const ITEMS: &[Item] = &[...];`) without a written
+  length. `cargo xtask lists` rejects non-test const/static arrays with more than ten lines
+  of entries, except fixed standard or algorithm tables listed with reasons in `xtask/src/lists.rs`.
+  Built-in themes need only a JSON file in `assets/styles/ui/themes/`, with a unique nonnegative
+  integer `order` (the picker order) and its own `provenance` line; keep existing order values.
 - **Message catalogs** (`assets/locales/*.json`): one message per line, sorted by id. Add your
   message anywhere and run `cargo xtask lists --fix`; `cargo xtask lists` (in `cargo xtask ci`
   and the Lists workflow) fails on an unsorted catalog or an id that appears twice.
@@ -300,7 +305,9 @@ and a fresh CI run:
 - **Design format**: one file per change, never an edit to a shared number (above).
 - **New UI strings and attribution rows**: one new file per change, `assets/locales/pending/<slug>.json`
   and `attribution/pending/<slug>.md`, instead of editing the catalogs or the ATTRIBUTION.md table;
-  `cargo xtask fold-pending` folds them on `main` (see the README in each folder).
+  `cargo xtask fold-pending` folds them on `main` (see the README in each folder). A new English
+  message also needs every catalog delivered complete (`COMPLETE` in `crates/ui-egui/src/i18n.rs`:
+  today ar, he, ja, vi, and zh) in the same pending file; `cargo xtask i18n --check` reports any gap.
 
 ## Sending a change
 

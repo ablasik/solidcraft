@@ -136,7 +136,7 @@ pub struct Scale {
 }
 
 /// ISO 5455's recommended scales, largest first: enlargements, full size, then reductions.
-pub const PRESETS: [Scale; 18] = [
+pub const PRESETS: &[Scale] = &[
     Scale { paper: 50.0, model: 1.0 },
     Scale { paper: 20.0, model: 1.0 },
     Scale { paper: 10.0, model: 1.0 },
@@ -181,7 +181,7 @@ impl Scale {
         if ![size_mm, room_mm].into_iter().all(|v| v.is_finite() && v.x >= 0.0 && v.y >= 0.0) {
             return None;
         }
-        PRESETS.into_iter().find(|s| size_mm.x * s.paper <= room_mm.x * s.model && size_mm.y * s.paper <= room_mm.y * s.model)
+        PRESETS.iter().copied().find(|s| size_mm.x * s.paper <= room_mm.x * s.model && size_mm.y * s.paper <= room_mm.y * s.model)
     }
 }
 

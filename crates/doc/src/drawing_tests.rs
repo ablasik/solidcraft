@@ -216,7 +216,7 @@ fn a_fixed_unit_is_a_length_unit_of_the_expression_table() {
         read(&v).map(|d| d.units)
     };
     for (unit, kind, _) in expr::UNITS {
-        assert_eq!(units(json!({"fixed": {"unit": unit}})).is_ok(), kind == expr::Kind::Length, "{unit}");
+        assert_eq!(units(json!({"fixed": {"unit": unit}})).is_ok(), *kind == expr::Kind::Length, "{unit}");
     }
     assert_eq!(units(json!({"fixed": {"unit": "in"}})).unwrap(), Units::Fixed { unit: "in".into() });
     assert_eq!(units(json!("follow_model")).unwrap(), Units::FollowModel);

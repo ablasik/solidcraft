@@ -8,6 +8,28 @@ fn run(s: &mut Session, id: &str, params: Value) -> Value {
     s.execute(id, &params).unwrap_or_else(|e| panic!("{id} {params}: {e}"))
 }
 
+#[test]
+fn history_playback_is_a_typed_display_request_without_history_edits() {
+    let mut s = Session::default();
+    let revision = s.revision;
+    let undo = s.undo.len();
+    for action in ["toggle", "play", "stop"] {
+        assert_eq!(run(&mut s, "timeline.play", json!({"action": action})), json!({"action": action}));
+    }
+    assert_eq!(run(&mut s, "timeline.play", json!({})), json!({"action": "toggle"}));
+    for action in [json!("pause"), json!(true), json!(1), json!([])] {
+        assert!(s.execute("timeline.play", &json!({"action": action})).is_err());
+    }
+    assert_eq!(s.revision, revision);
+    assert_eq!(s.undo.len(), undo);
+    assert!(s.doc.marker.is_none());
+    let description = run(&mut s, "engine.describe", json!({"command": "timeline.play"}));
+    assert!(description["input"].is_object());
+    assert!(description["output"].is_object());
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    assert!(s.execute("timeline.play", &json!({})).is_err());
+}
+
 /// `timeline.roll_to` takes a number of features or "end"; any other value is refused instead of
 /// silently moving the marker to the end.
 #[test]

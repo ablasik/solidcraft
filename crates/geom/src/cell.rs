@@ -188,7 +188,7 @@ impl Fit {
 
 /// The Unicode blocks of the scripts written in wide characters (Chinese, Japanese, Korean and Yi),
 /// with their full-width and vertical forms.
-const WIDE: [(u32, u32); 15] = [
+const WIDE: &[(u32, u32)] = &[
     (0x1100, 0x115F),
     (0x2E80, 0x303E),
     (0x3041, 0x33FF),

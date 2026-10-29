@@ -69,6 +69,8 @@ pub enum Target {
     },
     /// The toolbar's empty space.
     Toolbar,
+    /// The History controls (first, previous, next, last, and Play when shown).
+    HistoryControls,
     /// The workspace switcher.
     Workspace,
     /// The Named Views folder, and one view (saved or standard) in it.
@@ -78,6 +80,10 @@ pub enum Target {
     },
     /// A canvas (reference image).
     Canvas {
+        id: u64,
+    },
+    /// A point cloud.
+    PointCloud {
         id: u64,
     },
     /// The Section Analysis in the browser's Analysis folder.
@@ -125,7 +131,7 @@ impl Item {
             swatch: None,
         }
     }
-    fn heading(label: &str) -> Item {
+    pub(crate) fn heading(label: &str) -> Item {
         Item {
             id: format!("#{label}"),
             label: label.into(),
@@ -377,12 +383,14 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Group { id, scope } => crate::browser::group_items(app, *id, scope),
         Target::Folder { component, folder, scope } => crate::browser::folder_items(app, *component, folder, scope),
         Target::Canvas { id } => crate::browser::canvas_items(app, *id),
+        Target::PointCloud { id } => crate::browser::point_cloud_items(app, *id),
         Target::Origin => crate::browser::origin_items(app),
         Target::NamedViews => vec![act("ui.newView", "New Named View", "perspective")],
         Target::Section => crate::browser::section_items(app),
         Target::Joint { id } => joint_items(app, *id),
         Target::ToolbarCommand { id } => crate::toolbar_custom::command_items(app, id),
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
+        Target::HistoryControls => crate::timeline::transport_items(app),
         Target::Workspace => {
             let rendering = crate::render_workspace::active(app);
             let mut v = vec![
@@ -430,6 +438,11 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
                     .on(crate::render_workspace::scene::same_look(app, &bodies)),
             );
         }
+    }
+    if crate::render_workspace::active(app)
+        && let Target::Body { name } = target
+    {
+        v.push(crate::render_workspace::assign::menu(app, name));
     }
     // Several items of the folder selected: they can be grouped.
     if let Some(p) = crate::browser::selection_group(app, target) {
@@ -1117,6 +1130,16 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
     {
         v.push(cmd(app, "sketch.spline.insert_point", "Add Spline Point").with(json!({"curve": curve, "at": [at.x, at.y]})));
     }
+    // #8224: any spline of the sketch's own runs the other way.
+    if let [curve] = curves.as_slice()
+        && ss
+            .sketch
+            .curve_index(curve)
+            .and_then(|i| ss.sketch.curves.get(i))
+            .is_some_and(|c| matches!(c.kind, CurveKind::Spline { .. }) && c.link.is_none())
+    {
+        v.push(cmd(app, "sketch.spline.reverse", "Reverse Spline Direction").with(json!({ "curve": curve })));
+    }
     v.push(act("ui.fix", "Fix/Unfix", "c_fix").with(json!({ "entities": ents })));
     // The clipboard beside Delete, as in every menu.
     v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X"));
@@ -1212,6 +1235,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
     let p = item.params.clone().unwrap_or(Value::Null);
     let bodies = strs(&p, "bodies");
     match item.id.as_str() {
+        "appearance.library" if crate::render_workspace::active(app) => {
+            app.start("appearance.library");
+        }
         "parts.resize" => {
             if let Some(component) = id_of(&p, "component") {
                 crate::dialogs_part_size::open(app, component);
@@ -1369,12 +1395,16 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let body = p.get("body").and_then(Value::as_str);
             let f = id_of(&p, "feature").or_else(|| body.and_then(|b| body_feature(app, b)));
             if let Some(f) = f {
-                app.ui.show_timeline = true;
-                crate::timeline_left::reveal_feature(app, f);
-                // From a face or body, the Browser shows the feature in that body's copy. From a
-                // sketch, plane or feature row there is no body: that row is the Browser's view.
-                if let Some(body) = body {
-                    crate::browser::reveal_feature(app, f, body);
+                if app.preferences.history_in_browser {
+                    crate::browser::reveal_in_history(app, f);
+                } else {
+                    app.ui.show_timeline = true;
+                    crate::timeline_left::reveal_feature(app, f);
+                    // From a face or body, the Browser shows the feature in that body's copy. From a
+                    // sketch, plane or feature row there is no body: that row is the Browser's view.
+                    if let Some(body) = body {
+                        crate::browser::reveal_feature(app, f, body);
+                    }
                 }
                 let _ = app.run("select.set", json!({"items": [{"type": "feature", "id": f}]}));
                 app.tree.timeline_reveal = Some(f);
@@ -1473,6 +1503,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
         "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {
             crate::toolbar_custom::run(app, &item.id, &p)
+        }
+        "ui.historyPlayButton" => {
+            if let Err(e) = crate::prefs::set(app, &json!({ "history_play_button": p["show"] })) {
+                app.set_status(e, true);
+            }
         }
         "ui.workspace" | "ui.workspace.design" | "ui.workspace.render" => {
             if let Some(workspace) = p.get("workspace").and_then(Value::as_str)
@@ -1597,6 +1632,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 _ => None,
             };
         }
+        "ui.editPointCloud" => {
+            if let Some(c) = id_of(&p, "cloud") {
+                app.tree.cloud_panel = Some(crate::browser::CloudPanel::new(app, c));
+            }
+        }
         "ui.editCanvas" | "ui.calibrateCanvas" => {
             if let Some(c) = id_of(&p, "canvas") {
                 app.tree.canvas_panel = Some(crate::browser::CanvasPanel::new(app, c, item.id == "ui.calibrateCanvas"));
@@ -1622,6 +1662,22 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
 /// Delete what is selected: sketch entities, features, and bodies (a Remove feature).
 pub fn delete(app: &mut SolveApp) {
     crate::delete::delete_selection(app);
+}
+
+/// A shortcut key pressed while a menu is open: the row of that menu showing `key` runs on the
+/// menu's target, as a click on it would, and the menu closes. A folder, the Origin folder or an
+/// origin plane is not selected by the right-click that opens its menu, so the key's own action
+/// (V on the selection) would miss it. Returns whether the open menu has a row for the key; a
+/// disabled row takes the key and does nothing, as a click on it does.
+pub fn press_shortcut(app: &mut SolveApp, key: &str) -> bool {
+    let Some(at) = app.viewport.context_menu else { return false };
+    let target = app.menu.target.clone();
+    let Some(item) = items(app, &target).into_iter().find(|i| i.shortcut == key && i.children.is_empty()) else { return false };
+    if item.enabled {
+        close(app);
+        run_item(app, &item, at);
+    }
+    true
 }
 
 /// Show/Hide (the V key): what is selected in the viewport or picked in the browser flips its
@@ -2485,7 +2541,8 @@ mod tests {
     }
 
     /// #6533: a right-click on a fit point spline offers Add Spline Point at the clicked spot, and
-    /// the item puts a fit point there. A control point spline is not offered it.
+    /// the item puts a fit point there. A control point spline is not offered it. Every spline is
+    /// offered Reverse Spline Direction (#8224), which runs it the other way.
     #[test]
     fn spline_context_menu_adds_a_fit_point_where_it_was_clicked() {
         let mut h = crate::scenario::Harness::new();
@@ -2518,6 +2575,18 @@ mod tests {
         h.step(&json!({"click":{"world":[c.x,c.y,0]},"button":"right"})).unwrap();
         assert_eq!(h.app.session.selection, vec![Sel::SketchCurve { id: control.clone(), sketch: None }]);
         assert!(items(&h.app, &Target::Viewport).iter().all(|item| item.id != "sketch.spline.insert_point"));
+        let menu = items(&h.app, &Target::Viewport);
+        let item = menu.iter().find(|item| item.id == "sketch.spline.reverse").expect("a control point spline offers Reverse Spline Direction");
+        assert_eq!((item.label.as_str(), item.params.clone()), ("Reverse Spline Direction", Some(json!({"curve": control}))));
+        let points = |h: &crate::scenario::Harness, id: &str| {
+            let state = h.app.session.world_state();
+            let sk = &state.sketch(sid).unwrap().sketch;
+            sk.curves[sk.curve_index(id).unwrap()].kind.point_ids()
+        };
+        let mut reversed = points(&h, &control);
+        reversed.reverse();
+        h.step(&json!({"click":{"handle":"menu:sketch.spline.reverse"}})).unwrap();
+        assert_eq!(points(&h, &control), reversed);
         close(&mut h.app);
 
         let at = spot(&h, &fit, 1);

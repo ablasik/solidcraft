@@ -564,7 +564,8 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     if inside && caps.orbit && trackpad_orbit && raw.shift_pan != egui::Vec2::ZERO {
         app.cancel_view_animation();
         app.viewport.orbit_free = None;
-        orbit(app, rect, f64::from(raw.shift_pan.x), f64::from(raw.shift_pan.y), hover);
+        let sign = crate::prefs::orbit_sign(app);
+        orbit(app, rect, sign * f64::from(raw.shift_pan.x), sign * f64::from(raw.shift_pan.y), hover);
     }
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
@@ -639,7 +640,9 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             if dragging && app.viewport.axis_drag.is_none() {
                 match button {
                     Some(b) => crate::prefs::nav_mode(app, b, mods),
-                    None if primary_down => primary_nav,
+                    // A press held still that opened Select Other stays its own: egui calls it a
+                    // drag after 0.8 s, and moving to a row must not turn the view under the list.
+                    None if primary_down && !crate::select_other::is_open(app) => primary_nav,
                     None => None,
                 }
             } else {

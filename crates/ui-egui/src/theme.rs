@@ -493,6 +493,11 @@ pub fn set_vision(mode: ColorVision) {
     VISION.with(|v| v.set(mode));
 }
 
+/// An sRGB colour carried by model data, including file colours and point-cloud shading.
+pub(crate) const fn model_color(rgb: [u8; 3]) -> Color32 {
+    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+
 /// An sRGB colour given as 0..1 (the analysis colours), for drawing in the UI.
 pub fn srgb(c: [f32; 3]) -> Color32 {
     let byte = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -764,6 +769,10 @@ pub struct Tokens {
     pub sketch_halo: Color32,
     /// Fixed (locked) sketch geometry.
     pub sketch_locked: Color32,
+    /// The open sketch's curves and points that a failing constraint holds, and that
+    /// constraint's glyph or dimension, while the constraints conflict (#7244). The error red by
+    /// default; a theme file that sets `error` but not this key takes its `error`.
+    pub sketch_conflict: Color32,
     /// Sketch dimensions: driving, driven (reference). Each theme gives them a colour of their
     /// own, apart from the sketch curves they measure (#7861).
     pub dimension: Color32,
@@ -922,6 +931,7 @@ impl Tokens {
             sketch: view.sketch,
             sketch_fixed: view.sketch_fixed,
             sketch_locked: view.sketch_locked,
+            sketch_conflict: view.sketch_conflict,
             dimension: view.dimension,
             dimension_driven: view.dimension_driven,
             sketch_point: view.sketch_point,

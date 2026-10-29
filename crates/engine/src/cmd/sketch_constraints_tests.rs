@@ -979,6 +979,10 @@ fn midpoint_rejects_wrong_picks_without_changing_the_sketch() {
         json!({"a":"l1","b":"missing"}),
         json!({"a":"l1"}),
         json!({"a":12,"b":"l1"}),
+        // The line's own end: it would shrink the line to a point.
+        json!({"a":"l1.end","b":"l1"}),
+        json!({"a":"l1","b":"l1.start"}),
+        json!({"point":"l1.end","line":"l1"}),
     ] {
         let before = s.doc.to_json();
         let undo = s.undo.len();
@@ -986,6 +990,38 @@ fn midpoint_rejects_wrong_picks_without_changing_the_sketch() {
         assert_eq!(s.doc.to_json(), before, "{params}");
         assert_eq!(s.undo.len(), undo, "{params}");
     }
+}
+
+/// A two-curve constraint picked on one curve twice is refused, leaving the sketch and the undo
+/// history as they were. Parallel, collinear, equal or concentric with itself always held (a
+/// constraint that did nothing); perpendicular or tangent to itself never could, and the refusal
+/// blamed geometry that can't move.
+#[test]
+fn a_two_curve_constraint_on_one_curve_twice_is_refused() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[60,10]],"infer":false,"connect":false}));
+    run(&mut s, "sketch.circle.center", json!({"center":[40,50],"radius":3}));
+    for (cmd, curve) in [
+        ("parallel", "l1"),
+        ("perpendicular", "l1"),
+        ("collinear", "l1"),
+        ("tangent", "c1"),
+        ("equal", "l1"),
+        ("equal", "c1"),
+        ("concentric", "c1"),
+        ("parallel", "x"),
+    ] {
+        let before = s.doc.to_json();
+        let undo = s.undo.len();
+        let err = match s.execute(&format!("sketch.constraint.{cmd}"), &json!({"a":curve,"b":curve})) {
+            Ok(v) => panic!("{cmd} of {curve} with itself was accepted: {v}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("same curve"), "{cmd} {curve}: {err}");
+        assert_eq!(s.doc.to_json(), before, "{cmd} {curve}");
+        assert_eq!(s.undo.len(), undo, "{cmd} {curve}");
+    }
+    run(&mut s, "sketch.constraint.parallel", json!({"a":"l1","b":"x"}));
 }
 
 /// A parameter's row in `parameters.list` (Null when there is none).
@@ -1146,6 +1182,25 @@ fn undoing_a_defining_dimension_removes_the_parameter_too() {
 /// Coincident on two circles (or arcs) lays the second on the first: one centre and one
 /// radius, in one step, and the first stays. It used to be refused ("two curves must both be
 /// straight lines").
+#[test]
+fn coincident_refuses_a_lines_two_ends() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[60,0]],"infer":false,"connect":false}));
+    run(&mut s, "sketch.line", json!({"points":[[0,20],[60,20]],"infer":false,"connect":false}));
+    // The line would shrink to a point, leaving a later Parallel or Perpendicular on it no
+    // direction to hold.
+    for params in [json!({"a":"l1.start","b":"l1.end"}), json!({"a":"l1.end","b":"l1.start"})] {
+        let before = s.doc.to_json();
+        let undo = s.undo.len();
+        let err = s.execute("sketch.constraint.coincident", &params).unwrap_err().to_string();
+        assert!(err.contains("shrink to a point"), "{params}: {err}");
+        assert_eq!(s.doc.to_json(), before, "{params}");
+        assert_eq!(s.undo.len(), undo, "{params}");
+    }
+    // Ends of two different lines still join.
+    run(&mut s, "sketch.constraint.coincident", json!({"a":"l1.end","b":"l2.end"}));
+}
+
 #[test]
 fn coincident_circles_lie_on_each_other() {
     let mut s = new_sketch();

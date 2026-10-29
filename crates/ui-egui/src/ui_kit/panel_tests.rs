@@ -853,6 +853,7 @@ fn universal_containers_follow_one_layout_without_changing_transient_surfaces() 
             Surface::Canvas,
             Surface::Toast,
             Surface::Navigation,
+            Surface::ViewportStatus,
             Surface::Viewport,
             Surface::InputShield,
         ] {

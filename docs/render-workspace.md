@@ -47,14 +47,37 @@ sphere grid or list. Resources used in the design or matching a selected look's
 finish family or category appear first. Clicking a look applies through
 `appearance.assign` to selected bodies, faces or components; with no target it
 only inspects. Favorites and recent history live in user preferences. Explicit
-catalog navigation from the Inspector retains the read-only resource browser.
+catalog navigation opens the corresponding stage library.
 
-Light hosts the existing native studios and HDR environments in the same tile grid.
-A click runs `render.preset.apply` or `render.library.environment.apply`, preserving
-those commands' validation and undo behavior. Studios require an explicitly selected
-GPU path setup; environments require CPU or GPU ray tracing. Frame and Output show
-faded Frame presets / Size presets placeholders with their Shot editor / Output
-editor reasons. Stage navigation itself never applies a resource.
+Look also offers **Surfaces and references**. Surfaces/References segments and search
+lead to authored surface rows with availability badges. Selecting a surface loads
+its bounded source-map preview; Target, Plane and Repeat precede Use uniform,
+Use GPU maps and Save maps. GPU actions remain faded with a reason on other methods.
+Physical profiles retain their properties and sources; Prepare creation plan opens
+a read-only review with acknowledgement and Copy plan. It creates no material.
+
+Light hosts **Studios and environments**: a Scope dropdown, search and three-column
+tiles for Studios, Rigs, Environments and read-only Specifications. Mine remains
+visible with the reason that personal studio saving is unavailable. Clicking selects;
+Apply prepares a review without changing the method or saved settings.
+
+The shared `ui_kit::ReviewAndApply` dialog presents a resource card, Replaces/Kept,
+variant controls and explicit acknowledgement before applying. Studio, rig fit,
+environment, ground/stage, physical plan, fixed quality budget and uniform/spatial
+maps use this composition. A captured review expires when the document, revision,
+shot, method or settings change. Rig fitting offers centre, extent, captured bounds
+and emitters-only projection. Quality review reports projected dimensions, samples,
+depth and omissions; `render.quality.prepare` remains reachable through command
+activation. S5 can call `render_workspace::review_resource(app,
+"render.quality.prepare", id)` for its selected specification.
+Programmatic commands continue to execute without opening dialogs.
+
+Remove shot uses the existing shared `Confirm`; remove stage and saved optics now
+also use it. Resource removal confirmations expire after a document revision change.
+
+Confirmed reviews run `render.preset.apply`, `render.library.studio.apply` or
+`render.library.environment.apply`, preserving validation and undo. Studios require an explicitly selected
+GPU path setup; environments require CPU or GPU ray tracing. Frame shows a faded Frame presets placeholder with its Shot editor reason. Output hosts the Size presets card described below. Stage navigation itself never applies a resource.
 
 The 110 pt compass uses the free canvas beside the Inspector; the navigation bar
 keeps its shared handler. The Shots strip's independent `view.shots_strip`
@@ -96,27 +119,50 @@ anisotropy, area lights and spot cones remain API capabilities without panel edi
 Its independent image device requires Vulkan; the live viewport may use another backend.
 When no compatible Vulkan device is available, GPU settings remain editable and
 saveable, while Check and Start explain why GPU execution is unavailable.
-The panel exposes progressive sample counts from 1 to 4096 and an Advanced section
-for maximum path depth (1–16), random seed and exposure (−32 to +32 EV). One setup
+Sampling > Path tracing exposes progressive sample counts from 1 to 4096,
+maximum path depth (1–16) and random seed. Exposure (−32 to +32 EV) lives in Shot. One setup
 exposure field controls the selected image method. Switching methods retains their
 local numeric drafts while submitting and saving only the active method. Reloading
 or choosing another setup replaces those drafts with the saved numeric intent.
 The live product preview keeps its fixed studio response and does not apply image
 exposure, environments, lens or material overrides.
 
-The GPU Advanced section also exposes Reinhard / ACES fitted tone mapping, optional
-final edge-aware denoising, and a thin-lens depth-of-field control. Positive aperture
+Effects > Tone exposes Reinhard / ACES fitted tone mapping. Sampling > Path tracing
+owns optional final edge-aware denoising; Shot owns thin-lens depth of field. Positive aperture
 requires a perspective product camera. Denoising preserves raw accumulation but can
 soften detail; glass and sharp specular first hits bypass its final spatial filter.
 
-The Environment section selects no map, an original artistic sky gradient, or a local
-Radiance `.hdr` panorama. HDR input is bounded to 16 MiB, 2048 × 1024, 2:1, and linear
+The Environment Browser row opens the Environment editor. The legacy Environment
+and Background pages use that same editor, with five sections in order: Source,
+Orientation and strength, Backdrop, Ground and stage, and Atmosphere (GPU).
+Source offers None, Artistic sky, HDR file and embedded HDR for GPU, or None,
+Constant and HDR for CPU. Change opens the Environments scope of Studios and
+environments. Embedded HDR shows its name, kind and saved-in-design status; sky
+exposes zenith, horizon and ground linear colours. CPU HDR has lighting samples.
+Radiance `.hdr` input is bounded to 16 MiB, 2048 × 1024, 2:1, and linear
 sRGB/D65 primaries; unspecified primaries require the explicit interpretation checkbox.
 EXR is not supported. Rotation and intensity affect illumination, while the saved
 background remains the camera backplate. Selecting a file runs the bounded public
 `render.hdr.inspect` command; a typed path has an explicit **Check HDR file** action.
 The picker belongs to the originating document revision, setup, method and input
 selection. A cancelled or stale answer never replaces a newer selection.
+
+Rotate and Intensity use the existing environment command; the rotation ring is
+their shortcut. Backdrop offers World, Colour, Gradient and Clear. Gradient uses
+the existing GPU camera backdrop (vertical, horizontal or radial, two colours,
+centre and radius). It never lights, casts shadows or reflects, and is refused
+with transparent output. World visibility and blur remain faded because no saved
+renderer setting backs them. Unsupported method choices stay faded with a reason.
+
+Ground and stage fits a saved ground, floor and wall, or polygonal cyclorama.
+Replacing a stage requires the explicit consent checkbox; removing it uses the
+shared **Remove the saved stage?** confirmation. The fields expose extent margin,
+clearance gap and linear reflectance, followed by the saved panel count.
+Atmosphere edits the bounded participating medium: enable, world bounds in mm,
+extinction, scattering albedo and phase. The transitional Aging page's airborne
+section calls this same function. CPU and raster show the controls faded with
+the GPU requirement. These controls use existing render state and commands;
+opening the editor never changes the design or renderer.
 
 The panel distinguishes a pending file, a checked file and **HDR saved inside this
 design**. It shows dimensions, declared colour primaries and intensity; the source
@@ -394,6 +440,19 @@ GPU overlay on the live product view. The product scene and its upload stay unch
 CPU image jobs, exported PNGs, retained images and the Render Result canvas never
 contain this overlay; the Pick control is disabled on the result canvas.
 
+Look's tools row contains **Paint** (B) and **Pick Up** (I). A library click applies
+to the current selection or starts painting when nothing is selected; dragging
+previews the look until release. Esc or Done ends painting or sampling. Copy Look
+and Paste Look use Ctrl/Cmd+Alt+C and Ctrl/Cmd+Alt+V.
+
+The selection pill uses shared kit chrome and follows the projected selection.
+Its actions open the look chain, Replace All, toggle a library favourite and hide
+the selection. The name opens the selection menu. Assign, Replace All, Copy Look
+and Remove are available there and in the Appearance Inspector; commands also
+remain available to search and scripts. Replace All asks for the replacement in a
+shared confirmation and applies one undoable command. A changed document cancels
+that pending request. Hover uses the shared tooltip with the object and look names.
+
 ## Browser scene focus
 
 The shared Browser lists Environment (with its source), Lights, saved Shots,
@@ -406,8 +465,9 @@ current numerical image setup, without inventing a saved rig.
 engine selection), Environment, Light, Shot and Output. It belongs to each document
 view and is never saved in a design. `view.render_select` validates semantic focus
 requests without opening dialogs or editing/evaluating a design. Object picks and
-Browser selections keep the existing selection commands. Inspector routing stays
-as before; the focus state is available to a later Inspector change.
+Browser selections keep the existing selection commands. Selecting Output opens
+the Output editor; selecting Environment opens its editor. The legacy Environment
+and Background entry points share the Environment editor.
 
 Look expands Objects, Light expands Lights and Environment, and Frame expands
 Shots. Output leaves expansion unchanged. Stages preserve selection and never
@@ -424,4 +484,40 @@ texture-map, reflection and aging controls. The separate Textures disclosure is
 marked Soon. The shared footer exports the design library through `library.export`
 and resets the current target's override through `appearance.assign`.
 `view.render_inspector {visible}` controls transient per-document visibility;
-selecting a stage reopens the editor. Selection focus routing is deferred.
+selecting a stage reopens the editor. Output selection routes to its dedicated editor;
+Environment selection routes to its editor. Other semantic selection focus routing
+remains deferred.
+
+## Output editor
+
+The Output stage offers size, format, quality and a Check summary in the stage bar's
+second row. Its lower-left Size presets card offers Preview (1280 × 720), Full HD,
+4K, Square and Custom. Presets outside the selected executor's limits stay visible
+with a disabled explanation showing the selected method's dimension/pixel limits and
+largest fitting size. The default raster limit is 4,194,304 pixels, so 4K exceeds it;
+methods with larger resource profiles can admit 4K. Custom retains the current size
+and reveals its fields through `render.output.size`. Numerical size edits and preset
+clicks patch width and height with `render.settings.set`, as one undo step. Opening
+the panel never applies a preset or starts a job.
+
+Selecting Output in the Browser shows a short editor with Renderer, Image,
+Destination and Render sections. Sampling, Effects and Check are child rows under
+Output, each with a summary and its own editor. Sampling owns Quality, GPU Path
+tracing, Adaptive, Glass transport and CPU ray tracing. Method-specific controls
+stay visible and faded with their reason on other methods. Effects owns Tone,
+Creative looks, Lens effects, Finishing and Regrade, in that order; its controls
+need GPU path tracing. Effect edits patch the saved job with `render.settings.set`;
+opening an editor never saves or switches methods. Check owns the preflight notes,
+This request, Renderers and collapsed Under the hood diagnostics. The legacy
+Effects, Output and Diagnostics pages call the same editors.
+
+The stage bar's Check chip and Output's note count open Check. Check now runs the
+read-only `render.preflight` without admitting a job. Notes offer links to their
+owning editor. Copy report and diagnostic JSON use `render.preflight.copy` and the
+platform clipboard queue; headless calls only validate and echo bounded text.
+Named quality presets, EXR export and rendering all shots remain faded with their
+existing reasons. Destination selection uses the completed-image export picker.
+
+Render and Cancel stay in the stage bar. Active jobs also show a single-row progress
+pill with Cancel. The result viewer retains Copy, export, close, Fit/100% and shared
+pan/zoom. R starts the active setup; Escape closes the image without cancelling its job.

@@ -113,6 +113,10 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if let Some(command) = solidcraft_engine::find_command(id) {
                     let info = crate::render_workspace::interactive_command_info(app, command);
                     let response = ui_kit::compact_icon_label_button(ui, app.tr(label), icon, info.enabled);
+                    crate::scenario::publish_target(&format!("render:stage:{id}"), response.rect);
+                    let hint = crate::keymap::display_for(app, id)
+                        .map_or_else(|| app.tr_label(command.label).to_string(), |key| format!("{} ({key})", app.tr_label(command.label)));
+                    let response = response.on_hover_text(hint);
                     if response.clicked() {
                         app.start(id);
                     }
@@ -121,6 +125,7 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+            crate::render_workspace::assign::banner(app, ui);
             ui_kit::StageBar::separator(ui);
             let note = ui_kit::StageBar::note(ui, app.tr("render.stage_preview_note")).on_hover_text(app.tr("render.preview_lighting_help"));
             crate::scenario::publish_rect("render:preview_note", note.rect);
@@ -166,16 +171,7 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
         }
-        Stage::Output => {
-            ui.add_enabled_ui(false, |ui| {
-                let (size, format) = crate::render_workspace::output_summary(app);
-                ui_kit::button(ui, size, ui_kit::Button::Normal);
-                ui_kit::button(ui, format, ui_kit::Button::Normal);
-            })
-            .response
-            .on_disabled_hover_text(app.tr("render.output_tools_inspector"));
-            ui_kit::text(ui, app.tr("render.output_tools_inspector"), ui_kit::Text::Inline);
-        }
+        Stage::Output => crate::render_workspace::output_stage_tools(app, ui),
     }
 }
 
@@ -185,14 +181,27 @@ pub(crate) fn overlays(app: &mut SolveApp, ui: &mut egui::Ui) {
         dock_chip(app, ui, "render:focus:exit", "render.exit_focus", "view.render_focus", serde_json::json!({"on":false}));
     }
     let Some(viewport) = app.viewport.rect else { return };
-    let free = canvas(app, viewport);
+    let free = canvas(app, ui.max_rect());
     if !free.is_positive() {
         return;
     }
+    if crate::render_workspace::job_busy(app) {
+        let pill = Container::navigation_card(ui.ctx(), egui::Id::new("sc_render_progress"), free.center_top(), egui::Align2::CENTER_TOP, |ui| {
+            crate::render_workspace::progress_pill(app, ui);
+        });
+        crate::shell::register_panel(app, "render:progress-pill", Some(pill.response.rect), None);
+        crate::scenario::publish_rect("render:progress-pill", pill.response.rect);
+    } else {
+        crate::shell::register_panel(app, "render:progress-pill", None, None);
+    }
+    crate::render_workspace::environment_overlay(app, ui, viewport);
+    crate::render_workspace::assign::selection_bar(app, ui, free);
+    crate::render_workspace::assign::replacement_dialog(app, ui.ctx());
     crate::navigation_bar_view::show(app, ui, viewport);
     if !focused(app) {
         shots_pill(app, ui, free);
     }
+    crate::viewport::transient_messages(app, ui, viewport);
 }
 
 /// Shared kit chip at the Browser's remembered side, below the stage bar.

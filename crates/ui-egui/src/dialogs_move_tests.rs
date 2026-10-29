@@ -54,6 +54,37 @@ fn the_main_value_writes_through_to_the_command() {
     assert_eq!((x.as_str(), y.as_str(), z.as_str()), ("30 mm", "0 mm", "0 mm"), "the box edits X alone");
 }
 
+#[test]
+fn editing_a_move_in_a_turned_component_keeps_world_distances() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("component.create", json!({"name": "Part", "grounded": false})).unwrap();
+    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+    h.app.run("parameters.add", json!({"name": "travel", "expression": "4 mm"})).unwrap();
+    h.app.run("occurrence.move", json!({"occurrence": "Part:1", "axis": [1, 0, 0], "angle": "90 deg", "translate": [50, 10, 20]})).unwrap();
+    h.app.run("component.activate", json!({"component": "root"})).unwrap();
+    let moved = h.app.run("solid.move", json!({"bodies": ["Body1"], "translate": ["0 mm", "-travel", "0 mm"]})).unwrap()["feature"].as_u64().unwrap();
+    let bounds = |h: &crate::scenario::Harness| h.app.session.world_state().body("Body1").unwrap().mesh().bounds();
+    let before = bounds(&h);
+    let mut d = crate::dialogs::for_feature(&h.app, moved, None).unwrap();
+    let Kind::Move { x, y, z, .. } = &d.kind else { panic!("not a move") };
+    let displayed = Vec3::new(len(&h.app, x).unwrap(), len(&h.app, y).unwrap(), len(&h.app, z).unwrap());
+    assert!((displayed - Vec3::new(0.0, -4.0, 0.0)).len() < 1e-6, "{displayed:?}");
+    for (command, params) in crate::dialogs::apply_commands(&h.app, &d).unwrap() {
+        h.app.run(&command, params).unwrap();
+    }
+    let after = bounds(&h);
+    assert!((after.min - before.min).len() < 1e-6 && (after.max - before.max).len() < 1e-6, "accepting the unchanged dialog must not move the body");
+    h.app.run("parameters.change", json!({"name": "travel", "expression": "8 mm"})).unwrap();
+    assert!((bounds(&h).min - before.min - Vec3::new(0.0, -4.0, 0.0)).len() < 1e-6);
+    if let Kind::Move { y, .. } = &mut d.kind {
+        *y = "-12 mm".into();
+    }
+    for (command, params) in crate::dialogs::apply_commands(&h.app, &d).unwrap() {
+        h.app.run(&command, params).unwrap();
+    }
+    assert!((bounds(&h).min - before.min - Vec3::new(0.0, -8.0, 0.0)).len() < 1e-6, "edited distances follow world axes too");
+}
+
 /// #6822: Rotate must offer a draggable handle after the body and axis are picked.
 #[test]
 fn rotate_handle_updates_the_angle_without_moving_the_camera() {

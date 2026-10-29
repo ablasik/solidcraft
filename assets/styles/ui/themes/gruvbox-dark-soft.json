@@ -1,4 +1,6 @@
 {
+  "order": 30,
+  "provenance": "Original SolidCraft mapping of Gruvbox (MIT palette)",
   "format": "solidcraft-theme/1",
   "name": "Gruvbox Dark Soft",
   "base": "dark",

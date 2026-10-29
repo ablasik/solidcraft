@@ -27,6 +27,14 @@ const ISOCURVE_ALT: &[Binding] = &[Binding {
     rebindable: true,
 }];
 
+/// Extend: Shift picks the second curve of the two-curve form (`ExtendPair`). Shift does not snap
+/// the clicked point to a midpoint here (an empty binding overrides the sketch scopes' one), so the
+/// end nearest the click stays where it was clicked.
+const EXTEND_BINDINGS: &[Binding] = &[
+    Binding { action: ModAction::ExtendPair, defaults: &[ModifierCombo::SHIFT], matching: Match::AtLeast, trigger: Trigger::Press, rebindable: true },
+    Binding { action: ModAction::TargetMidpoint, defaults: &[], matching: Match::AtLeast, trigger: Trigger::Live, rebindable: true },
+];
+
 /// Per-tool modifier descriptors owned by this host file.
 pub const MODIFIERS: &[ToolModifiers] = &[
     ToolModifiers { tool: "sketch.project", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
@@ -41,7 +49,7 @@ pub const MODIFIERS: &[ToolModifiers] = &[
     ToolModifiers { tool: "canvas.insert", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
     ToolModifiers { tool: "canvas.decal", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
     ToolModifiers { tool: "sketch.trim", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
-    ToolModifiers { tool: "sketch.extend", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
+    ToolModifiers { tool: "sketch.extend", scopes: NONE, bindings: EXTEND_BINDINGS, audit: Audit::Implemented },
     ToolModifiers { tool: "sketch.break", scopes: NONE, bindings: &[], audit: Audit::VerifiedNoOp },
     ToolModifiers { tool: "sketch.line.midpoint", scopes: DRAW_SCOPES, bindings: &[], audit: Audit::Implemented },
     ToolModifiers { tool: "sketch.arc.tangent", scopes: DRAW_SCOPES, bindings: &[], audit: Audit::Implemented },
@@ -70,6 +78,8 @@ pub const MODIFIERS: &[ToolModifiers] = &[
 thread_local! {
     /// Shift held this frame.
     static SHIFT: Cell<bool> = const { Cell::new(false) };
+    /// Extend's two-curve chord (`ModAction::ExtendPair`) held this frame.
+    static EXTEND_PAIR: Cell<bool> = const { Cell::new(false) };
     /// Glyphs drawn this frame (constraint id, screen centre) and the selected one.
     static GLYPHS: RefCell<Vec<(String, Pos2)>> = const { RefCell::new(Vec::new()) };
     static PICKED: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -623,7 +633,13 @@ pub fn tool_for(id: &str) -> Option<Tool> {
         dim_history: Vec::new(),
         dims_stage: usize::MAX,
         dims_focus: false,
+        arc_turn: 0.0,
     })
+}
+
+/// A successful image placement consumes the selected file and ends its tool.
+pub fn image_placement_finished(tool: &Tool) -> bool {
+    matches!(tool.cmd, "canvas.insert" | "canvas.decal") && IMAGE.with(|image| image.borrow().is_none())
 }
 
 pub fn hint(id: &str) -> Option<String> {
@@ -639,10 +655,10 @@ pub fn hint(id: &str) -> Option<String> {
             "inspect.center_of_mass" => "Center of mass of all bodies; click a body for its own",
             "inspect.isocurve" => "Isocurves: click faces",
             "inspect.continuity" => "Continuity: click an edge for its numbers (the button again turns the colours off)",
-            "canvas.insert" => "Canvas: click a plane or a planar face where the image's centre goes",
-            "canvas.decal" => "Decal: click a planar face where the image's centre goes",
+            "canvas.insert" => crate::i18n::tr("canvas.place_hint"),
+            "canvas.decal" => crate::i18n::tr("canvas.decal_place_hint"),
             "sketch.trim" => "Trim: click the piece of a curve to remove, or drag across the pieces to remove",
-            "sketch.extend" => "Extend: click a curve near the end to extend",
+            "sketch.extend" => "Extend: click a curve near the end to extend (Shift: click two curves to extend both to where they meet)",
             "sketch.break" => "Break: click a curve where it should split",
             "sketch.line.midpoint" => "Midpoint line: click the middle, then an end",
             "sketch.arc.tangent" => "Tangent arc: click the end of a line or arc, then the arc's end",
@@ -942,7 +958,34 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 })
             });
             if let (Some(id), Some((p, _))) = (curve, at) {
-                let _ = app.run(cmd, json!({"curve": id, "at": xy(p)}));
+                if cmd == "sketch.extend" && EXTEND_PAIR.with(Cell::get) {
+                    // The pair chord picks the two curves to extend to where they meet: the first
+                    // click remembers its curve and point (in point_picks, which nothing draws for
+                    // Extend), the second runs the command with both, each growing from the end
+                    // nearest the point clicked on it.
+                    match tool.picks.first().cloned() {
+                        None => {
+                            tool.picks.push(id);
+                            tool.point_picks.push(xy(p));
+                            app.set_status("Extend: Shift-click the second curve", false);
+                        }
+                        Some(first) if first != id => {
+                            let first_pt = tool.point_picks.first().cloned();
+                            tool.picks.clear();
+                            tool.point_picks.clear();
+                            let mut params = json!({"curves": [first, id]});
+                            if let Some(first_pt) = first_pt {
+                                params["at"] = json!([first_pt, xy(p)]);
+                            }
+                            let _ = app.run(cmd, params);
+                        }
+                        Some(_) => {}
+                    }
+                } else {
+                    tool.picks.clear();
+                    tool.point_picks.clear();
+                    let _ = app.run(cmd, json!({"curve": id, "at": xy(p)}));
+                }
             }
         }
         Mode::Points(_) => {
@@ -1191,7 +1234,8 @@ pub(crate) fn trim_hover_piece(app: &SolveApp, sketch: u64, id: &str) -> Option<
 /// of `sketch`. Returns None when extend is not active or the geometry does not support a
 /// preview. An arc grows along its own circle, in either direction, as a new arc.
 fn extend_preview_piece(app: &SolveApp, sketch: u64, id: &str) -> Option<Vec<Vec2>> {
-    let tool = app.tool.as_ref().filter(|t| t.cmd == "sketch.extend")?;
+    // A pending pair pick (the first curve of the two-curve form) hides the single-curve preview.
+    let tool = app.tool.as_ref().filter(|t| t.cmd == "sketch.extend" && t.picks.is_empty())?;
     let hover = tool.hover.as_ref()?;
     if active_sketch(app) != Some(sketch) {
         return None;
@@ -1293,7 +1337,7 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
 }
 
 /// Constraint glyphs of the active sketch: a small badge per constraint at its anchor
-/// (conflicting ones red).
+/// (failing ones in `sketch_conflict`).
 /// Glyph size and spacing (screen pixels).
 const GLYPH: f32 = 15.0;
 
@@ -1400,7 +1444,7 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
             || app.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::SketchConstraint { id: x } if group.contains(x)));
         let lit = selected || hovered.as_deref() == Some(id.as_str());
         let col = if failing {
-            tk.error
+            crate::viewport::Conflict::glyph_colour(app, &tk)
         } else if lit {
             tk.accent
         } else if redundant {
@@ -1542,6 +1586,8 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     let held = crate::tool_modifiers::Held::from_modifiers(ui.input(|i| i.modifiers));
     let iso = crate::tool_modifiers::resolve(&[], crate::tool_modifiers::descriptor("sketch.isoparametric_curve"), held, Trigger::Press);
     SHIFT.with(|c| c.set(iso.contains(ModAction::IsoCurveAlternate)));
+    let pair = crate::tool_modifiers::resolve(&[], crate::tool_modifiers::descriptor("sketch.extend"), held, Trigger::Press);
+    EXTEND_PAIR.with(|c| c.set(pair.contains(ModAction::ExtendPair)));
     glyphs(app, painter, proj, ui.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(proj.rect)));
     snap_hint(app, painter, proj);
     combs(app, painter, proj);

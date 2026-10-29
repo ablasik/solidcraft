@@ -73,13 +73,19 @@ fn tiles_keep_three_columns_cell_sphere_badge_and_selection_in_both_themes() {
             |ui| {
                 ui.set_width(240.0);
                 super::super::scope(ui, |ui| {
-                    let tiles = ["a", "b", "c"].map(|id| SphereTile {
+                    let tiles = [
+                        ("a", "Aluminum - Anodized"),
+                        ("b", "Stainless Steel - Polished"),
+                        ("c", "Neutral product studio with a very long descriptive label"),
+                    ]
+                    .map(|(id, name)| SphereTile {
                         id,
-                        name: "Satin",
+                        name,
                         sphere: Sphere { color: t.render_accent, kind: FinishKind::Satin, opacity: None },
                         selected: id == "b",
                         users: usize::from(id == "a"),
                         tip: "Hover details",
+                        badge: Some("native"),
                     });
                     assert!(sphere_grid(ui, &tiles).is_none());
                 });
@@ -104,8 +110,20 @@ fn tiles_keep_three_columns_cell_sphere_badge_and_selection_in_both_themes() {
         }
         assert_eq!(output.shapes.iter().map(|shape| meshes(&shape.shape)).sum::<usize>(), 3);
         let accent = crate::theme::TabAccent::current(&ctx);
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Rect(r) if r.stroke.color==accent.ink && r.rect.width()==60.0)));
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Rect(r) if r.rect.size()==vec2(56.0,56.0))));
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Rect(r) if r.stroke.color==accent.ink && r.rect.width()==b.width()))
+        );
+        for id in ["a", "b", "c"] {
+            let tile = crate::scenario::rect_of(id).unwrap();
+            let label = crate::scenario::rect_of(&format!("{id}:label")).unwrap();
+            let galley = crate::scenario::rect_of(&format!("{id}:galley")).unwrap();
+            assert!(tile.contains_rect(label) && label.expand(0.1).contains_rect(galley));
+        }
+        let long_caption = crate::test_support::text_shapes(&output).find(|text| text.galley.job.text.starts_with("Neutral product")).unwrap();
+        assert_eq!(long_caption.galley.rows.len(), 2);
+        assert!(long_caption.galley.elided);
+        assert_eq!(long_caption.galley.job.wrap.overflow_character, Some('…'));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text=="native")));
     }
 }
 

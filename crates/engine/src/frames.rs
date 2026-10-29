@@ -10,7 +10,7 @@
 //! without moved components).
 
 use serde_json::{Map, Value};
-use solidcraft_doc::{Mat, apply_point, apply_vector, is_identity, map_point_expr, mat_inverse};
+use solidcraft_doc::{Mat, apply_point, apply_vector, is_identity, map_point_expr, map_vector_expr, mat_inverse};
 use solidcraft_geom::Vec3;
 
 use crate::Session;
@@ -26,6 +26,8 @@ enum K {
     Make,
     /// A direction: turned with the command's frame.
     Dir,
+    /// A displacement with length expressions: turned without the frame's translation.
+    Delta,
     /// A point the command's bodies move about: into the frame of those bodies (the command's
     /// frame, as its directions are).
     Moved,
@@ -90,7 +92,7 @@ fn table(id: &str) -> &'static [(&'static str, K)] {
         "inspect.curvature_comb" | "inspect.minimum_radius" | "inspect.isocurve" => &[("edges", Picks), ("faces", Picks)],
         "parts.insert" | "parts.fastener" => &[("at", Pick), ("point", Make), ("direction", Dir)],
         "appearance.assign" => &[("faces", Picks), ("bodies", Body), ("body", Body)],
-        "solid.move" => &[("bodies", Body), ("translate", Dir), ("axis", Dir), ("origin", Moved)],
+        "solid.move" => &[("bodies", Body), ("translate", Delta), ("axis", Dir), ("origin", Moved)],
         "solid.combine" => &[("target", Body), ("tools", Body)],
         "solid.remove" | "solid.bounding_solid" | "material.assign" => &[("bodies", Body)],
         _ => &[],
@@ -233,12 +235,12 @@ impl Mapper<'_> {
 
     fn make(&mut self, v: &Value) -> Option<Value> {
         let m = self.f.active;
-        let Some(p) = vec3(v) else { return self.make_expr(&m, v) };
+        let Some(p) = vec3(v) else { return self.map_expr(&m, v, map_point_expr) };
         self.local_point(&m, p)
     }
 
-    /// A point with expression coordinates (`["w / 2", 0, 0]`): mapped as expressions.
-    fn make_expr(&mut self, m: &Mat, v: &Value) -> Option<Value> {
+    /// Coordinates such as `["w / 2", 0, 0]`, mapped without evaluating their expressions.
+    fn map_expr(&mut self, m: &Mat, v: &Value, map: fn(&Mat, &mut solidcraft_doc::PointExpr)) -> Option<Value> {
         let a = v.as_array().filter(|a| a.len() == 3)?;
         let c = |i: usize| match a.get(i)? {
             Value::Number(n) => n.as_f64().filter(|x| x.is_finite()).map(|x| solidcraft_doc::Expr::new(format!("{x}"))),
@@ -250,7 +252,7 @@ impl Mapper<'_> {
             return None;
         }
         let inv = mat_inverse(m)?;
-        map_point_expr(&inv, &mut p);
+        map(&inv, &mut p);
         self.changed = true;
         Some(serde_json::json!(p))
     }
@@ -527,6 +529,10 @@ pub fn to_local(s: &Session, id: &str, params: &Value) -> Option<Value> {
                 Picks => m.picks(v, body.as_deref()),
                 Make => m.make(v),
                 Dir => m.dir(v),
+                Delta => m.dir(v).or_else(|| {
+                    let frame = m.first.unwrap_or(m.f.active);
+                    m.map_expr(&frame, v, map_vector_expr)
+                }),
                 Moved => {
                     let frame = m.first.unwrap_or(m.f.active);
                     vec3(v).and_then(|p| m.local_point(&frame, p))

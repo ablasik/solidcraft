@@ -140,6 +140,7 @@ geometry right away.
 Extend finds intersections with exact ellipses, rational conics and spline spans. It keeps the
 original line or circular support and extends only beyond the selected endpoint; conflicting
 constraints or an ambiguous overlap leave the sketch unchanged.
+To extend two lines or arcs until they meet, hold Shift and click the first curve, then Shift-click the second: both grow to where they cross and are joined there, in one undo step.
 
 Closed convex chains of tangent lines and circular arcs support inward offsets that consume
 a rounded corner. When the offset passes the corner radius, the neighbouring straight
@@ -315,6 +316,15 @@ Under-constrained geometry is blue and fully constrained geometry turns dark, an
 shows the remaining degrees of freedom. A constraint or dimension that would over-constrain the
 sketch is refused rather than applied. Drag a point to move it; the solver keeps every
 constraint while you drag.
+
+A sketch's constraints can still come to conflict through a change elsewhere: a parameter, or an
+earlier sketch that projected geometry follows. While they do, the curves and points a failing
+constraint holds, and that constraint's glyph or dimension, are drawn in the conflict colour (red;
+the theme key `sketch_conflict`, which follows a theme's `error` colour unless the theme sets it),
+so the constraint to change or remove is easy to find. Constraints that are only redundant (implied
+by others, still holding) keep their usual look. Preferences › Sketch › **Conflicting geometry in
+the conflict colour** (on by default) turns this off: then only the glyphs and dimensions of the
+failing constraints are red, as in earlier versions.
 
 ## Profiles
 

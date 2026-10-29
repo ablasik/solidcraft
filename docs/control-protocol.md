@@ -1,5 +1,12 @@
 # Control protocol
 
+For UI-kit review, `ui.status_fixture {"preset":"mode"}` shows bounded status
+specimens in the real viewport. Presets are `off`, `mode`, `result`, `attention`,
+`row`, `kinds` and `key`; the reply carries the preset and item count. This
+scenario fixture does not change engine state or open a dialog. `off` clears it.
+The published `viewport_status:<id>:item`, `:setting`, `:key` and `:close` handles
+support the ordinary `ui.at`, `ui.move`, `ui.click` and keyboard controls.
+
 The control channel is **on by default**. SolidCraft listens on `127.0.0.1` only, for JSON lines,
 so agents can drive the app without a launch flag. Every connection still needs this launch's
 token (below); nothing else on the machine, and nothing off it, can send a command.
@@ -256,6 +263,13 @@ read in the design's units, exactly as if it were typed into the dimension box: 
 unit regardless of the design, pass an expression with one: `"value": "50 mm"` or
 `"value": "0.5 in"`. Angles are degrees unless the expression says otherwise.
 
+Any expression parameter of any command can also define a user parameter as it sets the value:
+`"distance": "depth = 15"` adds `depth` (15, read as the bare value would be) and stores `depth`
+in the input, in the same undo step. The reply names it in `defined` and lists every definition
+in `definitions: [{name, expression, unit}]`; a taken or reserved name fails the command and
+changes nothing. `parameters.change` with `"expression": "height = 12"` renames the parameter it
+changes instead (see the parameters guide).
+
 The viewport also shows an X/Y/Z-aligned dimension chain between the endpoints of the
 currently shown distance (centre, minimum or maximum), with each world-axis distance
 labelled separately as an absolute value (including zero).
@@ -305,7 +319,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.home` | `open?`: bool; `sample?`: index | the start page: show or hide it, open a built-in sample (once built); returns `open` and the recent designs |
 | `ui.shortcut` | `command`, `key?`, `replace?` | a command's key, or rebinds it (`""` clears; a key another command uses is refused unless `replace`) |
 | `ui.help` | `item?`: `about`, `shortcuts` (read only), `report` (opens a report draft for review), `crashes` (the Crash Reports window) | the version, commit, build date and diagnostic text |
-| `ui.prefs` | any of the [`ui.prefs` settings](#uiprefs-settings) below; also `open`, `button` and `stand_up` (listed there) | sets preferences (kept between runs), returns them all plus `dialog` (the open page or null), `dark`, `viewport_dark` (whether the 3D view is dark), `stand_up_offer`, `theme_followed` and `theme_follow_error` |
+| `ui.prefs` | any of the [`ui.prefs` settings](#uiprefs-settings) below; also `open`, `button` and `stand_up` (listed there) | sets preferences (kept between runs), returns them all plus `dialog` (the open page or null), `dark`, `viewport_dark` (whether the 3D view is dark), `stand_up_offer` (the offered bodies, or null), `stand_up_note` (whether that offer is the note), `theme_followed` and `theme_follow_error` |
 | `ui.capture` | `action?`: `capture`, `revert`, `cancel` | answers the Capture Position question (asked when a command starts or the design is saved while components were moved without capturing); without `action`, what waits |
 | `ui.window` | `action`: minimize, maximize, restore, toggle, close | what the title bar's caption buttons do (on Windows and Linux the application bar is the title bar); close asks about unsaved designs first |
 | `ui.agent_cursor` | `show` (bool), `speed`: a number from 1 to 5 (times the normal speed) or `"instant"` (no animation: the command runs at once and the pointer jumps to where it acted), `follow_camera` (bool); all optional | the settings. While the cursor is shown, `engine.execute` first glides to the command's toolbar button and to each pick, then runs and replies; later requests wait their turn. The pointer shows the command's localized name, including commands inside a closed toolbar group; an animated batch names each command it visits. It also follows the pointer input sent with `ui.move`, `ui.click`, `ui.drag` and `ui.scroll`, as each event reaches the app, and a press leaves a ripple. `"animate": false` on a call skips it |
@@ -322,6 +336,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 One setting per line, sorted by name. A change that adds a setting adds its own line in order, so two such changes only meet when their settings are neighbours.
 
 - `angle_decimals`
+- `auto_operation` (default true: feature windows choose Join, New Body or Cut from what their material touches until one is picked; false: each keeps the operation it opens with, Extrude its own Join or Cut)
 - `browser_bodies_folders` (`several` (default): a component with one body and no groups lists it straight under the component in the browser, without a Bodies folder; `always`; `never`: components list their bodies and groups straight under them, and the folder's menu items are on the component's menu; the design's own Bodies folder, and one hidden with its eye, always show; #4217)
 - `check_updates` (default true; [updates](book/src/guide/updates.md))
 - `color_vision` (`off` (default), `protan`, `deutan`, `tritan`: colour vision modes, #778)
@@ -347,6 +362,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `nav_bridge_enabled` (default false) and `nav_bridge_port` (default 8765: a device's own app on this computer moves the view, [the navigation bridge](3d-mouse.md#device-apps-the-navigation-bridge))
 - `offer_stand_up`
 - `orbit_around` (`view_centre` (default: what Pan moves and Fit frames), `origin` (the world origin stays still on screen), `cursor` (the model point under the pointer when the drag began); the older `orbit_cursor` boolean still sets `cursor` when true)
+- `orbit_reverse` (default false: Shift with two-finger scrolling orbits the other way)
 - `origin_plane_names` (`xyz` (default) or `top_front_right`: the browser, dialogs and lists call the origin planes Top, Front and Right; their ids, commands and saved designs keep XY, XZ and YZ)
 - `pan_reverse_x` (default false: horizontal scrolling pans the other way)
 - `pan_reverse_y` (default false: vertical scrolling pans the other way)
@@ -354,9 +370,12 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `show_frame_rate` (default false: frames per second in the view's bottom-right corner, counting the frames the view draws anyway; it reads 0 FPS once the view is idle)
 - `sketch_auto_dimensions` (default false: each shape drawn in a sketch gets all its dimensions at the sizes drawn, as `sketch.draw.dimensioned` with `as_drawn`; typed values win)
 - `sketch_auto_locate` (default false; with `sketch_auto_dimensions`, new shapes are also placed from the sketch origin until fully constrained, as `sketch.draw.dimensioned` with `locate`)
+- `sketch_conflict_colour` (default true: while the open sketch's constraints conflict, the curves and points a failing constraint holds are drawn in the theme's `sketch_conflict` colour too, not only its glyph or dimension; false: only the glyphs and dimensions are red, in `error`, as before, #7244)
 - `sketch_exit_view` (`keep` (default: the view stays where it is when a sketch ends), `previous` (back to the view from before the sketch), `unless_rotated` (back unless the sketch view was turned))
+- `sketch_state_icons` (default true: a sketch's icon in History and the browser takes the colour of its solve state, `sketch` under constrained, `sketch_fixed` fully constrained, `error` while its constraints conflict, and its tooltip names the state; false: every sketch row's icon and tooltip as before, #7245)
 - `sketch_tab_always` (default false: the SKETCH tab stays in the ribbon right after MODEL while no sketch is open; a tool in its CREATE or REFERENCE section then opens Create Sketch, on the selected plane or planar face or else on the plane picked next, and starts in the new sketch, #7904)
 - `smooth_wheel_zoom` (default true)
+- `stand_up_unknown` (`note` (default: a file whose header names no program known to save Y up and whose bodies seem to lie on their back (their flat area across Y outweighs their flat area facing down Z) gets a small note over the view, "Did this part open the wrong way up?", with Stand it up, Don't ask again and Close as the handles `stand_up:stand`, `stand_up:never` and `stand_up:dismiss`; it goes by itself after 10 seconds and never blocks input), `ask` (the "Stand this part up?" dialog for every file from another program, SolidWorks too, without looking at how it rests, as before #7717), `off` (no offer); otherwise a SolidWorks file gets the dialog, or the note when its bodies clearly stand on Z already)
 - `status_bar` (default false: a thin bar along the window's bottom edge, below History, handle `status:bar`: what is being edited (`status:editing`), the open sketch's state in its colour (`status:sketch`) and the design's units (`status:units`, a click opens the Units menu, whose rows run `document.units`); the sketch's state then leaves the view's top-left corner, #7243)
 - `step_values` (default false: Up/Down and the wheel step a plain number in a focused value field)
 - `theme` (`dark`, `light`, `system` or a theme file's id: a built-in one such as `gruvbox-dark`, or an imported one; the reply's `theme_ids` lists them)
@@ -365,6 +384,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `theme_import` (a `solidcraft-theme/1` file's JSON or text: adds the theme and turns it on; the reply's `theme_imported` is its id)
 - `theme_remove` (an imported theme's id)
 - `timeline_origin_bodies` (default false: the History on the left or under the browser starts with the active component's Bodies folder and the Origin, the browser's rows with their eyes, folds and menus; the bottom History is unchanged)
+- `toast_place` (`corner` (default: notices and offers stack in one column in the view's bottom-right corner, each 340 points wide, buttons right-aligned with the main action right-most, #7893), `centre` (at the bottom centre above the view toolbar, each as wide as its text, as before))
 - `trackpad_pan` (default true: two-finger scroll pans, except Touchpad always zooms; pinch zooms)
 - `ui_font` (an installed font family or a font file for the interface; empty for the built-in font)
 - `ui_scale`
@@ -379,8 +399,8 @@ Other `ui.prefs` parameters:
 
 - `open` (a page: General, Interface, Design, Navigation, Keyboard Shortcuts, Sketch, Graphics, AI, Plugins; Shortcuts, Assistant and Sketch & selection are aliases, and the former Selection page opens Sketch) opens the Preferences dialog there
 - `button`: `ok`, `cancel`, `apply`, `defaults`
-- `stand_up: true` stands up a just-opened Y-up file, `stand_up: false` leaves it as it is ("Leave it": the offer closes and `offer_stand_up` stays on)
-- the offer's buttons are the handles `stand_up:stand`, `stand_up:leave` and `stand_up:never`
+- `stand_up: true` stands up a just-opened Y-up file, `stand_up: false` leaves it as it is ("Leave it": the offer, dialog or note, closes and `offer_stand_up` stays on)
+- the dialog's buttons are the handles `stand_up:stand`, `stand_up:leave` and `stand_up:never`
 
 `ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
 Entering Render requires finishing the current modelling operation; returning restores

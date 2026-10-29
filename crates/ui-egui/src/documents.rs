@@ -136,6 +136,7 @@ fn swap_in(app: &mut SolveApp, mut slot: DocSlot) -> DocSlot {
         let _ = crate::render_workspace::enter(app, false);
     }
     // Whatever was going on in the design leaves with it.
+    crate::timeline::stop_playback(app);
     crate::sketch_text_move::cancel_drag(app);
     crate::dialogs::cancel(app);
     crate::dim_view::cancel();
@@ -239,6 +240,18 @@ pub fn switch(app: &mut SolveApp, i: usize) {
         crate::linked_source::update_changed(app);
     }
     crate::edit_in_place::attach(app);
+}
+
+/// Show the next design tab (`forward`) or the previous one, going round from the last to the
+/// first (Ctrl+Tab and Ctrl+Shift+Tab, #8565). Not while tabs are being closed one after another
+/// or a "save changes?" prompt is open, as for `move_tab`.
+pub fn cycle(app: &mut SolveApp, forward: bool) {
+    let n = app.docs.slots.len();
+    if n < 2 || app.docs.closing.is_some() || app.docs.quitting.is_some() || app.docs.batch.is_some() {
+        return;
+    }
+    let a = app.docs.active;
+    switch(app, if forward { (a + 1) % n } else { (a + n - 1) % n });
 }
 
 /// The open design saved at `path`, shown or in the background.
@@ -877,6 +890,9 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
                     let mut chosen = None;
                     for (id, label) in items {
                         let mut item = crate::context_menu::Item::action(id, label, "");
+                        if id == "ui.closeTab" && i == app.docs.active {
+                            item = item.key("Ctrl+W");
+                        }
                         item.enabled = id != "ui.closeOtherTabs" || n > 1;
                         let top = ui.cursor().top();
                         let row = crate::context_menu::list_row(ui, &item);
@@ -1386,6 +1402,45 @@ mod tests {
         assert_eq!(drop_slot(260.0, 0.0, &[80.0, 200.0, 80.0], 0, 0), 2);
     }
 
+    /// #8565: Ctrl+Tab shows the tab to the right and Ctrl+Shift+Tab the one to the left, going
+    /// round at either end; both are commands with their keys on the Keyboard Shortcuts page, and
+    /// `engine.execute` switches the same way. A "save changes?" prompt keeps the tab shown.
+    #[test]
+    fn ctrl_tab_and_ctrl_shift_tab_go_round_the_design_tabs() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        for k in 1..3 {
+            open_tab(&mut h.app, Session::default()).unwrap();
+            for _ in 0..k {
+                h.app.run("solid.sphere", json!({"diameter": 4})).unwrap();
+            }
+        }
+        h.frames(2);
+        assert_eq!((h.app.docs.active, h.app.session.doc.features.len()), (2, 2));
+        let press = |h: &mut crate::scenario::Harness, shift: bool| {
+            h.call("ui.key", json!({"key": "Tab", "cmd": true, "shift": shift}));
+            h.frames(2);
+            (h.app.docs.active, h.app.session.doc.features.len())
+        };
+        assert_eq!(press(&mut h, false), (0, 0), "after the last tab, the first");
+        assert_eq!(press(&mut h, false), (1, 1));
+        assert_eq!(press(&mut h, true), (0, 0));
+        assert_eq!(press(&mut h, true), (2, 2), "before the first tab, the last");
+        assert_eq!(crate::keymap::effective(&h.app, "view.next_tab").as_deref(), Some("Ctrl+Tab"));
+        assert_eq!(crate::keymap::effective(&h.app, "view.previous_tab").as_deref(), Some("Ctrl+Shift+Tab"));
+        assert_eq!(h.call("engine.execute", json!({"command": "view.next_tab"}))["ok"], true);
+        assert_eq!(h.app.docs.active, 0);
+        assert_eq!(h.call("engine.execute", json!({"command": "view.previous_tab"}))["ok"], true);
+        assert_eq!(h.app.docs.active, 2);
+        control(&mut h.app, &json!({"action": "close"}));
+        assert_eq!(h.app.docs.closing, Some(2), "the unsaved design asks first");
+        assert_eq!(press(&mut h, false).0, 2, "the asking tab stays shown");
+        control(&mut h.app, &json!({"answer": "cancel"}));
+        let mut one = app();
+        cycle(&mut one, true);
+        assert_eq!((one.docs.active, one.docs.count()), (0, 1), "a single design: nothing to go to");
+    }
+
     /// #3187: dragging a tab along the strip drops it where it is released; a drag mostly down
     /// the window (it moves the window) or one Escape cancelled leaves the order as it was.
     #[test]
@@ -1428,6 +1483,37 @@ mod tests {
         h.app.synthetic.extend([escape, egui::Event::PointerMoved(t1), button(t1, false)]);
         h.frames(16);
         assert_eq!(h.app.docs.active, 2, "Escape put it back");
+    }
+
+    /// #5366: Ctrl+W closes the design shown: a saved one at once (the last one leaves the start
+    /// page), an unsaved one after "save changes?", and on the start page it does nothing (the
+    /// browser closes its tab there).
+    #[test]
+    fn ctrl_w_closes_the_design_shown() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        new_design(&mut h.app);
+        h.app.run("solid.sphere", json!({"diameter": 8})).unwrap();
+        h.app.session.mark_saved();
+        assert_eq!(h.app.docs.count(), 2);
+        h.frames(2);
+        h.step(&json!({"key": "W", "cmd": true})).unwrap();
+        h.frames(2);
+        assert_eq!((h.app.docs.count(), h.app.docs.closing), (1, None), "the saved design closed without asking");
+        assert!(!h.app.home.open, "the other design is shown");
+
+        h.step(&json!({"key": "W", "cmd": true})).unwrap();
+        h.frames(2);
+        assert_eq!((h.app.docs.count(), h.app.docs.closing), (1, Some(0)), "the unsaved one asks first");
+        answer_prompt(&mut h.app, Answer::DontSave);
+        assert!(active_is_blank(&h.app) && h.app.home.open, "the last one closed: the start page");
+
+        let revision = h.app.session.revision;
+        h.step(&json!({"key": "W", "cmd": true})).unwrap();
+        h.frames(2);
+        assert_eq!((h.app.docs.closing, h.app.session.revision), (None, revision), "the start page has nothing to close");
+        assert!(h.app.home.open);
     }
 
     #[test]

@@ -346,7 +346,7 @@ pub(super) fn feature_sketch(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
             _ => Err(bad(cmd, format!("`{key}` is not a sketch"))),
         };
     }
-    if let Some(a) = s.active_sketch {
+    if let Some(a) = super::sketch_store::active(s) {
         return Ok(a);
     }
     let limit = s.doc.marker.unwrap_or(usize::MAX);
@@ -641,6 +641,12 @@ pub(super) fn check_expr(s: &Session, e: &str, kind: Kind, cmd: &str, what: &str
     s.doc.eval(e, kind).map(|_| ()).map_err(|err| bad(cmd, format!("{what}: {err}")))
 }
 
+/// A pattern count: a whole, unit-less number (see `expr::eval_count`).
+pub(super) fn check_count(s: &Session, e: &str, cmd: &str, what: &str) -> Result<()> {
+    let (vals, _) = s.doc.param_values();
+    solidcraft_doc::expr::eval_count(e, &vals).map(|_| ()).map_err(|err| bad(cmd, format!("{what}: {err}")))
+}
+
 /// Add a feature, evaluate, and report its result (an evaluation error fails the command).
 pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Result<Value> {
     add_feature_in(s, p, kind, true)
@@ -880,7 +886,8 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
         p.to_mut()["participants"] = json!(parts);
     }
     if matches!(operation, Operation::Cut | Operation::Intersect) && targets.is_empty() && string_list(cmd, &p, "participants")?.is_empty() {
-        targets = shown_scope(s);
+        // With every body hidden, every body, as before.
+        targets = shown_scope(s).unwrap_or_default();
     }
     let kind = FeatureKind::Extrude {
         sketch: SketchId(sketch),
@@ -1026,17 +1033,6 @@ fn face_body_reached(s: &Session, sketch: u64) -> Result<Option<String>> {
     Ok(Some(body.name.clone()))
 }
 
-/// A cut or intersect that names no bodies leaves hidden bodies alone, as hiding a body to keep
-/// it out of a cut is the usual way to (#3961): while some of the active component's bodies
-/// are hidden, its shown ones, stored as the feature's targets so showing the others again
-/// later changes nothing. Empty (every body, as before) when none is hidden, or all are.
-fn shown_scope(s: &Session) -> Vec<String> {
-    let st = s.model.state();
-    let scope = active_scope(s, &st);
-    let shown: Vec<String> = scope.iter().filter(|b| s.body_visible(&b.name)).map(|b| b.name.clone()).collect();
-    if shown.len() == scope.len() { Vec::new() } else { shown }
-}
-
 /// The body whose face `sketch` is attached to (on the face itself, not offset from it), when
 /// it is one the active component works on ([`active_scope`]).
 fn sketch_face_body(s: &Session, sketch: u64) -> Option<String> {
@@ -1062,6 +1058,19 @@ fn face_join_targets(s: &Session, p: &Value, operation: Operation, sketches: &[u
         }
     }
     Ok(targets.into_iter().map(BodyName).collect())
+}
+
+/// The bodies a Join, Cut or Intersect that names none may change, less the hidden ones, when
+/// some of them are hidden: stored as the feature's `targets`, so a hidden body is left alone
+/// (#3961, #6901) and showing it again later doesn't change the model. None when every one is
+/// shown; empty when none is.
+pub fn shown_scope(s: &Session) -> Option<Vec<String>> {
+    let st = s.model.state();
+    let scope = active_scope(s, &st);
+    if scope.iter().all(|b| s.body_visible(&b.name)) {
+        return None;
+    }
+    Some(scope.into_iter().filter(|b| s.body_visible(&b.name)).map(|b| b.name.clone()).collect())
 }
 
 /// The bodies a feature of the active component works on when it names none: the component's
@@ -1998,12 +2007,12 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
     let dir1 = p.get("dir1").and_then(vec3).ok_or_else(|| bad(cmd, "`dir1` must be [x, y, z]"))?;
     let count1 = req_expr(cmd, p, "count1")?;
     let spacing1 = req_expr(cmd, p, "spacing1")?;
-    check_expr(s, &count1, Kind::Unitless, cmd, "count1")?;
+    check_count(s, &count1, cmd, "count1")?;
     check_expr(s, &spacing1, Kind::Length, cmd, "spacing1")?;
     let dir2 = p.get("dir2").and_then(vec3);
     let (count2, spacing2) = (expr(p, "count2"), expr(p, "spacing2"));
     if let Some(c) = &count2 {
-        check_expr(s, c, Kind::Unitless, cmd, "count2")?;
+        check_count(s, c, cmd, "count2")?;
     }
     if let Some(c) = &spacing2 {
         check_expr(s, c, Kind::Length, cmd, "spacing2")?;
@@ -2028,7 +2037,7 @@ fn pattern_circ(s: &mut Session, p: &Value) -> Result<Value> {
     let (features, bodies) = pattern_sources(s, p, cmd)?;
     let (origin, axis, axis_ref, axis_feature) = axis_line(s, p, cmd)?;
     let count = req_expr(cmd, p, "count")?;
-    check_expr(s, &count, Kind::Unitless, cmd, "count")?;
+    check_count(s, &count, cmd, "count")?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let pattern = solidcraft_doc::PatternKind::Circular {
@@ -2053,7 +2062,7 @@ fn pattern_path(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`path` must list 1…1000 curve ids"));
     }
     let count = req_expr(cmd, p, "count")?;
-    check_expr(s, &count, Kind::Unitless, cmd, "count")?;
+    check_count(s, &count, cmd, "count")?;
     let (spacing, extent) = match (expr(p, "spacing"), expr(p, "distance")) {
         (Some(x), _) => (x, false),
         (None, Some(x)) => (x, true),

@@ -335,7 +335,8 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
     let t = Tokens::get();
-    let count = crate::ui_kit::HistoryTransport::ALL.len() as f32;
+    let mut controls = crate::ui_kit::HistoryTransport::shown(app.preferences.history_play_button);
+    let count = controls.len() as f32;
     let height = if names { crate::ui_kit::TREE_ROW_HEIGHT } else { t.control_height * count + t.space_2 * (count - 1.0) };
     let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     crate::scenario::publish_rect("history:transport", header);
@@ -362,7 +363,11 @@ fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         let handle = crate::ui_kit::panel_grip(&mut grip).rect;
-        let controls_width = crate::ui_kit::history_transport_width();
+        // A named column too narrow for five buttons beside its grip leaves Play to the ribbon.
+        if controls_right - crate::ui_kit::history_controls_width(controls.len()) < handle.right() + t.space_2 {
+            controls = &crate::ui_kit::HistoryTransport::ALL;
+        }
+        let controls_width = crate::ui_kit::history_controls_width(controls.len());
         let title = crate::i18n::tr("ui.history_title");
         let galley = ui.painter().layout_no_wrap(title.to_owned(), crate::fonts::semibold(t.font_heading), t.text);
         let text_left = handle.right() + t.space_8;
@@ -379,19 +384,21 @@ fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
         crate::scenario::publish_handle("history:grip", drag_rect.center());
         dock_drag(app, ui, &drag);
     }
-    for (i, control) in crate::ui_kit::HistoryTransport::ALL.into_iter().enumerate() {
+    for (i, &control) in controls.iter().enumerate() {
         let side = if names { t.space_24 } else { t.control_height };
         let rect = if names {
             Rect::from_min_size(
-                pos2(controls_right - crate::ui_kit::history_transport_width() + i as f32 * (side + t.space_2), header.center().y - side / 2.0),
+                pos2(
+                    controls_right - crate::ui_kit::history_controls_width(controls.len()) + i as f32 * (side + t.space_2),
+                    header.center().y - side / 2.0,
+                ),
                 vec2(side, side),
             )
         } else {
             Rect::from_min_size(pos2(header.center().x - side / 2.0, header.top() + i as f32 * (side + t.space_2)), vec2(side, side))
         };
-        if control.show(ui, rect).clicked() {
-            crate::timeline::run_transport(app, control);
-        }
+        let response = control.show(ui, rect, app.timeline_playback.is_some());
+        crate::timeline::transport_response(app, control, &response);
     }
 }
 
@@ -669,7 +676,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     let selected_groups = app.tree.picked_timeline_groups.clone();
     let has_selection = !features.is_empty() || !selected_groups.is_empty();
     if has_selection {
-        if crate::context_menu::button(ui, "Add to New Folder", "folder").clicked() {
+        if crate::context_menu::button(ui, "Add to New Folder", "feature_group").clicked() {
             let result = app.run("timeline.group", json!({"features": features, "groups": selected_groups}));
             if let Ok(result) = result
                 && let Some(group) = result.get("group").and_then(serde_json::Value::as_u64)
@@ -680,7 +687,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
             ui.close();
         }
         let grouped = features.iter().any(|feature| group_for(groups, *feature).is_some()) || !selected_groups.is_empty();
-        if grouped && crate::context_menu::button(ui, "Remove from Folder", "folder").clicked() {
+        if grouped && crate::context_menu::button(ui, "Remove from Folder", "feature_group").clicked() {
             let mut params = json!({"group": null});
             if !features.is_empty() {
                 params["features"] = json!(features);
@@ -859,7 +866,7 @@ fn group_last_feature(
 }
 
 /// Whether Sketches: Under their feature is on (#6489).
-fn nests(app: &SolveApp) -> bool {
+pub(crate) fn nests(app: &SolveApp) -> bool {
     app.preferences.history_sketches == crate::prefs::HistorySketches::UnderFeature
 }
 
@@ -877,7 +884,7 @@ fn drawn_rows(app: &SolveApp, nest: bool) -> HistoryRows {
 }
 
 /// The fold of a feature's listed sketches; closed until opened.
-fn sketches_key(feature: u64) -> String {
+pub(crate) fn sketches_key(feature: u64) -> String {
     format!("timeline/feature/{feature}/sketches")
 }
 
@@ -1017,7 +1024,7 @@ fn vertical_group_row(
         painter.multiply_opacity(0.42);
     }
     let icon = Rect::from_center_size(pos2(rect.left() + 27.5 + offset, rect.center().y), vec2(17.0, 17.0));
-    icons::paint_icon(&painter, icon, "folder", f32::from(t.icon.a()) / 255.0);
+    icons::paint_icon(&painter, icon, "feature_group", f32::from(t.icon.a()) / 255.0);
     if suppressed {
         painter.line_segment([icon.left_bottom(), icon.right_top()], Stroke::new(1.5, t.text_dim));
     }
@@ -1096,6 +1103,8 @@ struct Rows<'a> {
     drag: Option<Drag>,
     hovered: Option<u64>,
     edit: Option<u64>,
+    /// Each sketch's solve state, read once for the column (#7245).
+    sketch_states: crate::sketch_state::SketchStates,
 }
 
 fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
@@ -1137,6 +1146,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui, names: bool) {
     let from_view = [crate::timeline::hovered_feature(app), crate::timeline::picked_feature(app)];
     let drag_id = ui.id().with("tl_vertical_drag");
     let mut rows = Rows {
+        sketch_states: crate::sketch_state::SketchStates::of(app),
         names,
         under_feature,
         features: &features,
@@ -1327,6 +1337,7 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
     let listed =
         (row_kind == RowKind::Own).then(|| plan.row_at(index)).flatten().map(|row| row.listed.as_slice()).filter(|listed| !listed.is_empty());
     let has_patterns = !reference && matches!(kind, TimelineKind::Sketch) && crate::sketch_pattern_tree::has_patterns(app, id);
+    let sketch_state = matches!(kind, TimelineKind::Sketch).then(|| rows.sketch_states.get(id)).flatten();
     // One fold per row: a feature's listed sketches, or a sketch's patterns.
     let fold = match listed {
         Some(_) => Some((sketches_key(id), false)),
@@ -1383,6 +1394,7 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
         error: error.is_some(),
         warning: warning.is_some(),
         reference,
+        ink: sketch_state.and_then(|state| state.ink(&t)),
         accent: crate::theme::TabAccent::for_tab(&t, if dragged { "SKETCH" } else { &app.ui.tab }),
     }
     .paint(ui.painter(), chip, style);
@@ -1416,6 +1428,9 @@ fn feature_row(app: &mut SolveApp, ui: &mut egui::Ui, rows: &mut Rows, index: us
         let mut tip = format!("{name} · {kind} · {summary}");
         if error.is_some() || warning.is_some() {
             tip.push_str(&format!("\n{}", crate::timeline::status_text(name, ty, error.as_deref(), warning.as_deref())));
+        }
+        if let Some(state) = sketch_state {
+            tip.push_str(&format!("\n{}", state.text()));
         }
         crate::ui_kit::text(ui, &tip, crate::ui_kit::Text::Value("history", false));
         // A value row is one line: where the sketch is listed gets a row of its own.
@@ -1680,6 +1695,7 @@ mod tests {
                     ("last", None),
                 ] {
                     h.step(&json!({"click":{"handle":format!("history:{control}")}})).unwrap();
+                    assert!(h.app.timeline_playback.is_none(), "navigation never starts playback");
                     h.settle();
                     assert_eq!(h.app.session.doc.marker, position, "{mode:?} {dock} {width}: {control}");
                     assert_eq!(h.app.session.model.state().bodies.len(), position.unwrap_or(3));

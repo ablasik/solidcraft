@@ -1,4 +1,6 @@
 {
+  "order": 180,
+  "provenance": "Original SolidCraft theme",
   "base": "dark",
   "colors": {
     "accent": "#4aa3d8",

@@ -1,4 +1,6 @@
 {
+  "order": 230,
+  "provenance": "Original warm paper and charcoal palette",
   "base": "light",
   "colors": {
     "accent": "#bf5634",

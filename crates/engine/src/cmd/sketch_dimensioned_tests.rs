@@ -87,6 +87,41 @@ fn signed_arc_sweep_retains_radius_and_logical_endpoint_identity() {
     }
 }
 
+/// #6645: a clicked end with `clockwise` sweeps from the start the other way round, keeps the
+/// start's radius and its `.start`/`.end` names, with and without a typed radius.
+#[test]
+fn a_clockwise_centre_arc_runs_from_its_start_to_its_end_the_other_way_round() {
+    for dimensions in [None, Some(json!({"radius": 10}))] {
+        let mut s = session();
+        // The end is off the radius, as a cursor is: it is pulled onto the start's circle.
+        let params = json!({"center":[0,0],"start":[10,0],"end":[0,4],"clockwise":true,"id":"a1","connect":false});
+        match &dimensions {
+            Some(d) => draw(&mut s, "sketch.arc.center_point", params, d.clone()),
+            None => run(&mut s, "sketch.arc.center_point", params),
+        };
+        let sk = sketch(&s);
+        let arc = &sk.curves[sk.curve_index("a1").unwrap()];
+        assert!(arc.reversed, "{dimensions:?}");
+        let at = |r: &str| sk.points[sk.resolve_point(r).unwrap()].pos;
+        let (start, end) = (at("a1.start"), at("a1.end"));
+        close(start.x, 10.0);
+        close(start.y, 0.0);
+        close(end.x, 0.0);
+        close(end.y, 10.0);
+        // Clockwise from 0° to 90° is 270° of arc through the bottom (-90°), not the top.
+        let solidcraft_sketch::CurveKind::Arc { c, a, b } = arc.kind else { panic!("not an arc") };
+        let (c, a, b) = (sk.points[c].pos, sk.points[a].pos, sk.points[b].pos);
+        close(((b - c).angle() - (a - c).angle()).rem_euclid(std::f64::consts::TAU).to_degrees(), 270.0);
+        if dimensions.is_some() {
+            close(measure(&s, |k| matches!(k, ConstraintKind::Radius { .. })), 10.0);
+        }
+    }
+    // Without the flag the same clicks keep the counter-clockwise quarter.
+    let mut s = session();
+    run(&mut s, "sketch.arc.center_point", json!({"center":[0,0],"start":[10,0],"end":[0,4],"id":"a1"}));
+    assert!(!sketch(&s).curves[sketch(&s).curve_index("a1").unwrap()].reversed);
+}
+
 #[test]
 fn slots_and_polygon_keep_permanent_typed_dimensions() {
     for command in ["sketch.slot.center_to_center", "sketch.slot.overall", "sketch.slot.center_point"] {

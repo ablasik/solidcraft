@@ -180,6 +180,25 @@ pub fn string_list_or_default(p: &Value, k: &str) -> Vec<String> {
     }
 }
 
+/// Whether any text in `p` is shaped like a definition, `name = expression` (#4071), so the
+/// design may hold one to store once the command has run (`Document::define_inline`). Looks at
+/// most a bounded number of values deep into hostile input.
+pub fn has_definition(p: &Value) -> bool {
+    fn walk(v: &Value, budget: &mut usize) -> bool {
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        match v {
+            Value::String(s) => s.len() <= 4096 && s.contains('=') && solidcraft_doc::expr::definition(s).is_some(),
+            Value::Array(a) => a.iter().any(|x| walk(x, budget)),
+            Value::Object(o) => o.values().any(|x| walk(x, budget)),
+            _ => false,
+        }
+    }
+    walk(p, &mut 100_000)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

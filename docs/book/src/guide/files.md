@@ -47,6 +47,13 @@ panel, and in the right-click menu of a body) open the same dialog with that for
 the selected bodies as STL, 3MF or 3MF with face tags (below) to a file you name, and you can change
 the format there.
 
+A 3MF has one object per body, so a slicer arranges the bodies of a multi-body part apart on the
+bed. Scripts and the control channel can keep each component together: `file.export` or
+`file.save_mesh` with `objects: "component"` writes every placed component that holds two or more
+bodies as one 3MF object whose parts are those bodies. PrusaSlicer, OrcaSlicer, Bambu Studio and
+Cura then load it as one object with a part per body, and each part can take its own filament. The
+design's own bodies, and a component with a single body, stay objects of their own.
+
 **File → Send to Slicer** (also on the Insert tab's Files panel, and in the right-click menu of a
 body) is the short way: it saves the selected bodies as a 3MF in millimetres, without face tags,
 and sends it to a slicer. It always asks which one and pre-selects the slicer you used last time,
@@ -97,12 +104,12 @@ Closed mechanical meshes with a constant cross-section can be rebuilt as solids 
 ordinary 3MF in which every triangle also names the B-rep face it lies on and every coordinate
 is the tessellation's own double-precision value. Meshing and analysis tools can use the tags to
 keep a model's faces (for loads, boundary conditions or feature edges); other 3MF readers ignore
-them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
+them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/tangency-labs/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
 
 **File → Export URDF…** (`file.export` with a `.urdf` path) writes the assembly for robot
 simulators and ROS: a link per component placement with its mesh, mass and inertia, and the
 assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are
-written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/urdf.md).
+written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/tangency-labs/solidcraft/blob/main/docs/urdf.md).
 
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. A save keeps the file's permissions, and a design
@@ -114,7 +121,9 @@ from a newer version are refused with a message.
 
 **Save** writes a container by default; files named `.json` keep JSON on subsequent saves.
 **Save As** offers a container or plain JSON on
-desktop; **Save As JSON** is also available in the File menu on desktop and web. Choose
+desktop; **Save As JSON** is also available in the File menu on desktop and web. Both start
+from the name of the open file, or from the design's new name when it was renamed since it
+was opened or saved; a new design starts from its own name. Choose
 the `.json` extension for plain JSON. **Export Design as JSON** writes an independent,
 self-contained copy without changing the current file. Scripts can explicitly pass
 `"format": "json"` to `file.save` or `file.save_as` even with a `.sc` name.

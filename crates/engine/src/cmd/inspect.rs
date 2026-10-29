@@ -15,6 +15,9 @@ use crate::{EngineError, Result, Session};
 #[path = "appearance_chain.rs"]
 mod appearance_chain;
 
+#[path = "appearance_gestures.rs"]
+pub(super) mod appearance_gestures;
+
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("inspect.colored_components", "Enable Component Colors", colored_components)
         .at("SOLID", "INSPECT").icon("colored_components").noundo()
@@ -49,6 +52,12 @@ pub static COMMANDS: &[CommandSpec] = &[
              appearance?: library name or stable starter.* ID (appearance.library) | color: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1, default 1); \
              name?: inert copied look label (requires color, mutually exclusive with appearance); pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (requires color/appearance and opacity 1); a starter ID or registered starter name resolves its recipe before color overrides; omitted pbr retains that response and pbr: null explicitly clears it. Unavailable glass recipes refuse through either selector. Other custom labels with an explicit color retain legacy scalar behavior. Neither appearance nor color (or color: null): clear, so the face follows its body, the body its component, the component its material",
     ),
+    CommandSpec::new("appearance.copy", "Copy Look", appearance_gestures::copy).icon("copy").noundo().key("Ctrl+Alt+C")
+        .params("target: appearance.chain target. Copies its resolved look to a transient session clipboard. No document change or dialogs."),
+    CommandSpec::new("appearance.paste", "Paste Look", appearance_gestures::paste).icon("paste").key("Ctrl+Alt+V")
+        .params("bodies/faces/components: appearance.assign targets. Applies the copied look atomically in one undo step; no dialogs."),
+    CommandSpec::new("appearance.favorite", "Favourite Look", appearance_gestures::favorite).icon("star").noundo().doc_only()
+        .params("look: appearance.assign look; favorite: bool → validated look and preference request; UI library preference only, no document change or dialogs."),
     CommandSpec::new("appearance.chain", "Appearance Chain", appearance_chain::chain).icon("inspect").noundo().params(
         "target: {body: name} | {body: name, face: zero-based model.faces index} | {component: name or id}. Returns steps [{step: face|body|component|material, look: {name,color,opacity,pbr?} or null}] in precedence order and active (step or null). Component material is the common default look of its directly owned bodies, null if mixed/empty. Imported paint is a display fallback outside the four steps. Read-only; no dialogs",
     ),
@@ -252,12 +261,7 @@ fn sketch_json(s: &Session, id: u64) -> Option<Value> {
 }
 
 fn sketch_inspect(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = match p.get("sketch") {
-        Some(Value::Number(n)) => s.doc.find_feature(&n.to_string()).map(|f| f.id),
-        Some(Value::String(x)) => s.doc.find_feature(x).map(|f| f.id),
-        _ => s.active_sketch,
-    }
-    .ok_or_else(|| bad("sketch.inspect", "no such sketch (and none is active)"))?;
+    let id = super::sketch_store::target(s, p, "sketch.inspect")?;
     sketch_json(s, id).ok_or_else(|| EngineError::Other("that sketch is not evaluated (rolled back or not a sketch)".into()))
 }
 
@@ -722,7 +726,7 @@ fn appearance_library(_s: &mut Session, _p: &Value) -> Result<Value> {
         value["category"] = json!(name.split(" - ").next().unwrap_or(name));
         Some(value)
     }));
-    for preset in &solidcraft_doc::appearance_pack::STARTER_PACK {
+    for preset in solidcraft_doc::appearance_pack::STARTER_PACK {
         let c = preset.preview_color();
         let pbr = preset.opaque_look().ok().and_then(|look| look.pbr);
         list.push(json!({"id":preset.id,"name":preset.name,"category":preset.category,"revision":preset.revision,

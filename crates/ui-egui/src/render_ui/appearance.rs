@@ -24,6 +24,13 @@ pub(super) struct View {
     replacements: Vec<dialogs_appearance::Look>,
 }
 
+#[cfg(test)]
+impl View {
+    pub(super) fn draft(&self) -> Option<&Look> {
+        self.draft.as_ref()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Targets {
     items: Vec<Sel>,
@@ -498,7 +505,9 @@ fn draw(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, selected: &Targe
         let editable = step != LookStep::Material && (!edit_targets.items.is_empty() || !edit_targets.components.is_empty());
         ui.add_enabled_ui(editable, |ui| {
             ui_kit::row(ui, app.tr("render.inspector_colour"), |ui| {
-                let response = ui_kit::color_hex_field(ui, &mut draft.color, mixed(&looks, |l| l.color).then(|| app.tr("render.tree_mixed")));
+                let opacity = draft.pbr.is_none().then_some(&mut draft.opacity);
+                let response =
+                    ui_kit::mixed_color_field(ui, &mut draft.color, opacity, mixed(&looks, |l| l.color).then(|| app.tr("render.tree_mixed")));
                 view.dirty |= response.changed();
                 commit |= ended(&response, ui);
             });

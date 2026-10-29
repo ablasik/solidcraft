@@ -47,7 +47,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          or joints?: [joint id or name] (their glyphs; they still constrain and move parts); \
          or features?: [feature id or name] (the bodies they made; path?: [occurrence ids] for only that placement's); \
          or folder?: bodies|sketches|construction|origin|joints|all (all of it; showing also shows its browser folders and groups, and `all` takes in the occurrence hides too); \
-         or tree_folders?: [browser folder or group key: c0/bodies, o:4/sketches, c0/g7, c0/joints, c0/canvases] (the folder or group itself: its items keep their own state); \
+         or tree_folders?: [browser folder or group key: c0/bodies, o:4/sketches, c0/g7, c0/joints, c0/canvases, c0/point_clouds] (the folder or group itself: its items keep their own state); \
          or paths?: [[occurrence ids]] (exact placements and descendants), isolate?: bool (requires paths and visible:true). Saved with the design and undone like any other change (the camera is not)",
     ),
     CommandSpec::new("browser.expand_all", "Expand All", expand_all).icon("folder").noundo().params(
@@ -258,8 +258,9 @@ fn tree_folder_key(k: &str) -> bool {
     let Some((scope, last)) = k.rsplit_once('/') else { return false };
     let scope_ok =
         scope == "c0" || scope.strip_prefix("o:").is_some_and(|ids| ids.split('/').count() <= 64 && ids.split('/').all(|i| i.parse::<u64>().is_ok()));
-    let last_ok =
-        FOLDERS.contains(&last) || ["joints", "canvases"].contains(&last) || last.strip_prefix('g').is_some_and(|g| g.parse::<u64>().is_ok());
+    let last_ok = FOLDERS.contains(&last)
+        || ["joints", "canvases", "point_clouds"].contains(&last)
+        || last.strip_prefix('g').is_some_and(|g| g.parse::<u64>().is_ok());
     k.len() <= 2048 && scope_ok && last_ok
 }
 
@@ -555,6 +556,9 @@ fn collect_component_keys(s: &Session, prefix: &str, component: u64, root_extras
         keys.closed.insert("origin".into());
         if !s.doc.canvases.is_empty() {
             keys.open.insert("canvases".into());
+        }
+        if !s.doc.point_clouds.is_empty() {
+            keys.open.insert("point_clouds".into());
         }
         if !s.doc.assembly.joints.is_empty() {
             keys.open.insert("c0/joints".into());
@@ -1029,6 +1033,7 @@ fn redefine_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         && super::sketch::face::anchor(&plane)
             .is_none_or(|next| next.target != anchor.target || next.component != anchor.component || next.path != anchor.path)
     {
+        // design-only: Redefine Sketch Plane edits the design's sketch feature.
         let sketch = trial.doc_mut().sketch_mut(id)?;
         if let Some(mut visible) = visible_geometry {
             let constraints: std::collections::BTreeMap<_, _> =

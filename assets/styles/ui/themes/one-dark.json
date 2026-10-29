@@ -1,4 +1,6 @@
 {
+  "order": 130,
+  "provenance": "Original SolidCraft mapping of Atom One Dark (MIT palette)",
   "base": "dark",
   "colors": {
     "accent": "#61afef",

@@ -29,6 +29,8 @@ pub enum Surface {
     Toast,
     /// Viewport navigation controls (the compass itself is drawn geometry).
     Navigation,
+    /// Persistent, content-hugging status pills above the free model viewport.
+    ViewportStatus,
     /// Full-page content, the model viewport and native pop-out content.
     Viewport,
     /// Deliberate input-blocking backdrops; must not inherit CAD input blocking.
@@ -100,6 +102,50 @@ impl Container {
         })
     }
 
+    /// Reserve an anchored one-row Navigation card and the common card gap.
+    pub(crate) fn below_navigation_row(bounds: egui::Rect) -> egui::Rect {
+        let t = Tokens::get();
+        egui::Rect::from_min_max(egui::pos2(bounds.left(), (bounds.top() + t.control_height + t.space_8 * 2.0).min(bounds.bottom())), bounds.max)
+    }
+
+    /// Inline navigation band using the same chrome and padding as anchored HUDs.
+    pub(crate) fn navigation_contents<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+        let container = Self::new(ui.ctx(), Surface::Navigation);
+        let frame = container.frame(ui.ctx(), Tokens::get().overlay, Side::Left).inner_margin(Tokens::get().space_4);
+        container.show_frame(ui, frame, ui.max_rect(), |ui| super::scope(ui, add))
+    }
+
+    /// Compact selection actions above canvas geometry, using the navigation host policy.
+    pub(crate) fn selection_card<R>(
+        ctx: &Context,
+        id: Id,
+        anchor: egui::Pos2,
+        bounds: egui::Rect,
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let container = Self::new(ctx, Surface::Navigation);
+        let t = Tokens::get();
+        container.area(id).movable(false).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(anchor).constrain_to(bounds).order(egui::Order::Middle).show(
+            ctx,
+            |ui| {
+                let frame =
+                    container.frame(ctx, t.dialog_body, Side::Left).corner_radius(t.space_24 as u8).shadow(t.shell_shadow()).inner_margin(t.space_3);
+                container.show_frame(ui, frame, bounds, |ui| super::scope(ui, add)).inner
+            },
+        )
+    }
+
+    /// Standard content tooltip, including the same host and padding as library samples.
+    pub(crate) fn tooltip(response: &egui::Response, text: &str) {
+        let ctx = &response.ctx;
+        let mut tip = egui::Tooltip::for_enabled(response).at_pointer();
+        tip.popup = tip.popup.frame(Self::new(ctx, Surface::Toast).tooltip_frame(ctx));
+        tip.show(|ui| {
+            ui.label(text);
+            crate::scenario::publish_rect("kit:tooltip", ui.min_rect());
+        });
+    }
+
     /// Declare contacts from shell geometry; styling remains entirely in the container.
     pub fn joined(mut self, edges: DockEdges) -> Self {
         self.joined = Some(edges);
@@ -132,6 +178,7 @@ impl Container {
             Surface::Palette => flat.stroke(t.primary_border(t.border)).corner_radius(t.radius_xl).shadow(t.shell_shadow()),
             Surface::Panel | Surface::Chrome => flat.stroke(t.primary_border(t.border)).corner_radius(t.radius_lg).shadow(t.shell_shadow()),
             Surface::Navigation => flat.stroke(t.primary_border(t.border)).corner_radius(t.radius_md),
+            Surface::ViewportStatus => flat.stroke(t.primary_border(t.border)).corner_radius((t.control_height / 2.0 + t.space_4) as u8),
             Surface::Toast => flat.stroke(t.primary_border(t.border)).corner_radius(t.radius_md).shadow(t.shell_shadow()),
             Surface::Popup => Self::popup_frame(&ctx.global_style()).fill(fill),
             Surface::ApplicationBar | Surface::Canvas | Surface::Viewport | Surface::InputShield => flat,

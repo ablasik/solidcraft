@@ -18,7 +18,7 @@ use solidcraft_render::{
 
 use crate::{Result, Session, params::bad};
 
-const KINDS: [&str; 12] = [
+const KINDS: &[&str] = &[
     "materials",
     "lighting",
     "environments",
@@ -45,7 +45,7 @@ fn catalog(kind: &str, command: &str) -> Result<&'static [Value]> {
     }
     let cached = CATALOGS.get_or_init(|| {
         let mut catalogs = BTreeMap::new();
-        for kind in KINDS {
+        for &kind in KINDS {
             let source = super::library_data::catalog(kind).ok_or_else(|| format!("missing built-in catalog {kind}"))?;
             let value: Value = serde_json::from_str(source).map_err(|e| format!("invalid built-in catalog {kind}: {e}"))?;
             if !value.get("items").is_some_and(Value::is_array) {

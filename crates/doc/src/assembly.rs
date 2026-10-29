@@ -255,6 +255,14 @@ pub fn map_point_expr(m: &Mat, p: &mut crate::PointExpr) {
     }
 }
 
+/// Map a displacement given as length expressions, retaining its parameter dependencies.
+/// Unlike a point, a displacement is unaffected by the frame's translation.
+pub fn map_vector_expr(m: &Mat, v: &mut crate::PointExpr) {
+    let mut rotation = *m;
+    rotation[3] = [0.0, 0.0, 0.0, 1.0];
+    map_point_expr(&rotation, v);
+}
+
 impl FeatureKind {
     /// Map the feature's world geometry (points, directions, explicit planes) by `m`.
     pub fn transform_geometry(&mut self, m: &Mat) {

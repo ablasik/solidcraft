@@ -740,13 +740,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn output_viewer_labels_exist_in_all_required_catalogs() {
+        for language in ["en", "de", "ja", "ko", "zh"] {
+            let locale = Locale::for_language(language);
+            for key in [
+                "cmd.render_output_size",
+                "cmd.render_result_view",
+                "cmd.render_result_close",
+                "cmd.render_result_copy",
+                "cmd.render_lights_add",
+                "render.output_destination",
+                "render.output_destination_help",
+                "render.output_backend_ready",
+                "render.output_dimensions",
+                "render.output_effects",
+                "render.output_advanced",
+                "render.output_copy",
+                "render.output_fit",
+                "render.output_export",
+                "render.output_view_image",
+                "render.effects_gpu_only",
+                "render.output_image",
+                "render.output_check_summary",
+                "render.output_presets_help",
+                "render.size_preview",
+                "render.size_full_hd",
+                "render.size_4k",
+                "render.size_square",
+                "render.size_custom",
+                "render.output_format",
+                "render.output_exr_unavailable",
+                "render.output_largest",
+                "render.output_quality",
+                "render.output_quality_waiting",
+                "render.quality_draft",
+                "render.quality_balanced",
+                "render.quality_high",
+                "render.quality_custom",
+                "render.output_check",
+                "render.output_check_help",
+                "render.output_ready",
+                "render.output_size_ok",
+                "render.check_transmission",
+                "render.check_opaque",
+                "render.check_sorted_alpha",
+                "render.state_model",
+                "render.state_in_progress",
+                "render.state_completed",
+                "render.result_actual",
+                "render.radial_assign",
+                "render.radial_save",
+                "render.radial_fit",
+                "render.radial_compare",
+                "render.wait_add_light",
+            ] {
+                assert!(locale.0.messages().contains_key(key), "{language}: {key}");
+            }
+        }
+    }
+
     /// The mouse mapping picker shows its preset's help through `tr_label`, which the guard above
     /// can't see: the text sits in a struct field, not in a call. Each one must be the English text
     /// of its preset's catalog message, or it stays English in every locale.
     #[test]
     fn navigation_preset_help_reaches_the_catalog() {
         let english = Locale::for_language("en");
-        for preset in &crate::prefs::NAV_PRESETS {
+        for preset in crate::prefs::NAV_PRESETS {
             let id = format!("nav.{}.help", preset.id);
             assert_eq!(english.text(&id), preset.help, "{id}");
         }
@@ -1202,6 +1262,7 @@ mod tests {
     const KIT_CALLS: &[KitCall] = &[
         // layout.rs: `sized_row` draws `tr_label(text)`, and every row builder reaches it.
         KitCall { name: "row", args: &[1], id: false, trim: &[1] },
+        KitCall { name: "status_line", args: &[1], id: false, trim: &[] },
         KitCall { name: "expr_row", args: &[1], id: false, trim: &[1] },
         KitCall { name: "hint_row", args: &[1], id: false, trim: &[1] },
         KitCall { name: "text_row", args: &[1], id: false, trim: &[1] },
@@ -1214,6 +1275,7 @@ mod tests {
         KitCall { name: "cell_editor", args: &[3], id: false, trim: &[] },
         KitCall { name: "bounded_cell_editor", args: &[3], id: false, trim: &[] },
         KitCall { name: "search_field", args: &[3], id: false, trim: &[] },
+        KitCall { name: "menu_filter", args: &[3], id: false, trim: &[] },
         KitCall { name: "placement_field", args: &[3], id: false, trim: &[] },
         KitCall { name: "library_cell", args: &[3], id: false, trim: &[] },
         // actions.rs
@@ -1886,8 +1948,8 @@ mod tests {
 
     /// The names the hand-written kit probes import, exactly as a UI file would.
     const KIT_IMPORTS: &str = concat!(
-        "use crate::ui_kit::{row, expr_row, hint_row, text_row, choice_row, section, section_count, ",
-        "multiline_text_field, dropdown, cell_editor, bounded_cell_editor, search_field, placement_field, ",
+        "use crate::ui_kit::{row, status_line, expr_row, hint_row, text_row, choice_row, section, section_count, ",
+        "multiline_text_field, dropdown, cell_editor, bounded_cell_editor, search_field, menu_filter, placement_field, ",
         "library_cell, icon_button_at, icon_button_colored, footer, button, primary_button, ",
         "wide_primary_button, action_menu, compact_button, icon_label_button, command_menu_button, ",
         "checkbox_grid, options, checkbox_row, toggle_icon, removable_header, bin_button, ",
@@ -1910,6 +1972,7 @@ mod tests {
     fn every_kit_call_is_read_at_its_real_signature() {
         let cases: &[(&str, &[&str])] = &[
             ("row(ui, \"row\", |ui| {})", &["row"]),
+            ("status_line(ui, \"status_line\", StatusTone::Dim)", &["status_line"]),
             ("expr_row(ui, \"expr_row\", value)", &["expr_row"]),
             ("hint_row(ui, \"hint_row\", value, hint)", &["hint_row"]),
             ("text_row(ui, \"text_row\", value, hint)", &["text_row"]),
@@ -1924,6 +1987,7 @@ mod tests {
             ("cell_editor(ui, id, value, \"cell_editor\", invalid)", &["cell_editor"]),
             ("bounded_cell_editor(ui, id, value, \"bounded_cell_editor\", invalid, limit)", &["bounded_cell_editor"]),
             ("search_field(ui, id, value, \"search_field\")", &["search_field"]),
+            ("menu_filter(ui, id, value, \"menu_filter\")", &["menu_filter"]),
             ("placement_field(ui, id, value, \"placement_field\")", &["placement_field"]),
             ("library_cell(ui, id, value, \"library_cell\", |ui| {})", &["library_cell"]),
             ("icon_button_at(ui, rect, icon, \"icon_button_at\")", &["icon_button_at"]),

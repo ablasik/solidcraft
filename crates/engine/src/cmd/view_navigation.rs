@@ -4,12 +4,13 @@ use solidcraft_render::{Camera, StandardView};
 
 use super::CommandSpec;
 use crate::params::{bad, num, req_vec2, req_vec3, vec3};
-use crate::schema::view_navigation::{RenderBrowser, RenderFocus};
+use crate::schema::view_navigation::{RenderBrowser, RenderFocus, RenderSelect, TabStep, TabStepParams};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Sel, Session};
 
 const FOCUS_CONTRACT: TypedContract<RenderFocus> = TypedContract::new();
 const BROWSER_CONTRACT: TypedContract<RenderBrowserRequest> = TypedContract::new();
+const TAB_STEP_CONTRACT: TypedContract<TabStepParams> = TypedContract::new();
 
 // Both existing request forms share the Browser command and its published schema.
 #[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -29,6 +30,8 @@ struct RenderBrowserControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     query: Option<String>,
 }
+
+const RENDER_SELECT: TypedContract<RenderSelect> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
 CommandSpec::new("view.fit", "Fit", fit)
@@ -58,9 +61,10 @@ CommandSpec::new("view.render_browser", "Render Browser", crate::checked!("view.
 CommandSpec::new("view.render_inspector", "Render Inspector", render_inspector)
     .icon("inspect").noundo().doc_only()
     .params("visible: bool → {visible}; per-document Inspector visibility; never edits the design or opens a dialog"),
-CommandSpec::new("view.render_select", "Render selection", render_select)
+CommandSpec::new("view.render_select", "Render selection", crate::checked!("view.render_select", render_select))
+    .contract(&RENDER_SELECT).output(output_schema_for::<RenderSelect>)
     .icon("select").noundo().doc_only()
-    .params("kind: nothing|environment|light|shot|output; id?: bounded nonempty string for light/shot → validated transient Browser focus; never edits the design or opens a dialog"),
+    .params("kind: nothing|environment|light|shot|output|wear|sampling|effects|check; id?: bounded nonempty string for light/shot → validated transient Browser focus; never edits the design or opens a dialog"),
 CommandSpec::new("view.render_stage", "Render Stage", render_stage)
     .icon("render_scene").noundo().doc_only()
     .params("stage: look|light|frame|output → {stage}; per-document UI state, never edits or evaluates the design; headless validation only"),
@@ -75,7 +79,7 @@ CommandSpec::new("view.render_dock", "Move Render Dock", crate::checked!("view.r
 CommandSpec::new("view.layout", "Workspace layout", layout)
     .icon("settings").noundo().doc_only().params("mode: floating|compact → validated workspace layout; display only, never opens a dialog"),
 CommandSpec::new("view.history_layout", "History layout", history_layout)
-    .icon("settings").noundo().doc_only().params("width?: 1..1000000; dock?: bottom|left|under_browser; collapsed?: bool → validated layout request; display only, never opens a dialog"),
+    .icon("settings").noundo().doc_only().params("width?: 1..1000000; dock?: bottom|left|under_browser|browser (browser: the history in the browser, no timeline); collapsed?: bool → validated layout request; display only, never opens a dialog"),
 CommandSpec::new("view.graphics_preset", "Graphics Preset", graphics_preset)
     .icon("settings").noundo().doc_only().params("preset: performance|quality → preset, enabled, display_quality, supersampling, supersampling_adaptive; Quality: AO, Fine, adaptive 2x SSAA; Performance: no AO, Normal, no SSAA"),
 CommandSpec::new("view.ambient_occlusion", "Ambient Occlusion", ambient_occlusion)
@@ -100,7 +104,13 @@ CommandSpec::new("view.left", "Left View", left).icon("camera").noundo().key("Ct
 CommandSpec::new("view.right", "Right View", right).icon("camera").noundo().key("Ctrl+4").params(STANDARD_PARAMS),
 CommandSpec::new("view.top", "Top View", top).icon("camera").noundo().key("Ctrl+5").params(STANDARD_PARAMS),
 CommandSpec::new("view.bottom", "Bottom View", bottom).icon("camera").noundo().key("Ctrl+6").params(STANDARD_PARAMS),
-CommandSpec::new("view.isometric", "Isometric View", isometric).icon("camera").noundo().key("Ctrl+7").params(STANDARD_PARAMS)];
+CommandSpec::new("view.isometric", "Isometric View", isometric).icon("camera").noundo().key("Ctrl+7").params(STANDARD_PARAMS),
+CommandSpec::new("view.next_tab", "Next Tab", crate::checked!("view.next_tab", next_tab))
+    .icon("chevron_right").noundo().doc_only().key("Ctrl+Tab").contract(&TAB_STEP_CONTRACT).output(output_schema_for::<TabStep>)
+    .params("no parameters → step: 1; the window shows the design tab to the right of the shown one (after the last, the first); never edits the design or opens a dialog"),
+CommandSpec::new("view.previous_tab", "Previous Tab", crate::checked!("view.previous_tab", previous_tab))
+    .icon("chevron_right").noundo().doc_only().key("Ctrl+Shift+Tab").contract(&TAB_STEP_CONTRACT).output(output_schema_for::<TabStep>)
+    .params("no parameters → step: -1; the window shows the design tab to the left of the shown one (before the first, the last); never edits the design or opens a dialog")];
 
 const STANDARD_PARAMS: &str = "camera?: Camera (default: current session camera or home view) → camera; turns to that standard view as the view cube does, keeping target, distance and projection";
 
@@ -261,21 +271,7 @@ fn render_focus(_s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn render_select(s: &mut Session, p: &Value) -> Result<Value> {
-    #[derive(serde::Deserialize, serde::Serialize)]
-    #[serde(deny_unknown_fields)]
-    struct Request {
-        kind: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    }
-    let request: Request = serde_json::from_value(p.clone()).map_err(|e| bad("view.render_select", e.to_string()))?;
-    let identified = matches!(request.kind.as_str(), "light" | "shot");
-    if !matches!(request.kind.as_str(), "nothing" | "environment" | "light" | "shot" | "output")
-        || identified != request.id.is_some()
-        || request.id.as_ref().is_some_and(|id| id.trim().is_empty() || id.len() > 1024)
-    {
-        return Err(bad("view.render_select", "expected a Browser kind and an id only for light or shot"));
-    }
+    let request: RenderSelect = serde_json::from_value(p.clone()).map_err(|e| bad("view.render_select", e.to_string()))?;
     let result = serde_json::to_value(request).map_err(|e| bad("view.render_select", e.to_string()))?;
     if !s.selection.is_empty() {
         s.selection.clear();
@@ -365,8 +361,8 @@ fn history_layout(_s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(value) = p.get("dock") {
         let dock = value
             .as_str()
-            .filter(|v| matches!(*v, "bottom" | "left" | "under_browser"))
-            .ok_or_else(|| bad(cmd, "dock must be bottom, left or under_browser"))?;
+            .filter(|v| matches!(*v, "bottom" | "left" | "under_browser" | "browser"))
+            .ok_or_else(|| bad(cmd, "dock must be bottom, left, under_browser or browser"))?;
         result.insert("dock".into(), json!(dock));
     }
     if let Some(value) = p.get("collapsed") {
@@ -895,6 +891,19 @@ fn angle_readout(_s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| crate::EngineError::Other(e.to_string()))
 }
 
+fn next_tab(_s: &mut Session, _p: &Value) -> Result<Value> {
+    tab_step(1)
+}
+
+fn previous_tab(_s: &mut Session, _p: &Value) -> Result<Value> {
+    tab_step(-1)
+}
+
+/// The engine holds one design: the window, which holds the tabs, makes the step (#8565).
+fn tab_step(step: i8) -> Result<Value> {
+    serde_json::to_value(TabStep { step, param_warnings: Vec::new() }).map_err(|e| crate::EngineError::Other(e.to_string()))
+}
+
 #[cfg(test)]
 mod ambient_occlusion_tests {
     use super::*;
@@ -1128,9 +1137,13 @@ fn render_browser_focus_validates_without_document_changes_or_evaluation() {
     for request in [
         json!({"kind":"nothing"}),
         json!({"kind":"environment"}),
+        json!({"kind":"wear"}),
         json!({"kind":"light","id":"sun:0"}),
         json!({"kind":"shot","id":"Hero"}),
         json!({"kind":"output"}),
+        json!({"kind":"sampling"}),
+        json!({"kind":"effects"}),
+        json!({"kind":"check"}),
     ] {
         assert_eq!(session.execute("view.render_select", &request).unwrap(), request);
     }
@@ -1138,18 +1151,48 @@ fn render_browser_focus_validates_without_document_changes_or_evaluation() {
         Value::Null,
         json!([]),
         json!({}),
+        json!({"kind":"wear","id":"extra"}),
+        json!({"kind":"wear","extra":true}),
+        json!({"kind":"wear","id":1e300}),
         json!({"kind":"object"}),
         json!({"kind":"shot"}),
         json!({"kind":"light","id":1}),
         json!({"kind":"light","id":" "}),
         json!({"kind":"shot","id":"x".repeat(1025)}),
         json!({"kind":"output","id":"extra"}),
+        json!({"kind":"sampling","id":"extra"}),
+        json!({"kind":"effects","id":"extra"}),
+        json!({"kind":"check","id":"extra"}),
         json!({"kind":"environment","extra":true}),
     ] {
         assert!(session.execute("view.render_select", &request).is_err(), "{request}");
     }
     assert!(std::sync::Arc::ptr_eq(&doc, &session.doc));
     assert_eq!(before, (session.undo.len(), session.redo.len(), session.revision, session.evaluations, session.is_dirty()));
+}
+
+#[cfg(test)]
+#[test]
+fn render_select_wear_schema_and_strict_contract_agree() {
+    let mut session = Session { param_check: crate::schema::ParamCheck::Strict, ..Session::default() };
+    let spec = crate::find_command("view.render_select").unwrap();
+    let contract = spec.contract.unwrap();
+    assert_eq!(contract.allowed_keys().iter().map(String::as_str).collect::<Vec<_>>(), ["id", "kind"]);
+    let input = contract.input_schema().to_value();
+    let output = spec.output.unwrap()().to_value();
+    for schema in [input, output] {
+        assert!(schema["oneOf"][0]["properties"]["kind"]["enum"].as_array().unwrap().contains(&json!("wear")));
+        assert_eq!(schema["oneOf"][0]["additionalProperties"], false);
+    }
+    let request = json!({"kind":"wear"});
+    assert!(contract.check(&request).is_empty());
+    assert_eq!(session.execute("view.render_select", &request).unwrap(), request);
+    for request in [json!({"kind":"wear","id":"extra"}), json!({"kind":"wear","extra":true}), json!({"kind":"wear","id":1e300})] {
+        assert!(!contract.check(&request).is_empty());
+        assert!(session.execute("view.render_select", &request).is_err());
+    }
+    assert!(session.undo.is_empty() && session.redo.is_empty());
+    assert_eq!(session.evaluations, 0);
 }
 
 #[cfg(test)]

@@ -604,6 +604,40 @@ pub(crate) fn compact_icon_label_button(ui: &mut Ui, label: &str, icon: &str, en
     icon_label_presentation(ui, label, Some(icon), enabled, false, false, true)
 }
 
+/// A name chip and quiet actions in a selection card. Feature code supplies command data only.
+pub(crate) fn selection_actions(ui: &mut Ui, name: &str, actions: &[super::StageAction<'_>]) -> Option<usize> {
+    let t = Tokens::get();
+    let accent = crate::theme::TabAccent::current(ui.ctx());
+    ui.spacing_mut().interact_size.y = t.control_height - t.space_2;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = t.space_2;
+        let font = crate::fonts::semibold(t.font_small);
+        let width = ui.painter().layout_no_wrap(name.into(), font.clone(), accent.ink).size().x.min(t.form_label_width) + t.space_12;
+        let (rect, name_response) = ui.allocate_exact_size(vec2(width, t.control_height - t.space_2), egui::Sense::click());
+        name_response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name));
+        super::text::paint_text(ui, rect.shrink2(vec2(t.space_6, 0.0)), name, font, accent.ink, false);
+        scenario::publish_target("selection:name", rect);
+        let mut clicked = name_response.clicked().then_some(actions.len());
+        for (index, action) in actions.iter().enumerate() {
+            let response = ui
+                .add_enabled_ui(action.enabled, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(t.control_height - t.space_2, t.control_height - t.space_2), egui::Sense::hover());
+                    icon_button_colored(ui, rect, action.icon.unwrap_or("inspect"), action.label, action.primary.then_some(accent.ink))
+                })
+                .inner;
+            scenario::publish_target(&format!("selection:action:{index}"), response.rect);
+            if response.clicked() {
+                clicked = Some(index);
+            }
+            if let Some(reason) = action.reason {
+                response.on_disabled_hover_text(reason);
+            }
+        }
+        clicked
+    })
+    .inner
+}
+
 fn icon_label_presentation(ui: &mut Ui, label: &str, icon: Option<&str>, enabled: bool, primary: bool, danger: bool, dense: bool) -> Response {
     let t = Tokens::get();
     let width = icon_label_width(ui, label, icon, primary);

@@ -40,7 +40,7 @@ dimension parameters. Repeated child instances remain shared within the new copy
 appearances and wholly internal joints/motion records receive copied references. Design-wide
 user parameters remain shared; retained external links and omitted cross-boundary motion
 records are reported. Unsupported destructive links refuse the entire copy. See
-[individual-instance and copy details](https://github.com/bherbruck/solidcraft/blob/main/docs/occurrence-workflows.md).
+[individual-instance and copy details](https://github.com/tangency-labs/solidcraft/blob/main/docs/occurrence-workflows.md).
 
 **Extract to File** (`component.extract`, in a component's right-click menu) moves a component
 into a design of its own: its sketches, features, bodies, subcomponents and the joints among them
@@ -407,7 +407,7 @@ uses its first placement; `occurrence.properties` selects a specific instance. R
 measures the complete assembly. Volumes are summed, including overlapping bodies, rather than
 measuring their union. The same workflow is available through `component.properties` and
 `occurrence.properties`; see
-[placement and measurement details](https://github.com/bherbruck/solidcraft/blob/main/docs/assembly-properties.md).
+[placement and measurement details](https://github.com/tangency-labs/solidcraft/blob/main/docs/assembly-properties.md).
 
 ## Part properties and the bill of materials
 

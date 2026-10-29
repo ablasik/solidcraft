@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
 ];
 
 /// A family: (id, name, standard).
-const FAMILIES: [(&str, &str, &str); 7] = [
+const FAMILIES: &[(&str, &str, &str)] = &[
     ("socket_head_cap_screw", "Socket head cap screw", "ISO 4762"),
     ("hex_bolt", "Hex head bolt / screw", "ISO 4014 / ISO 4017"),
     ("hex_nut", "Hex nut", "ISO 4032"),
@@ -272,10 +272,7 @@ fn revolve(s: &mut Session, pts: &[(f64, f64)], op: &str) -> Result<()> {
 /// Fix every point and curve of the sketch being drawn: a standard part's outline is its size, so
 /// its sketches are fully defined and a check of the design finds nothing left free in them.
 fn fix_all(s: &mut Session) -> Result<()> {
-    let sketch = s.active_sketch.and_then(|id| s.doc.features.iter().find(|f| f.id == id)).and_then(|f| match &f.kind {
-        solidcraft_doc::FeatureKind::Sketch { sketch, .. } => Some(sketch),
-        _ => None,
-    });
+    let sketch = super::sketch_store::active(s).and_then(|id| super::sketch_store::read(&s.doc, id).ok());
     let entities: Vec<String> =
         sketch.map(|sk| sk.points.iter().map(|p| p.id.clone()).chain(sk.curves.iter().map(|c| c.id.clone())).collect()).unwrap_or_default();
     if !entities.is_empty() {

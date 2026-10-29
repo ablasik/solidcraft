@@ -585,6 +585,9 @@ fn a_point_picked_in_the_box_dialog_becomes_its_corner_or_centre() {
     use solidcraft_engine::Sel;
     use solidcraft_engine::geom::Vec3;
     let mut h = design("mm");
+    // The box made here overlaps Base, which the window would join or cut (#6901): this test is
+    // about where it goes, so the window keeps its New Body.
+    h.app.preferences.auto_operation = false;
     h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Base"})).unwrap();
     h.frames(2);
     // A face picked before the command: the box stands on it, as before (no typed placement).

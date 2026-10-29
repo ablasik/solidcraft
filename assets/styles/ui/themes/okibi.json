@@ -1,4 +1,6 @@
 {
+  "order": 210,
+  "provenance": "Maps the Okibi design system",
   "base": "dark",
   "colors": {
     "accent": "#ff7c50",

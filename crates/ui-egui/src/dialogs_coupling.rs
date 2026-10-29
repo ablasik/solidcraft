@@ -4,7 +4,7 @@
 //! face also picks the joint it turns on. Play turns the driving joint so the coupling shows its
 //! motion before OK.
 
-use crate::ui_kit::{choice_row, expr_row};
+use crate::ui_kit::{StatusTone, choice_row, expr_row, status_line};
 use egui::RichText;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
@@ -133,10 +133,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CouplingForm, inputs:
     let ([role_a, role_b], turn_b) = roles(f.command);
     let (la, lb) = (joints_that(s, true), joints_that(s, turn_b));
     if la.is_empty() || lb.is_empty() {
-        form_row(ui, "", |ui| {
-            let need = if turn_b { "needs two joints that turn" } else { "needs a joint that turns and one that slides" };
-            ui.label(RichText::new(crate::i18n::tr_label(need)).color(t.text_dim));
-        });
+        let need = if turn_b { "needs two joints that turn" } else { "needs a joint that turns and one that slides" };
+        status_line(ui, need, StatusTone::Dim);
         return false;
     }
     // A face picked on a part chooses the joint that part turns on, once.

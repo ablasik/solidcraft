@@ -1,4 +1,6 @@
 {
+  "order": 150,
+  "provenance": "Original SolidCraft mapping of Solarized (MIT palette)",
   "base": "light",
   "colors": {
     "accent": "#268bd2",

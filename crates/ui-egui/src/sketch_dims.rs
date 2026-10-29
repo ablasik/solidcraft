@@ -282,7 +282,12 @@ fn live(app: &SolveApp, t: &Tool, e: Vec2, px: f64) -> Vec<(f64, Vec2)> {
             let a0 = (a - first).angle();
             // Out along the radius, clear of the cursor: a box on it would take the hover and
             // the click meant for a point there (#2201).
-            vec![(((e - first).angle() - a0).rem_euclid(std::f64::consts::TAU), e + dir_or_x(e - first) * (2.5 * off))]
+            // A centre-point arc runs the way the cursor went round (#6645): its sweep is signed.
+            let sweep = match t.cmd {
+                "sketch.arc.center_point" => crate::tools::center_arc_sweep(t, e),
+                _ => ((e - first).angle() - a0).rem_euclid(std::f64::consts::TAU),
+            };
+            vec![(sweep, e + dir_or_x(e - first) * (2.5 * off))]
         }
         ("sketch.conic", 2) => {
             // `rho` is the curve's fullness, not a distance: the conic passes through

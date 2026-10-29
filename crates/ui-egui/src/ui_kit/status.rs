@@ -88,3 +88,65 @@ pub(crate) fn completion_text(ui: &mut egui::Ui, label: &str, complete: bool) ->
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), label));
     response
 }
+
+/// Read-only check row with shared success/warning artwork and token-sized icon.
+pub(crate) fn check_line(ui: &mut egui::Ui, key: &str, label: &str, warning: bool) -> egui::Response {
+    check_status_line(ui, key, label, if warning { CheckStatus::Warning } else { CheckStatus::Ok })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckStatus {
+    Ok,
+    Warning,
+    Error,
+}
+
+impl CheckStatus {
+    /// Plain-text marker for copied check reports.
+    pub(crate) fn text_marker(self) -> &'static str {
+        match self {
+            Self::Ok => "✓",
+            Self::Warning => "!",
+            Self::Error => "×",
+        }
+    }
+}
+
+/// Semantic status glyphs use the same geometry and theme colours in every report.
+pub(crate) fn check_status_line(ui: &mut egui::Ui, key: &str, label: &str, status: CheckStatus) -> egui::Response {
+    let t = Tokens::get();
+    let response = ui
+        .horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(t.form_icon_size, t.form_icon_size), egui::Sense::hover());
+            match status {
+                CheckStatus::Ok => super::checks::paint_check_glyph(ui.painter(), rect, false, t.form_success),
+                CheckStatus::Warning | CheckStatus::Error => {
+                    let ink = if status == CheckStatus::Warning { t.warning } else { t.form_error };
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        if status == CheckStatus::Warning { "!" } else { "×" },
+                        egui::FontId::proportional(t.font_subtitle),
+                        ink,
+                    );
+                }
+            }
+            super::text(ui, label, super::Text::Report(key, false));
+        })
+        .response;
+    crate::scenario::publish_rect(key, response.rect);
+    response
+}
+
+/// Single-row render status for a shared Navigation card. The caller dispatches Cancel.
+pub(crate) fn progress_action(ui: &mut egui::Ui, caption: &str, fraction: f32, cancel: &str) -> egui::Response {
+    let t = Tokens::get();
+    ui.horizontal(|ui| {
+        super::text(ui, caption, super::Text::Inline);
+        ui.allocate_ui_with_layout(vec2(t.space_24 * 6.0, t.control_height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            progress(ui, "render-pill", fraction);
+        });
+        super::button(ui, cancel, super::Button::Normal)
+    })
+    .inner
+}
