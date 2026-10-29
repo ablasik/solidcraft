@@ -439,13 +439,13 @@ fn check_sweep(b: &Body, plane: &Plane, r: &Region2, faces_per_segment: Option<u
 #[test]
 fn sweeps_along_paths() {
     let r = Region2 { outer: rotated(&rect(-2.0, -2.0, 2.0, 2.0).reversed(), 1), holes: vec![] };
-    // A line then a quarter turn (two parts): three faces per segment.
+    // A line then a quarter turn: a face per segment along each path segment.
     let path = [
         PathSeg::Line { a: Vec3::ZERO, b: Vec3::new(0.0, 0.0, 10.0) },
         PathSeg::Arc { a: Vec3::new(0.0, 0.0, 10.0), center: Vec3::new(20.0, 0.0, 10.0), axis: Vec3::Y, angle: FRAC_PI_2 },
     ];
     let b = crate::sweep(&Plane::XY, &r, &path).unwrap();
-    check_sweep(&b, &Plane::XY, &r, Some(3));
+    check_sweep(&b, &Plane::XY, &r, Some(2));
     // Along a smooth 3D path: one wall per segment.
     let curve: Vec<Vec3> = (0..=40)
         .map(|i| {
@@ -468,7 +468,8 @@ fn sweeps_along_paths() {
     check_sweep(&b, &side, &ring, Some(1));
 }
 
-/// Kept faces are their origins, unchanged; each edge an operand still owns is that edge.
+/// Kept faces are their origins, unchanged; each edge an operand still owns is that edge (a new
+/// edge, where two faces meet, has a Meet origin instead).
 fn check_kept(result: &Body, input: &Body) {
     let h = result.history().unwrap();
     h.check(result, &[input]).unwrap();
@@ -482,7 +483,11 @@ fn check_kept(result: &Body, input: &Body) {
     let mut owned = 0;
     for (e, p) in re.iter().zip(&h.edges) {
         for o in &p.origins {
-            let crate::history::EdgeOrigin::Edge { operand: 0, edge } = o else { panic!("{o:?}") };
+            let edge = match o {
+                crate::history::EdgeOrigin::Edge { operand: 0, edge } => edge,
+                crate::history::EdgeOrigin::Meet { .. } => continue,
+                _ => panic!("{o:?}"),
+            };
             assert!(e.mid.dist(ie[*edge].mid) < 1e-6, "edge {}", e.index);
             owned += 1;
         }
@@ -506,12 +511,14 @@ fn thicken_reports_copies_offsets_and_walls() {
     let h = t.history().unwrap();
     assert_eq!(h.faces[0].origins, [FaceOrigin::Face { operand: 0, face: 0 }]);
     assert_eq!(h.faces[1].origins, [FaceOrigin::Offset { operand: 0, face: 0 }]);
-    let free: Vec<usize> = (0..half.edge_count()).collect();
+    // A wall along each free edge of the sheet: the side's two rims, not its seam (an edge the
+    // one face meets itself along, no boundary).
+    let free: Vec<usize> = (0..half.edge_count()).filter(|e| half.record().edges[*e].uses.len() == 1).collect();
     for (i, f) in h.faces.iter().enumerate().skip(2) {
         let [FaceOrigin::Edge { operand: 0, edge }] = f.origins.as_slice() else { panic!("{f:?}") };
         assert_eq!(*edge, nearest_edge(&t, i, &half, &free));
     }
-    assert_eq!(h.faces.len(), 2 + half.edge_count());
+    assert_eq!(h.faces.len(), 2 + free.len());
 }
 
 #[test]

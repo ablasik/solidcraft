@@ -272,7 +272,17 @@ mod imp {
         let m = body.mesh(&crate::MeshTolerance::chord(mesh_tol))?;
         let faces = face_tris(&m);
         let n = body.face_count();
-        let flat_tol = size * 1e-5 + 1e-9;
+        // A cap's points lie on its plane to the evaluation's precision. Sized to the body, the
+        // flatness tolerance can exceed the gap between parallel start and end planes (a box
+        // 0.1 µm thick in a 14 mm body), which would put each cap in both: it stays under a
+        // quarter of that gap. Planes that coincide (the ends of a half turn) are told apart by
+        // the profile's edges instead.
+        let gap = end
+            .filter(|e| e.normal().cross(start.normal()).len() < 1e-9)
+            .map(|e| start.height(e.origin).abs())
+            .filter(|g| *g > size * 1e-9)
+            .unwrap_or(f64::INFINITY);
+        let flat_tol = (size * 1e-5 + 1e-9).min(0.25 * gap);
         let near = 3.0 * mesh_tol + flat_tol;
         let flat = |f: usize, pl: &Plane| {
             faces.get(f).is_some_and(|ft| !ft.tris.is_empty() && ft.tris.iter().all(|(t, _)| t.iter().all(|q| pl.height(*q).abs() <= flat_tol)))
@@ -289,12 +299,22 @@ mod imp {
         let end_cap: Vec<bool> = (0..n).map(|f| end.is_some_and(|e| flat(f, e))).collect();
         let cap = |f: usize| start_cap.get(f).copied().unwrap_or(false) || end_cap.get(f).copied().unwrap_or(false);
         let mut swept: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
-        for (poly, fs) in m.edges.iter().zip(&m.edge_faces) {
-            if poly.len() < 2 || !poly.iter().all(|q| start.height(*q).abs() <= flat_tol) {
-                continue;
-            }
-            for s in edges {
-                if poly.windows(2).any(|w| s.at.dist_to_segment(w[0], w[1]) <= near) {
+        // Each seed lies on its own piece's edge (within the mesh's sag on a curve); `near` is
+        // sized to the body, so on a side shorter than it (a 0.3 mm wall of a 1 m label) the
+        // neighbours' edges are near too. The seed marks only the edges nearest it: the one it
+        // lies on, or both pieces of an edge split at its middle.
+        let start_edges: Vec<(&Vec<Vec3>, &Vec<u32>)> = m
+            .edges
+            .iter()
+            .zip(&m.edge_faces)
+            .filter(|(poly, _)| poly.len() >= 2 && poly.iter().all(|q| start.height(*q).abs() <= flat_tol))
+            .collect();
+        for s in edges {
+            let dist = |poly: &[Vec3]| poly.windows(2).map(|w| s.at.dist_to_segment(w[0], w[1])).fold(f64::INFINITY, f64::min);
+            let ds: Vec<f64> = start_edges.iter().map(|(poly, _)| dist(poly)).collect();
+            let nearest = ds.iter().copied().fold(f64::INFINITY, f64::min);
+            for ((_, fs), d) in start_edges.iter().zip(&ds) {
+                if *d <= near && *d <= nearest + flat_tol {
                     for f in fs.iter().map(|f| *f as usize).filter(|f| !cap(*f)) {
                         if let Some(set) = swept.get_mut(f) {
                             set.insert(s.piece);
@@ -531,17 +551,32 @@ mod imp {
     /// it when `translate`. SMLib's sweep follows a smooth path; at a corner (the direction
     /// jumping) the path is swept piece by piece ([`cornered`]).
     pub(crate) fn sweep(plane: &Plane, pieces: &[Piece], path: &[crate::PathSeg], translate: bool) -> Result<Body> {
+        if translate {
+            // Every segment's direction of travel, at its ends and between them.
+            let bad = || KernelError::Invalid("a path segment has no direction".into());
+            let tangents = path
+                .iter()
+                .flat_map(|s| (0..=CROSSING_SAMPLES).map(move |i| seg_at(s, i as f64 / CROSSING_SAMPLES as f64).map(|(_, t)| t)))
+                .collect::<Option<Vec<Vec3>>>()
+                .ok_or_else(bad)?;
+            crate::sweep_path::crossing_check(plane, &tangents)?;
+        }
         let runs = smooth_runs(path)?;
         if runs.len() > 1 {
             return cornered(plane, pieces, path, &runs, translate);
         }
-        // The motions are not needed here: the profile is at the path's start.
-        let c = curves(plane, pieces)?;
-        let route = path.iter().map(path_curve).collect::<Result<Vec<_>>>()?;
-        let frame = if translate { SweepFrame::Translate } else { SweepFrame::Follow };
-        let brep = Brep::sweep(&c, &route, frame, true).map_err(|e| failed("sweep", e))?;
+        let (brep, [_, middle, last]) = swept(plane, pieces, path, translate)?;
         let body = body_of(&brep, "sweep")?;
-        let roles = roles(&body, plane, None, &seeds(plane, pieces, |q| q), &[], true)?;
+        // The walls known by the profile carried half way (past the start's edges: a wall the
+        // start touches by no edge, as round a closed path, and walls along later path segments).
+        let inside = seeds(plane, pieces, |q| apply(&middle, q));
+        let start = path.first().map(crate::PathSeg::start);
+        let end = path.last().map(seg_ends).transpose()?.map(|(_, b)| b);
+        let roles = match (start, end) {
+            // Round a closed path there are no caps, and the start holds seams only.
+            (Some(a), Some(b)) if a.dist(b) <= 1e-6 => roles(&body, &plane.offset(body.size().max(1e-9) * 10.0), None, &[], &inside, false)?,
+            _ => roles(&body, plane, Some(&placed(plane, &last)), &seeds(plane, pieces, |q| q), &inside, false)?,
+        };
         with_history(body, &roles, pieces)
     }
 
@@ -827,6 +862,8 @@ mod imp {
 
     /// Fewest and most stations of a sweep that twists, scales or follows rails.
     const MIN_STATIONS: usize = 16;
+    /// Directions of travel read along each path segment for the parallel sweep's crossing check.
+    const CROSSING_SAMPLES: usize = 32;
     const MAX_STATIONS: usize = 2048;
 
     /// The profile `region` on `plane` swept along the smooth `path` the way `ctl` asks: twisted,
