@@ -14,8 +14,9 @@ repository = "https://github.com/bherbruck/solidcraft"
 
 [workspace.dependencies]
 robust = "1.2"
-# The pure-Rust kernel behind the `solidcore` feature, pinned to tangency-labs/solidcore main.
-solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "881b040f9664b6d3e3cacac1834e5be6036d311d" }
+# The pure-Rust kernel behind the `solidcore` feature, pinned to the branch of tangency-labs/solidcore#1545
+# (the fixes the backend needs). It moves back to tangency-labs/solidcore main once #1545 merges.
+solidcore = { git = "https://github.com/ablasik/solidcore", rev = "f855ba9f038e3b48b892b01122014c47fec8a82a" }
 # internal
 solidcraft-geom = { path = "crates/geom" }
 solidcraft-profile = { path = "crates/profile" }
@@ -157,6 +158,3 @@ egui-wgpu = { path = "vendor/egui-wgpu" }
 [profile.mutants]
 inherits = "ci"
 incremental = true
-
-[patch."https://github.com/tangency-labs/solidcore"]
-solidcore = { path = "../solidcore-with-our-fixes/crates/solidcore" }

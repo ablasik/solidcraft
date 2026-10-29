@@ -1,6 +1,6 @@
 //! Extrusion, revolution and sweeps on solidcore. The profile's curve list becomes `solidcore` curves
 //! (lines, arcs and circles placed on their planes, NURBS curves); a drafted extrusion is built
-//! only from one whole circle, any other is refused ([`ERR_UNSUPPORTED`]).
+//! only from one whole circle or a polygon of lines (not `Round`), any other is refused ([`ERR_UNSUPPORTED`]).
 use solidcore::curve::curve::Curve;
 use solidcore::curve::curve::p2::CurveKind;
 use solidcore::geom::axis2_placement::Axis2Placement;
@@ -18,14 +18,15 @@ use solidcore::sweep::api_brep::{create_curve_sweep, create_linear_sweep, create
 use solidcore::sweep::api_surfaces::create_skin_primitive;
 use solidcore::topology::brep::p2::{ArenaNotifyState, is_manifold_solid};
 use solidcore::topology::brep::p3::new_brep;
-use solidcore::topology::brep::p8::{FaceBuildEnv, create_planar_faces_with_3d_curves};
+use solidcore::topology::brep::p5::{StitchAndOrientOptions, stitch_and_orient};
+use solidcore::topology::brep::p8::{FaceBuildEnv, create_planar_face_with_3d_curves, create_planar_faces_with_3d_curves};
 use solidcore::topology::proto_topology::p1::api_transform::{TransformObject, transform_independent_object};
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::{EntityRef, FaceId};
 
 use super::ops::{ERR_NOT_SOLID, ERR_UNSUPPORTED};
 use super::rs::{state, status};
-use super::sweeps::{CURVE_ARC, CURVE_LINE, CURVE_NURBS, List};
+use super::sweeps::{DRAFT_CORNER_ROUND, CURVE_ARC, CURVE_LINE, CURVE_NURBS, List};
 use super::{ERR_ARG, Handle};
 
 fn point(a: &[f64]) -> Result<Point3, i32> {
@@ -140,19 +141,33 @@ fn finish(b: solidcore::Brep, cap: bool) -> Result<Handle, i32> {
     Ok(Handle::new(b))
 }
 
-pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, _corner: i32, cap: bool, _at: &mut [f64; 3]) -> Result<Handle, i32> {
+pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, corner: i32, cap: bool, _at: &mut [f64; 3]) -> Result<Handle, i32> {
     if !distance.is_finite() || direction.iter().any(|v| !v.is_finite()) || !draft.is_finite() {
         return Err(ERR_ARG);
     }
     if draft != 0.0 {
         // A taper needs the native shim's corner refusals (a corner that cannot close) and its
         // curvature rule, which solidcore's taper extrusion lacks. Both are moot for one whole
-        // circle, which has no corner: that is built, any other profile is refused.
+        // circle, which has no corner, and for a polygon of lines, whose corners all close by
+        // continuing the lines (or by an arc for `Round`): those are built, any other profile
+        // is refused.
         let records = records(profile);
-        let [(CURVE_ARC, r)] = records.as_slice() else { return Err(ERR_UNSUPPORTED) };
-        let (axis, dir) = (Vec3::new(r[3], r[4], r[5]), Vec3::new(direction[0], direction[1], direction[2]));
-        if r[11] - r[10] < std::f64::consts::TAU - 1e-12 {
-            return Err(ERR_UNSUPPORTED);
+        let circle = match records.as_slice() {
+            [(CURVE_ARC, r)] if r[11] - r[10] >= std::f64::consts::TAU - 1e-12 => Some(r),
+            rs if rs.iter().all(|(k, _)| *k == CURVE_LINE) => None,
+            _ => return Err(ERR_UNSUPPORTED),
+        };
+        let dir = Vec3::new(direction[0], direction[1], direction[2]);
+        // The normal the extrusion computes: a circle's axis, a polygon's winding (Newell).
+        let axis = match circle {
+            Some(r) => Vec3::new(r[3], r[4], r[5]),
+            None => records.iter().try_fold(Vec3::ZERO, |n, (_, r)| {
+                let (a, b) = (point(r)?, point(&r[3..])?);
+                Ok::<_, i32>(n + Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)))
+            })?,
+        };
+        if !(axis.length() > 0.0) {
+            return Err(ERR_ARG);
         }
         if !(draft.abs() < std::f64::consts::FRAC_PI_2 - 1e-6) || !(distance > 1e-9) {
             return Err(ERR_ARG);
@@ -162,11 +177,27 @@ pub fn extrude(profile: &List, direction: &[f64; 3], distance: f64, draft: f64, 
         if along.abs() < 1.0 - 1e-9 {
             return Err(ERR_ARG);
         }
+        if circle.is_none() {
+            if corner == DRAFT_CORNER_ROUND || !cap {
+                return Err(ERR_UNSUPPORTED);
+            }
+            let ring = records.iter().map(|(_, r)| point(r)).collect::<Result<Vec<_>, i32>>()?;
+            let (dir, n) = (dir / dir.length(), axis / axis.length());
+            let top = taper_ring(&ring, n, -distance * draft.tan()).ok_or(ERR_UNSUPPORTED)?;
+            let lift = dir * distance;
+            let top: Vec<Point3> = top.iter().map(|p| *p + lift).collect();
+            let mut loops = vec![ring.clone(), top.clone()];
+            loops.extend((0..ring.len()).map(|i| {
+                let j = (i + 1) % ring.len();
+                vec![ring[i], ring[j], top[j], top[i]]
+            }));
+            return stitched_solid(&loops);
+        }
         let mut s = state();
         let cs = curves(&mut s.kernel, profile)?;
         let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
         let height = if along > 0.0 { distance } else { -distance };
-        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, false).map_err(|e| status(&e))?;
+        let b = create_taper_extrude(&mut s.kernel, &refs, height, draft.to_degrees(), if cap { 3 } else { 0 }, corner == DRAFT_CORNER_ROUND).map_err(|e| status(&e))?;
         return finish(b, cap);
     }
     let mut s = state();
@@ -469,4 +500,205 @@ fn curve_sweep_motions(
         placed.get_mut(12 * slot..12 * slot + 12).ok_or(ERR_ARG)?.copy_from_slice(&motion(i)?);
     }
     Ok(())
+}
+
+/// A pyramid: the base is the planar closed loop of lines `section` (in order), a triangle runs
+/// from each line to `apex`, as `create_pyramid` builds its faces and stitches them into a solid.
+/// A curved or open base, or an apex in the base's plane, is an argument error.
+pub fn loft_to_point(section: &List, apex: &[f64; 3]) -> Result<Handle, i32> {
+    if section.reals().iter().chain(apex).any(|v| !v.is_finite()) || section.kinds().iter().any(|&k| k != CURVE_LINE) {
+        return Err(ERR_ARG);
+    }
+    let lines = records(section);
+    let ends: Vec<(Point3, Point3)> = lines.iter().map(|(_, r)| Ok((point(r)?, point(&r[3..])?))).collect::<Result<_, i32>>()?;
+    let scale = ends.iter().fold(0.0_f64, |m, (a, b)| m.max(a.length()).max(b.length())).max(apex.iter().fold(0.0_f64, |m, v| m.max(v.abs())));
+    let closed = ends.len() >= 3 && ends.iter().zip(ends.iter().cycle().skip(1)).all(|((_, e), (s, _))| (*e - *s).length() <= 1e-9 * scale.max(1.0));
+    if !closed {
+        return Err(ERR_ARG);
+    }
+    // Newell's normal of the loop; every corner and not the apex must lie in its plane.
+    let (mut n, mut o) = (Vec3::ZERO, Vec3::ZERO);
+    for (a, b) in &ends {
+        n = n + Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+        o = o + Vec3::new(a.x, a.y, a.z);
+    }
+    let len = n.length();
+    let o = o / ends.len() as f64;
+    let eps = 1e-9 * scale.max(1.0);
+    if !(len > 0.0) || ends.iter().any(|(a, _)| (Vec3::new(a.x, a.y, a.z) - o).dot(n / len).abs() > eps) {
+        return Err(ERR_ARG);
+    }
+    let top = Point3::new(apex[0], apex[1], apex[2]);
+    if (Vec3::new(top.x, top.y, top.z) - o).dot(n / len).abs() <= eps {
+        return Err(ERR_ARG);
+    }
+    let mut loops = vec![ends.iter().map(|(a, _)| *a).collect::<Vec<_>>()];
+    loops.extend(ends.iter().map(|(a, b)| vec![*a, *b, top]));
+    stitched_solid(&loops)
+}
+
+/// A solid from planar polygons (corner lists, closed): a planar face on each, stitched and oriented.
+fn stitched_solid(loops: &[Vec<Point3>]) -> Result<Handle, i32> {
+    let mut s = state();
+    let mut b = new_brep(&mut s.kernel, tol::USE_DEFAULT, tol::USE_DEFAULT).map_err(|e| status(&e))?;
+    let region = b.infinite_region();
+    let mut notify = ArenaNotifyState::new(&b);
+    let mut env = notify.env(None);
+    let key_of: &dyn Fn(EntityRef) -> ObjectRef = env.key_of;
+    let this_face = |f: FaceId| key_of(EntityRef::Face(f));
+    let mut marks = Marks::default();
+    let mut fenv = FaceBuildEnv { env: &mut env, marks: &mut marks, this_face: &this_face };
+    for corners in loops {
+        let lines = (0..corners.len())
+            .map(|i| {
+                let (a, b) = (corners.get(i).ok_or(ERR_ARG)?, corners.get((i + 1) % corners.len()).ok_or(ERR_ARG)?);
+                Ok(Curve::from(create_line_segment(*a, *b).map_err(|e| status(&e))?))
+            })
+            .collect::<Result<Vec<_>, i32>>()?;
+        create_planar_face_with_3d_curves(&mut s.kernel, &mut b, region, &lines, 1.0e-5, &mut fenv).map_err(|e| status(&e))?;
+    }
+    stitch_and_orient(&mut s.kernel, &mut b, &StitchAndOrientOptions::default()).map_err(|e| status(&e))?;
+    b.refresh_cached_topology();
+    finish(b, true)
+}
+
+/// The polygon `ring` (in order, normal `n` by its winding) offset by `d` in its plane, outward when
+/// positive, each corner moved to where the offset edges cross. `None` where an edge would
+/// collapse or turn round (an inward offset past what the shape allows) or a corner is a reversal.
+fn taper_ring(ring: &[Point3], n: Vec3, d: f64) -> Option<Vec<Point3>> {
+    let m = ring.len();
+    let edge = |i: usize| -> Option<Vec3> {
+        let (a, b) = (ring.get(i)?, ring.get((i + 1) % m)?);
+        let e = Vec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+        (e.length() > 0.0).then(|| e / e.length())
+    };
+    let out = |i: usize| edge(i).map(|e| e.cross(n));
+    let mut top = Vec::with_capacity(m);
+    for i in 0..m {
+        let (o0, o1) = (out((i + m - 1) % m)?, out(i)?);
+        let k = 1.0 + o0.dot(o1);
+        if k < 1e-9 {
+            return None;
+        }
+        let (p, s) = (ring.get(i)?, (o0 + o1) * (d / k));
+        top.push(Point3::new(p.x + s.x, p.y + s.y, p.z + s.z));
+    }
+    // Every offset edge must still run the way its edge does.
+    for i in 0..m {
+        let (a, b) = (top.get(i)?, top.get((i + 1) % m)?);
+        let e = Vec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+        if e.dot(edge(i)?) <= 1e-9 {
+            return None;
+        }
+    }
+    Some(top)
+}
+
+/// `v` turned by `angle` about the unit `axis` (Rodrigues).
+fn turned(v: Vec3, axis: Vec3, angle: f64) -> Vec3 {
+    let (s, c) = angle.sin_cos();
+    v * c + axis.cross(v) * s + axis * (axis.dot(v) * (1.0 - c))
+}
+
+/// The offset at turn `t` of the piecewise linear `law` of (turn, offset) pairs, held at its ends.
+fn offset_at(law: &[f64], t: f64) -> f64 {
+    let pairs: Vec<(f64, f64)> = law.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    let (Some(&(t0, o0)), Some(&(t1, o1))) = (pairs.first(), pairs.last()) else { return 0.0 };
+    if t <= t0 {
+        return o0;
+    }
+    if t >= t1 {
+        return o1;
+    }
+    pairs.windows(2).find(|w| t <= w[1].0).map_or(o1, |w| w[0].1 + (w[1].1 - w[0].1) * (t - w[0].0) / (w[1].0 - w[0].0))
+}
+
+/// Screw sweep: the profile placed at stations along its screw motion, skinned through them
+/// (cubic across) and capped. The stations are close enough that the cubic skin stays about
+/// `tolerance` from the true helicoidal walls (a cubic's error over a step `d` of a circle of
+/// radius `R` is about `R d^4 / 384`), between 2 and 15 degrees apart. `law` is the radial offset
+/// per turn of [`screw_sweep_radial`](super::sweeps::screw_sweep_radial), empty for none.
+fn screw(profile: &List, origin: &[f64; 3], direction: &[f64; 3], pitch: f64, turns: f64, law: &[f64], tolerance: f64) -> Result<Handle, i32> {
+    let axis_len = Vec3::new(direction[0], direction[1], direction[2]).length();
+    if profile.reals().iter().chain(origin).chain(direction).any(|v| !v.is_finite()) || !(axis_len > 1e-12) {
+        return Err(ERR_ARG);
+    }
+    if !(pitch.is_finite() && pitch != 0.0 && turns.is_finite() && turns > 0.0 && tolerance.is_finite() && tolerance > 0.0) {
+        return Err(ERR_ARG);
+    }
+    let pairs: Vec<(f64, f64)> = law.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    if pairs.iter().any(|&(t, o)| !(t >= 0.0 && t <= turns && o.is_finite())) || pairs.windows(2).any(|w| !(w[0].0 < w[1].0)) {
+        return Err(ERR_ARG);
+    }
+    let o = Point3::new(origin[0], origin[1], origin[2]);
+    let axis = Vec3::new(direction[0], direction[1], direction[2]) / axis_len;
+    let rel = |p: Vec3| p - Vec3::new(o.x, o.y, o.z);
+    // Points that bound the profile's distance from the axis and give its half-plane's radial.
+    let mut marks: Vec<Vec3> = Vec::new();
+    let mut reach = 0.0_f64;
+    for (kind, r) in records(profile) {
+        match kind {
+            CURVE_LINE => marks.extend([vector(r)?, vector(&r[3..])?]),
+            CURVE_ARC => {
+                let c = vector(r)?;
+                marks.push(c);
+                reach = reach.max(r[9].abs());
+            }
+            // ponytail: a NURBS curve's first control point only; a long one may reach further.
+            _ => marks.push(vector(r)?),
+        }
+    }
+    let radial_of = |p: Vec3| {
+        let d = rel(p);
+        d - axis * axis.dot(d)
+    };
+    let radial = marks.iter().map(|&p| radial_of(p)).find(|d| d.length() > 1e-9).map(|d| d / d.length()).unwrap_or(Vec3::ZERO);
+    let reach = reach + marks.iter().map(|&p| radial_of(p).length()).fold(0.0, f64::max);
+    let total = turns * std::f64::consts::TAU;
+    let step = (384.0 * tolerance / reach.max(1e-9)).powf(0.25).clamp(2.0_f64.to_radians(), 15.0_f64.to_radians());
+    let n = ((total / step).ceil() as usize).clamp(2, 4096);
+    let mut s = state();
+    let base = curves(&mut s.kernel, profile)?;
+    let mut all: Vec<Curve> = Vec::with_capacity(base.len() * (n + 1));
+    for i in 0..=n {
+        let f = i as f64 / n as f64;
+        let (angle, t) = (total * f, turns * f);
+        let (shift, lift) = (radial * offset_at(law, t), axis * (pitch * t));
+        // Where the motion sends the origin and the unit vectors (the shift comes first, then the turn).
+        let at = |p: Vec3| {
+            let q = turned(rel(p) + shift, axis, angle) + lift;
+            Vec3::new(o.x, o.y, o.z) + q
+        };
+        let zero = at(Vec3::ZERO);
+        let placement = Axis2Placement::new(Point3::new(zero.x, zero.y, zero.z), at(Vec3::X) - zero, at(Vec3::Y) - zero);
+        for c in &base {
+            let mut c = c.clone();
+            transform_independent_object(&mut s.kernel, Some(TransformObject::Curve(&mut c)), &placement, None).map_err(|e| status(&e))?;
+            all.push(c);
+        }
+    }
+    let refs: Vec<Option<&Curve>> = all.iter().map(Some).collect();
+    let sizes = vec![base.len(); n + 1];
+    let b = create_skin_primitive(&mut s.kernel, &sizes, &refs, 3, true).map_err(|e| status(&e))?.brep;
+    finish(b, true)
+}
+
+pub fn screw_sweep(profile: &List, origin: &[f64; 3], direction: &[f64; 3], pitch: f64, turns: f64, tolerance: f64) -> Result<Handle, i32> {
+    screw(profile, origin, direction, pitch, turns, &[], tolerance)
+}
+
+/// `law` holds (turn, offset) pairs.
+pub fn screw_sweep_radial(
+    profile: &List,
+    origin: &[f64; 3],
+    direction: &[f64; 3],
+    pitch: f64,
+    turns: f64,
+    law: &[f64],
+    tolerance: f64,
+) -> Result<Handle, i32> {
+    if !law.len().is_multiple_of(2) {
+        return Err(ERR_ARG);
+    }
+    screw(profile, origin, direction, pitch, turns, law, tolerance)
 }

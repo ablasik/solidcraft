@@ -190,7 +190,11 @@ fn solidcore_extrudes_straight_and_refuses_hostile_input() {
     assert_close(solid_volume(&b, "prism"), 300.0, 1e-9, "prism");
     let disc = Brep::extrude(&[circle([1.0, 2.0, 3.0], 5.0)], [0.0, 0.0, 1.0], 4.0, 0.0, DraftCorner::default(), true).unwrap();
     assert_close(solid_volume(&disc, "cylinder"), PI * 25.0 * 4.0, 1e-6, "cylinder");
-    assert_eq!(Brep::extrude(&rect, [0.0, 0.0, 1.0], 5.0, 0.1, DraftCorner::default(), true).err(), Some(Error::Unsupported));
+    // A drafted polygon is a prismoid: its top is the outline mitred in by 5 tan(0.1).
+    let d = 5.0 * 0.1_f64.tan();
+    let drafted = Brep::extrude(&rect, [0.0, 0.0, 1.0], 5.0, 0.1, DraftCorner::default(), true).unwrap();
+    let area = |k: f64| (10.0 - 2.0 * d * k) * (6.0 - 2.0 * d * k);
+    assert_close(solid_volume(&drafted, "prismoid"), 5.0 / 6.0 * (area(0.0) + 4.0 * area(0.5) + area(1.0)), 1e-9, "prismoid");
     let nan = [Curve::Line { start: [0.0, f64::NAN, 0.0], end: [1.0, 0.0, 0.0] }];
     assert_eq!(Brep::extrude(&nan, [0.0, 0.0, 1.0], 1.0, 0.0, DraftCorner::default(), true).err(), Some(Error::Argument));
     assert_eq!(Brep::revolve(&rect, [0.0; 3], [0.0, 1.0, 0.0], 7.0, true).err(), Some(Error::Argument));

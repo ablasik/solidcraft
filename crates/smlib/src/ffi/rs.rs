@@ -54,9 +54,11 @@ pub(super) struct State {
 /// `SOLIDCORE_FIXES=all` (or a comma list of field names) turns on more opt-in upstream fixes (`UpstreamFixes`) than the always-on ones, for measuring them.
 fn new_kernel() -> Kernel {
     let mut k = Kernel::default();
-    // Always on: a blend whose ball does not fit its faces (WR-462) is refused as too large, so a taper can take over, where upstream fails with status 1001; and a trace step that lands far short of its aim is not the next point (WR-500).
+    // Always on: a blend whose ball does not fit its faces (WR-462) is refused as too large, so a taper can take over, where upstream fails with status 1001; and a trace step that lands far short of its aim is not the next point (WR-503).
     k.fixes.fillet_refuse_ball_not_fitting = true;
     k.fixes.fillet_trace_rejects_short_step = true;
+    // Not upstream, and wanted always: four equal rounds meeting at a point get the sphere through their arcs.
+    k.fixes.fillet_corner_sphere_from_four_arcs = true;
     let spec = std::env::var("SOLIDCORE_FIXES").unwrap_or_default();
     for name in spec.split(',') {
         let all = name == "all";
