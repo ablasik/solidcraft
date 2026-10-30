@@ -265,8 +265,10 @@ fn at<T: Copy>(a: &[T], k: usize, what: &str) -> Res<T> {
 fn idx(x: i64, n: usize, what: &str) -> Res<usize> {
     usize::try_from(x).ok().filter(|i| *i < n).ok_or_else(|| invalid(format!("{what}: {x} out of range")))
 }
+/// A count in the arrays: at most SMLib's longest array ([`flat::MAX_LEN`], checked on entry), as
+/// no block is longer than the array it lies in, so offsets worked out from counts cannot overflow.
 fn count(x: i64, what: &str) -> Res<usize> {
-    usize::try_from(x).ok().filter(|n| *n <= b::MAX_ITEMS).ok_or_else(|| invalid(format!("{what}: count {x}")))
+    usize::try_from(x).ok().filter(|n| *n <= flat::MAX_LEN).ok_or_else(|| invalid(format!("{what}: count {x}")))
 }
 fn index(i: usize) -> Res<u32> {
     u32::try_from(i).map_err(|_| invalid("index"))
@@ -320,7 +322,7 @@ fn surfaces(flat: View, n_faces: usize) -> Res<Vec<(b::Surface, Option<b::Surfac
         let nv = count(at(flat.i(FACE_NURBS_V_VERTEX_COUNT), j, "NURBS face")?, "NURBS face")?;
         let ou = count(at(flat.i(FACE_NURBS_U_ORDER), j, "NURBS face")?, "NURBS face")?;
         let ov = count(at(flat.i(FACE_NURBS_V_ORDER), j, "NURBS face")?, "NURBS face")?;
-        let n = nu.checked_mul(nv).filter(|n| *n <= b::MAX_ITEMS).ok_or_else(|| invalid("NURBS face size"))?;
+        let n = nu.checked_mul(nv).filter(|n| *n <= flat::MAX_LEN).ok_or_else(|| invalid("NURBS face size"))?;
         let slice = |v: &[f64], from: usize, len: usize| v.get(from..from + len).map(<[f64]>::to_vec).ok_or_else(|| invalid("NURBS face arrays"));
         let pts = slice(flat.f(FACE_NURBS_CVS), 3 * at_.cv, 3 * n)?;
         let u_knots = slice(flat.f(FACE_NURBS_U_KNOTS), at_.uk, nu + ou)?;
@@ -531,11 +533,14 @@ fn curves(flat: View, n_edges: usize) -> Res<(Vec<(b::Curve, Option<b::Curve>, [
                 }
             }
             CURVE_NURBS => {
-                let c = next_nurbs()?;
+                let c = next_nurbs()?.record();
                 // A NURBS edge stays the NURBS SMLib holds, its trims on its own parameter: SMLib
                 // gives lines, circles and ellipses as their own kinds, and nothing is recognised here.
+                // SMLib's interval may start or end a rounding past its knots (a variable round's
+                // end trimmed by a cylinder, ladder 07-fillets/012: 7e-15 before the first knot).
                 kept += 1;
-                (c.record(), None, r, Some([1.0, 0.0]))
+                let r = onto(r, c.natural());
+                (c, None, r, Some([1.0, 0.0]))
             }
             other => return Err(unsupported(format!("SMLib curve kind {other}"))),
         });
@@ -626,8 +631,8 @@ fn mapped(trim: &b::Curve2, same: bool, [scale, offset]: [f64; 2], [t0, t1]: [f6
     })
 }
 
-/// A domain side moved onto the natural range where it overshoots it by rounding (a sphere's
-/// latitudes, a cone's apex).
+/// A domain side or an edge's interval moved onto the natural range where it overshoots it by
+/// rounding (a sphere's latitudes, a cone's apex, a NURBS edge's end knots).
 fn onto(r: [f64; 2], natural: b::Natural) -> [f64; 2] {
     match natural {
         b::Natural::Range(lo, hi) => {
@@ -736,7 +741,6 @@ fn native_ordered(arrays: &Arrays) -> Res<(b::Brep, Report, Order)> {
         || flat.i(EDGEUSE_ORIENTATION).len() != n_edgeuses
         || flat.i(LOOP_VERTEX).len() != n_loops
         || flat.i(EDGE_VERTICES).len() != 2 * n_edges
-        || [n_faceuses, n_faces, n_loops, n_edgeuses, n_edges, n_vertices].iter().any(|n| *n > b::MAX_ITEMS)
     {
         return Err(invalid("array lengths"));
     }
@@ -1255,6 +1259,10 @@ fn canonical(parts: Parts, n_vertices: usize, flat: View, tolerances: &Tolerance
             uses,
         });
     }
+    let record_geometry = |e: u32| {
+        let edge = edge_records.get(e as usize)?;
+        Some(EdgeGeometry { curve: edge.nurbs.as_ref().unwrap_or(&edge.curve), interval: edge.interval, tolerance: edge.tolerance })
+    };
     let mut face_records = Vec::with_capacity(face_order.len());
     for (fi, &f) in face_order.iter().enumerate() {
         let face = faces.get(f as usize).ok_or_else(|| invalid("face"))?;
@@ -1267,7 +1275,7 @@ fn canonical(parts: Parts, n_vertices: usize, flat: View, tolerances: &Tolerance
             })
             .collect::<Res<_>>()?;
         let mut curves =
-            pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &renumbered, &face.given, &edge_records, tolerance)?.into_iter();
+            pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &renumbered, &face.given, record_geometry, tolerance)?.into_iter();
         let mut loops = Vec::with_capacity(renumbered.len());
         for (li, l) in renumbered.iter().enumerate() {
             loops.push(match l {
@@ -1306,7 +1314,7 @@ fn canonical(parts: Parts, n_vertices: usize, flat: View, tolerances: &Tolerance
         })
         .collect::<Res<Vec<_>>>()?;
     let brep = b::Brep { version: b::VERSION, tolerance, regions, shells, faces: face_records, edges: edge_records, vertices };
-    brep.validate().map_err(|e| invalid(format!("the mapped B-rep does not validate: {e}")))?;
+    brep.validate_built().map_err(|e| invalid(format!("the mapped B-rep does not validate: {e}")))?;
     let placed = |new: &[Option<u32>]| {
         new.iter().map(|i| i.map(|i| i as usize).ok_or_else(|| invalid("an entity outside the canonical walk"))).collect::<Res<Vec<_>>>()
     };
@@ -1528,15 +1536,23 @@ fn split_touching(faces: &mut [Face], edges: &mut Vec<Edge>, edge_source: &mut V
     Ok(())
 }
 
+/// What the pcurve routine needs of one edge: the curve its parameter is on, its interval and its
+/// tolerance.
+struct EdgeGeometry<'a> {
+    curve: &'a b::Curve,
+    interval: [f64; 2],
+    tolerance: f64,
+}
+
 /// A face's pcurves, edge loop by edge loop: SMLib's own UV trims where `given` (loop by loop as
 /// `loops`) has them, the plain-record routine on the face's records for the rest; each loop moved
-/// by whole periods into the face's domain.
-fn pcurves(
+/// by whole periods into the face's domain. `edge` looks up an edge of `loops` by its index.
+fn pcurves<'a>(
     surface: &b::Surface,
     domain: [[f64; 2]; 2],
     loops: &[Loop],
-    given: &[Vec<Option<b::Curve2>>],
-    edges: &[b::Edge],
+    given: &'a [Vec<Option<b::Curve2>>],
+    edge: impl Fn(u32) -> Option<EdgeGeometry<'a>>,
     tolerance: f64,
 ) -> Res<Vec<Vec<b::Curve2>>> {
     if given.len() != loops.len() {
@@ -1550,13 +1566,13 @@ fn pcurves(
         }
         let mut loop_uses = Vec::with_capacity(l.len());
         for (&(e, forward), given) in l.iter().zip(g) {
-            let edge = edges.get(e as usize).ok_or_else(|| invalid("edge"))?;
+            let geometry = edge(e).ok_or_else(|| invalid("edge"))?;
             loop_uses.push(b::pcurve::EdgeUse {
                 edge: e,
-                curve: edge.nurbs.as_ref().unwrap_or(&edge.curve),
-                interval: edge.interval,
+                curve: geometry.curve,
+                interval: geometry.interval,
                 forward,
-                tolerance: edge.tolerance,
+                tolerance: geometry.tolerance,
                 given: given.as_ref(),
             });
         }
@@ -1571,12 +1587,12 @@ fn pcurves(
 /// (positive: counter-clockwise, the record's convention); 0 where it has no edge loop.
 fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
     let Some(Loop::Edges(outer)) = face.loops.first() else { return Ok(0.0) };
-    let records: Vec<b::Edge> = edges
-        .iter()
-        .map(|e| b::Edge { nurbs: e.nurbs.clone(), curve: e.curve.clone(), interval: e.interval, vertices: e.vertices, tolerance, uses: Vec::new() })
-        .collect();
+    let geometry = |e: u32| {
+        let edge = edges.get(e as usize)?;
+        Some(EdgeGeometry { curve: edge.nurbs.as_ref().unwrap_or(&edge.curve), interval: edge.interval, tolerance })
+    };
     let given = face.given.first().map(std::slice::from_ref).unwrap_or(&[]);
-    let curves = pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &[Loop::Edges(outer.clone())], given, &records, tolerance)?;
+    let curves = pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &[Loop::Edges(outer.clone())], given, geometry, tolerance)?;
     let mut pts: Vec<[f64; 2]> = Vec::new();
     for (pc, &(e, forward)) in curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer) {
         let edge = edges.get(e as usize).ok_or_else(|| invalid("edge"))?;

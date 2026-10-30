@@ -741,19 +741,42 @@ fn a_reversed_face_is_walked_backwards() {
     b.validate().unwrap();
 }
 
+/// A valid record of more than [`MAX_ITEMS`] items: the sheet with its first edge a polyline of
+/// that many points (#3992).
+fn over_the_item_budget() -> Brep {
+    let mut b = sheet();
+    b.edges[0].curve = Curve::Polyline { points: (0..MAX_ITEMS).map(|i| [i as f64 * 1e-6, 0., 0.]).collect() };
+    b
+}
+
+#[test]
+fn the_item_budget_bounds_input_records_and_not_the_kernels_own() {
+    // A record from a file or the control channel is refused past the budget; the same record
+    // built by the kernel in memory (a boolean's result) is its own size and is taken (#3992).
+    let big = over_the_item_budget();
+    assert_eq!(big.validate().map_err(|e| e.0), Err("item budget"));
+    big.validate_built().unwrap();
+    // Every other check still holds for a built record.
+    let mut collapsed = big;
+    if let Curve::Polyline { points } = &mut collapsed.edges[0].curve {
+        points[1] = points[0];
+    }
+    assert_eq!(collapsed.validate_built().map_err(|e| e.0), Err("collapsed polyline segment"));
+}
+
 #[test]
 fn spline_domains_weights_and_nesting_are_bounded() {
-    let mut budget = Budget(0);
+    let mut budget = Budget::input();
     assert!(knots(&[0., 0., 1., 1.], 2, &mut budget).is_ok());
     for bad in [vec![0., 0., 0., 0.], vec![0., 1., 0., 1.], vec![0., 0., f64::INFINITY, 1.]] {
-        assert!(knots(&bad, 2, &mut Budget(0)).is_err());
+        assert!(knots(&bad, 2, &mut Budget::input()).is_err());
     }
     let c = Curve::RationalSpline { knots: vec![0., 0., 1., 1.], homogeneous: vec![[0., 0., 0., 0.], [1., 0., 0., 1.]] };
-    assert!(curve(&c, 0, &mut Budget(0)).is_err());
+    assert!(curve(&c, 0, &mut Budget::input()).is_err());
     let p = Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [2., 0., 0.] };
-    assert!(surface(&p, 0, &mut Budget(0)).is_err());
-    assert!(curve(&Curve::Line { start: [0.; 3], end: [1.; 3] }, MAX_DEPTH + 1, &mut Budget(0)).is_err());
-    assert!(Budget(MAX_ITEMS).add(1).is_err());
+    assert!(surface(&p, 0, &mut Budget::input()).is_err());
+    assert!(curve(&Curve::Line { start: [0.; 3], end: [1.; 3] }, MAX_DEPTH + 1, &mut Budget::input()).is_err());
+    assert!(Budget { used: MAX_ITEMS, limit: MAX_ITEMS }.add(1).is_err());
     assert_eq!(curve_natural(&Curve::Spline { knots: vec![0., 0., 0., 1., 2., 2., 2.], points: vec![[0.; 3]; 4] }), Natural::Range(0., 2.));
 }
 
@@ -762,7 +785,7 @@ fn exact_procedural_records_are_validated_and_round_trip() {
     let plane = |z: f64| Box::new(Surface::Plane { origin: [0., 0., z], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] });
     let leader = Box::new(Curve::Polyline { points: vec![[0.; 3], [0.; 3], [1., 0., 0.]] });
     let c = Curve::SurfaceIntersection { surfaces: [plane(0.), plane(1.)], leader: leader.clone(), tolerance: 1e-6 };
-    curve(&c, 0, &mut Budget(0)).unwrap();
+    curve(&c, 0, &mut Budget::input()).unwrap();
     assert_eq!(curve_natural(&c), Natural::Range(0., 2.));
     assert_eq!(serde_json::from_str::<Curve>(&serde_json::to_string(&c).unwrap()).unwrap(), c);
     let line = Box::new(Curve::Line { start: [0.; 3], end: [1.; 3] });
@@ -771,17 +794,17 @@ fn exact_procedural_records_are_validated_and_round_trip() {
         Curve::SurfaceIntersection { surfaces: [plane(0.), plane(1.)], leader: leader.clone(), tolerance: f64::NAN },
         Curve::SurfaceIntersection { surfaces: [plane(f64::INFINITY), plane(1.)], leader, tolerance: 1e-6 },
     ] {
-        assert!(curve(&bad, 0, &mut Budget(0)).is_err());
+        assert!(curve(&bad, 0, &mut Budget::input()).is_err());
     }
     let identity = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]];
     let s = Surface::PlacedRevolution { profile: line.clone(), origin: [0.; 3], axis: [0., 0., 1.], matrix: identity, forward: false };
-    surface(&s, 0, &mut Budget(0)).unwrap();
+    surface(&s, 0, &mut Budget::input()).unwrap();
     assert_eq!(surface_natural(&s), [Natural::Periodic, UNBOUNDED]);
     assert_eq!(serde_json::from_str::<Surface>(&serde_json::to_string(&s).unwrap()).unwrap(), s);
     let mut flat = identity;
     flat[2] = [0.; 4];
     let bad = Surface::PlacedRevolution { profile: line, origin: [0.; 3], axis: [0., 0., 1.], matrix: flat, forward: true };
-    assert!(surface(&bad, 0, &mut Budget(0)).is_err());
+    assert!(surface(&bad, 0, &mut Budget::input()).is_err());
 }
 
 #[test]
@@ -799,16 +822,16 @@ fn analytic_records_are_unbounded_with_independent_frames() {
     let narrowing = Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: -0.2 };
     assert_eq!(surface_natural(&narrowing)[1], Natural::Range(f64::NEG_INFINITY, apex));
     for flat in [0., 1e-13, -1e-13, std::f64::consts::FRAC_PI_2, -std::f64::consts::FRAC_PI_2] {
-        assert!(surface(&Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: flat }, 0, &mut Budget(0)).is_err());
+        assert!(surface(&Surface::Cone { frame: f.clone(), radius_at_origin: 2., half_angle: flat }, 0, &mut Budget::input()).is_err());
     }
     for s in surfaces {
-        surface(&s, 0, &mut Budget(0)).unwrap();
+        surface(&s, 0, &mut Budget::input()).unwrap();
         let encoded = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Surface>(&encoded).unwrap(), s);
         assert!(!encoded.contains("\"angle\"") && !encoded.contains("height") && !encoded.contains("longitude"));
     }
     for c in [Curve::Circle { frame: f.clone(), radius: 2. }, Curve::Ellipse { frame: f.clone(), radii: [2., 3.] }] {
-        curve(&c, 0, &mut Budget(0)).unwrap();
+        curve(&c, 0, &mut Budget::input()).unwrap();
         assert_eq!(serde_json::from_str::<Curve>(&serde_json::to_string(&c).unwrap()).unwrap(), c);
         assert_eq!(curve_natural(&c), Natural::Periodic);
         // A periodic edge may start anywhere and run up to one turn.
@@ -816,10 +839,10 @@ fn analytic_records_are_unbounded_with_independent_frames() {
     }
     let mut bad = f;
     bad.y_axis = bad.x_axis;
-    assert!(frame(&bad, &mut Budget(0)).is_err());
+    assert!(frame(&bad, &mut Budget::input()).is_err());
     assert!(interval(&[2., 1.], UNBOUNDED).is_err());
     assert!(radius(f64::NAN).is_err());
-    assert!(surface(&Surface::Torus { frame: a_frame(), major_radius: 1., minor_radius: 2., tube_start: 0.0 }, 0, &mut Budget(0)).is_err());
+    assert!(surface(&Surface::Torus { frame: a_frame(), major_radius: 1., minor_radius: 2., tube_start: 0.0 }, 0, &mut Budget::input()).is_err());
 }
 
 /// A cylinder face round its axis with a hole beside its seam: the seam at 350 degrees (so its
@@ -848,6 +871,27 @@ fn a_hole_beside_the_seam_lies_in_its_face_turn() {
     let hole_u = a0 + ((u[0] - a0) / TAU).ceil() * TAU;
     assert!(hole_u > u[0] && hole_u + (a1 - a0) < u[1], "the hole in the turn: {u:?}");
     assert!(v[0].abs() < 1e-9 && (v[1] - h).abs() < 1e-9, "{v:?}");
+}
+
+/// A hemisphere bounded by its rim and its seam, its loop starting a quarter turn along the rim
+/// (the order a re-imported dimple's loop came in): along the rim to the seam, down the seam to
+/// the pole, up it on the other side and round the rest of the rim. Through the pole the loop goes
+/// on a turn away; continuing from the point before the pole put the seam's second use on the
+/// first and the box a quarter turn off the seam (oracle 14: the re-imported face's form over
+/// -270..90 degrees, its pcurves over 0..360, and its area a quarter short).
+#[test]
+fn a_loop_through_a_pole_closes_its_turn_from_the_seam() {
+    let r = 15.0f64;
+    let sphere = Surface::Sphere { frame: Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] }, radius: r };
+    let rim = Curve::Circle { frame: Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] }, radius: r };
+    let seam = Curve::Circle { frame: Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 0., -1.] }, radius: r };
+    let outer =
+        vec![(&rim, [0., FRAC_PI_2], false), (&seam, [0., FRAC_PI_2], true), (&seam, [0., FRAC_PI_2], false), (&rim, [FRAC_PI_2, TAU], false)];
+    let [u, v] = form::extent(&sphere, &[outer]).expect("an extent");
+    assert!((u[1] - u[0] - TAU).abs() < 1e-9, "one turn: {u:?}");
+    let from = u[0].rem_euclid(TAU);
+    assert!(from.min(TAU - from) < 1e-9, "from the seam: {u:?}");
+    assert!((v[0] + FRAC_PI_2).abs() < 1e-9 && v[1].abs() < 1e-9, "{v:?}");
 }
 
 /// A face's box reaches its boundary's extremes, not its samples' nearest ones: an ellipse cut

@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use solidcraft_geom::brep::eval::SurfaceEval;
+use solidcraft_geom::brep::eval::{SurfaceEval, face_flux};
 use solidcraft_geom::brep::{self as b, Curve2, pcurve};
 use solidcraft_geom::{Ring, Vec3};
 
@@ -286,7 +286,7 @@ impl Builder {
             }
         };
         let id = u32::try_from(self.edges.len()).map_err(|_| KernelError::Invalid("sew: edge budget exceeded".into()))?;
-        self.edges.push(PartEdge { curve, interval, vertices: [va, vb] });
+        self.edges.push(PartEdge { nurbs: None, curve, interval, vertices: [va, vb] });
         self.by_key.insert((ka, fa, kb, fb, mid, sheet), id);
         Ok((id, true))
     }
@@ -493,13 +493,19 @@ fn folded_pcurve(label: &b::Surface, form: Option<&b::Surface>, curve: &b::Curve
         }
     }
     breaks.push((t1, *angles.last()?));
-    // A crossing within rounding of another break (or of an end) is that break.
+    let size = points.iter().fold(1.0f64, |m, h| [h[0], h[1], h[2]].iter().fold(m, |m, c| m.max((c / h[3]).abs())));
+    // A crossing within rounding of another break (or of an end), or nearer to it on the edge
+    // than the pcurve lifts onto the edge (`FOLD_TOL`), is that break; the end never goes into
+    // the start. An edge starting 3e-12 of its parameter short of a quarter had pieces 1.6e-12
+    // long, whose knots SMLib took as one, past a multiplicity of the degree + 1.
     let close = 1e-12 * (t1 - t0).abs().max(1.0);
+    let lifts = |a: f64, b: f64| matches!((edge.point(a), edge.point(b)), (Some(p), Some(q)) if p.dist(q) <= FOLD_TOL * size);
     let mut kept: Vec<(f64, f64)> = Vec::with_capacity(breaks.len());
     for (i, b) in breaks.iter().enumerate() {
         let is_end = i + 1 == breaks.len();
+        let both_ends = is_end && kept.len() == 1;
         match kept.last_mut() {
-            Some(last) if (b.0 - last.0).abs() <= close => {
+            Some(last) if (b.0 - last.0).abs() <= close || (!both_ends && lifts(last.0, b.0)) => {
                 if is_end {
                     *last = *b;
                 }
@@ -535,7 +541,6 @@ fn folded_pcurve(label: &b::Surface, form: Option<&b::Surface>, curve: &b::Curve
         };
         Some([0, 1, 2, 3].map(|k| [u[k], h[k]]))
     };
-    let size = points.iter().fold(1.0f64, |m, h| [h[0], h[1], h[2]].iter().fold(m, |m, c| m.max((c / h[3]).abs())));
     let mut pieces = 1usize;
     while pieces * breaks.len() <= FOLD_PIECES {
         let mut knots2 = vec![t0; 8];
@@ -1303,6 +1308,10 @@ pub(crate) struct PartUse {
 
 pub(crate) struct PartEdge {
     pub curve: b::Curve,
+    /// The NURBS form the edge is parameterised on, as a record edge keeps it
+    /// ([`b::Edge::nurbs`]): given, `interval` is on it and `curve` only says what the edge is,
+    /// so an edge taken from a record goes back as that same edge.
+    pub nurbs: Option<b::Curve>,
     pub interval: [f64; 2],
     pub vertices: [u32; 2],
 }
@@ -1366,8 +1375,8 @@ pub(crate) fn assemble(parts: Parts, solid: bool) -> Result<Assembled> {
         g
     };
     // Each edge's label and NURBS form (`form::edge`): a circle about a revolved face's axis on
-    // that face's frame, so its form lies on the face's quarter grid; an edge the caller gave a
-    // pcurve for keeps the parameter that pcurve is on.
+    // that face's frame, so its form lies on the face's quarter grid; an edge given with its form
+    // keeps it, and an edge the caller gave a pcurve for keeps the parameter that pcurve is on.
     let mut frames_of: Vec<Vec<b::Frame>> = vec![Vec::new(); edges.len()];
     for f in &faces {
         let Some(frame) = b::form::frame_of(&f.surface) else { continue };
@@ -1380,6 +1389,13 @@ pub(crate) fn assemble(parts: Parts, solid: bool) -> Result<Assembled> {
     let mut labels: Vec<(b::Curve, [f64; 2])> = Vec::with_capacity(edges.len());
     let mut forms: Vec<Option<(b::Curve, [f64; 2])>> = Vec::with_capacity(edges.len());
     for ((e, frames), given) in edges.iter().zip(&frames_of).zip(&given_on) {
+        if let Some(form) = &e.nurbs {
+            let on_label =
+                b::curve_interval(&e.curve, Some(form), e.interval).ok_or_else(|| fail("an edge's NURBS form does not evaluate".into()))?;
+            labels.push((e.curve.clone(), on_label));
+            forms.push(Some((form.clone(), e.interval)));
+            continue;
+        }
         if *given {
             labels.push((e.curve.clone(), e.interval));
             forms.push(None);
@@ -1637,53 +1653,6 @@ fn domain_of(surface: &b::Surface, pcs: &[Vec<Curve2>]) -> Option<[[f64; 2]; 2]>
         out[d] = [a, z];
     }
     Some(out)
-}
-
-/// Four-point Gauss–Legendre nodes and weights on `[−1, 1]`.
-const GAUSS4: [(f64, f64); 4] = [
-    (-0.861_136_311_594_052_6, 0.347_854_845_137_453_8),
-    (-0.339_981_043_584_856_3, 0.652_145_154_862_546_2),
-    (0.339_981_043_584_856_3, 0.652_145_154_862_546_2),
-    (0.861_136_311_594_052_6, 0.347_854_845_137_453_8),
-];
-
-/// Pieces each pcurve is integrated in, and how many Gauss panels cover a v range.
-const FLUX_PIECES: usize = 32;
-const FLUX_PANELS: usize = 4;
-
-/// The flux of `field` through a face, `∫∫ field(S)·(S_u × S_v) du dv` over the (u, v) region its
-/// loops (record convention, each use its pcurve and direction) bound, by Green's theorem:
-/// `∮ −G du` with `G(u, v) = ∫ field·N ds` from `v0` to `v`. A quadrature for the sign of a
-/// shell's volume (`field = p / 3`) or a winding number, which only has to be right to well
-/// under a half: no geometry is made from it. Loops round a periodic direction need no seam
-/// edge, as a seam's two runs at constant u add nothing to `∮ G du`.
-fn face_flux(s: &SurfaceEval, v0: f64, loops: &[Vec<(&Curve2, bool)>], field: &dyn Fn(Vec3) -> Vec3) -> Option<f64> {
-    let g = |u: f64, v: f64| -> Option<f64> {
-        let (mut sum, h) = (0.0, (v - v0) / FLUX_PANELS as f64);
-        for panel in 0..FLUX_PANELS {
-            let a = v0 + h * panel as f64;
-            for (x, w) in GAUSS4 {
-                let t = a + 0.5 * h * (x + 1.0);
-                let (p, su, sv) = s.derivs(u, t)?;
-                sum += 0.5 * h * w * field(p).dot(su.cross(sv));
-            }
-        }
-        sum.is_finite().then_some(sum)
-    };
-    let mut total = 0.0;
-    for (c, forward) in loops.iter().flatten() {
-        let [t0, t1] = c.interval()?;
-        let at = |k: f64| {
-            let f = k / FLUX_PIECES as f64;
-            // Exactly the ends at f = 0 and 1, whatever the interval's rounding.
-            c.eval(if *forward { t0 * (1.0 - f) + t1 * f } else { t1 * (1.0 - f) + t0 * f })
-        };
-        for k in 0..FLUX_PIECES {
-            let (a, m, z) = (at(k as f64)?, at(k as f64 + 0.5)?, at(k as f64 + 1.0)?);
-            total -= g(m[0], m[1])? * (z[0] - a[0]);
-        }
-    }
-    total.is_finite().then_some(total)
 }
 
 #[cfg(test)]

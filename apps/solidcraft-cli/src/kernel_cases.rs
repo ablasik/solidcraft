@@ -258,6 +258,316 @@ fn continuity_order(
     Ok((got, ok))
 }
 
+/// Where `got` differs from `want`, a part of it: every key of a `want` object in `got` and
+/// matching, an array element by element and as long, a whole number exactly, any other number
+/// within `rel` of it (relative, at least 1 absolute), anything else equal. `None` where it
+/// matches; else the path to the first difference with both values.
+fn json_mismatch(got: &Value, want: &Value, rel: f64, abs: f64, path: &str) -> Option<String> {
+    let differ = || Some(format!("{path}: got {got}, want {want}"));
+    match (got, want) {
+        (_, Value::Object(w)) => {
+            let Value::Object(g) = got else { return differ() };
+            w.iter().find_map(|(k, wv)| match g.get(k) {
+                Some(gv) => json_mismatch(gv, wv, rel, abs, &format!("{path}.{k}")),
+                None => Some(format!("{path}.{k}: missing, want {wv}")),
+            })
+        }
+        (_, Value::Array(w)) => {
+            let Value::Array(g) = got else { return differ() };
+            if g.len() != w.len() {
+                return Some(format!("{path}: {} items, want {}", g.len(), w.len()));
+            }
+            g.iter().zip(w).enumerate().find_map(|(i, (gv, wv))| json_mismatch(gv, wv, rel, abs, &format!("{path}[{i}]")))
+        }
+        (_, Value::Number(w)) if w.is_i64() || w.is_u64() => (got.as_f64() != w.as_f64()).then(differ).flatten(),
+        (_, Value::Number(w)) => {
+            let (g, w) = (got.as_f64(), w.as_f64().unwrap_or(f64::NAN));
+            (!g.is_some_and(|g| g.is_finite() && (g - w).abs() <= (rel * w.abs().max(1.0)).max(abs))).then(differ).flatten()
+        }
+        _ => (got != want).then(differ).flatten(),
+    }
+}
+
+/// The rows of a CSV text (RFC 4180: quoted fields may hold commas, quotes and line breaks) as
+/// objects keyed by the header row; a field that reads as a number is one.
+fn csv_rows(text: &str) -> Vec<Value> {
+    let mut records: Vec<Vec<String>> = Vec::new();
+    let (mut row, mut field, mut quoted, mut chars) = (Vec::new(), String::new(), false, text.chars().peekable());
+    while let Some(c) = chars.next() {
+        match (c, quoted) {
+            ('"', true) if chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            ('"', _) => quoted = !quoted,
+            (',', false) => row.push(std::mem::take(&mut field)),
+            ('\r', false) => {}
+            ('\n', false) => {
+                row.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut row));
+            }
+            _ => field.push(c),
+        }
+    }
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        records.push(row);
+    }
+    let Some((head, rows)) = records.split_first() else { return Vec::new() };
+    rows.iter()
+        .map(|r| {
+            let cell = |v: &String| v.parse::<f64>().ok().filter(|x| x.is_finite()).map_or_else(|| json!(v), |x| json!(x));
+            Value::Object(head.iter().cloned().zip(r.iter().map(cell)).collect())
+        })
+        .collect()
+}
+
+/// Per layer of a DXF text's ENTITIES section, how many of each entity it has and the total
+/// length of its curves (`length_mm`: lines, arcs, circles, ellipses and polylines; a spline makes
+/// the layer's length null, as not measured): `{layer: {"LINE": n, …, "length_mm": l}}`.
+fn dxf_layers(text: &str) -> Value {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).filter_map(|p| Some((*p.first()?, *p.get(1)?))).collect();
+    let start = pairs.windows(2).position(|w| w[0] == ("0", "SECTION") && w[1] == ("2", "ENTITIES")).map_or(pairs.len(), |i| i + 2);
+    let mut layers = serde_json::Map::new();
+    let mut i = start;
+    while let Some(&(code, kind)) = pairs.get(i) {
+        if code != "0" || kind == "ENDSEC" {
+            break;
+        }
+        let end = pairs.get(i + 1..).and_then(|r| r.iter().position(|p| p.0 == "0")).map_or(pairs.len(), |k| i + 1 + k);
+        let group = pairs.get(i + 1..end).unwrap_or(&[]);
+        let num = |c: &str| group.iter().find(|p| p.0 == c).and_then(|p| p.1.parse::<f64>().ok()).unwrap_or(0.0);
+        let all = |c: &str| group.iter().filter(|p| p.0 == c).filter_map(|p| p.1.parse::<f64>().ok()).collect::<Vec<_>>();
+        let layer = group.iter().find(|p| p.0 == "8").map_or("0", |p| p.1);
+        let length = match kind {
+            "LINE" => Some((num("11") - num("10")).hypot(num("21") - num("20"))),
+            "CIRCLE" => Some(std::f64::consts::TAU * num("40")),
+            "ARC" => Some(num("40") * (num("51") - num("50")).rem_euclid(360.0).to_radians()),
+            "LWPOLYLINE" => {
+                let mut pts: Vec<(f64, f64)> = all("10").into_iter().zip(all("20")).collect();
+                if (num("70") as i64) & 1 == 1
+                    && let Some(&p) = pts.first()
+                {
+                    pts.push(p);
+                }
+                Some(pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum())
+            }
+            "ELLIPSE" => {
+                // Arc length of c + cos t·major + sin t·ratio·minor, t from 41 to 42, by Simpson's rule.
+                let (a, b) = (num("11").hypot(num("21")), num("11").hypot(num("21")) * num("40"));
+                let (t0, t1) = (num("41"), num("42"));
+                let sweep = if t1 > t0 { t1 - t0 } else { t1 - t0 + std::f64::consts::TAU };
+                let n = 4096;
+                let speed = |t: f64| (a * t.sin()).hypot(b * t.cos());
+                let h = sweep / n as f64;
+                let weight = |k: usize| match k {
+                    0 => 1.0,
+                    k if k == n => 1.0,
+                    k if k % 2 == 1 => 4.0,
+                    _ => 2.0,
+                };
+                let sum: f64 = (0..=n).map(|k| speed(t0 + k as f64 * h) * weight(k)).sum();
+                Some(sum * h / 3.0)
+            }
+            _ => None,
+        };
+        let entry = layers.entry(layer.to_string()).or_insert_with(|| json!({"length_mm": 0.0}));
+        entry[kind] = json!(entry[kind].as_u64().unwrap_or(0) + 1);
+        entry["length_mm"] = match (entry["length_mm"].as_f64(), length) {
+            (Some(l), Some(more)) => json!(l + more),
+            _ => Value::Null,
+        };
+        i = end;
+    }
+    Value::Object(layers)
+}
+
+/// The `files` check of the files a case wrote to `$OUT` (`out`): each `{path, json | csv | dxf}`
+/// read and matched as [`json_mismatch`] does: `json` against the file's JSON, `csv` against its
+/// rows ([`csv_rows`]), `dxf` against its layers ([`dxf_layers`]), a count there exact or an
+/// inclusive range `[min, max]`. And the `results` check of the commands' own answers: each
+/// `{step, pointer?, json, rel?, abs_mm?}`, the answer of the `step`th command (from 1, base
+/// commands included), or its part at the JSON `pointer` (RFC 6901), matched against `json`,
+/// a number within the entry's `rel` (or the case's) or its `abs_mm`.
+fn output_checks(c: &mut Checks, want: &Value, out: &str, results: &[Value], rel: f64) {
+    for f in want["files"].as_array().into_iter().flatten() {
+        let path = f["path"].as_str().unwrap_or_default();
+        let what = format!("file {path}");
+        let text = match std::fs::read_to_string(std::path::Path::new(out).join(path)) {
+            Ok(t) => t,
+            Err(e) => {
+                c.push(&what, json!(e.to_string()), json!("written"), false);
+                continue;
+            }
+        };
+        let (got, wanted) = if let Some(w) = f.get("json") {
+            (serde_json::from_str::<Value>(&text).unwrap_or_else(|e| json!(format!("not JSON: {e}"))), w.clone())
+        } else if let Some(w) = f.get("csv") {
+            (Value::Array(csv_rows(&text)), w.clone())
+        } else if let Some(w) = f.get("dxf") {
+            let layers = dxf_layers(&text);
+            // A count given as a range is in it: compare the count itself with the range's bounds.
+            let mut w = w.clone();
+            let mut ranged = Vec::new();
+            for (layer, kinds) in w.as_object_mut().into_iter().flatten() {
+                for (kind, n) in kinds.as_object_mut().into_iter().flatten() {
+                    if let Some([lo, hi]) = n.as_array().and_then(|r| <[Value; 2]>::try_from(r.clone()).ok()) {
+                        let g = layers[layer.as_str()][kind.as_str()].as_u64().unwrap_or(0);
+                        ranged.push((format!("{layer}.{kind}"), g, lo.clone(), hi.clone()));
+                        *n = json!(g);
+                    }
+                }
+            }
+            for (k, g, lo, hi) in ranged {
+                let ok = lo.as_u64().is_some_and(|lo| g >= lo) && hi.as_u64().is_some_and(|hi| g <= hi);
+                c.push(&format!("{what} {k}"), json!(g), json!([lo, hi]), ok);
+            }
+            // An entity the case names but the layer lacks counts 0.
+            let mut got = layers;
+            for (layer, kinds) in w.as_object().into_iter().flatten() {
+                for kind in kinds.as_object().into_iter().flatten().map(|(k, _)| k) {
+                    if got[layer.as_str()].get(kind.as_str()).is_none() && kind != "length_mm" {
+                        got[layer.as_str()][kind.as_str()] = json!(0);
+                    }
+                }
+            }
+            (got, w)
+        } else {
+            c.push(&what, json!(f), json!("json, csv or dxf"), false);
+            continue;
+        };
+        let miss = json_mismatch(&got, &wanted, rel, 0.0, "");
+        c.push(&what, json!(miss.clone().unwrap_or_else(|| "matches".into())), wanted, miss.is_none());
+    }
+    for r in want["results"].as_array().into_iter().flatten() {
+        let step = r["step"].as_u64().unwrap_or(0);
+        let pointer = r["pointer"].as_str().unwrap_or("");
+        let what = format!("result of step {step}{pointer}");
+        let (rel, abs) = (r["rel"].as_f64().unwrap_or(rel), r["abs_mm"].as_f64().unwrap_or(0.0));
+        let got = step.checked_sub(1).and_then(|i| results.get(i as usize));
+        let miss = match got.map(|g| g.pointer(pointer)) {
+            Some(Some(g)) => json_mismatch(g, &r["json"], rel, abs, ""),
+            Some(None) => Some(format!("no {pointer} in step {step}'s answer")),
+            None => Some(format!("no step {step} of {}", results.len())),
+        };
+        c.push(&what, json!(miss.clone().unwrap_or_else(|| "matches".into())), r["json"].clone(), miss.is_none());
+    }
+}
+
+/// The word a `surface_types` check names a face's surface by, as the record holds it: an
+/// analytic kind, `bspline` (a B-spline or NURBS surface) or `revolution` (a revolved curve).
+fn surface_word(s: &solidcraft_engine::geom::brep::Surface) -> &'static str {
+    use solidcraft_engine::geom::brep::Surface as S;
+    match s {
+        S::Plane { .. } | S::PlaneThrough { .. } => "plane",
+        S::Cylinder { .. } => "cylinder",
+        S::Cone { .. } => "cone",
+        S::Sphere { .. } => "sphere",
+        S::Torus { .. } => "torus",
+        S::Spline { .. } | S::RationalSpline { .. } => "bspline",
+        S::PlacedRevolution { .. } => "revolution",
+    }
+}
+
+/// A B-spline face's two directions as `[degree, spans]` (spans: the distinct knot intervals of
+/// the modelled range), the lower first, so a surface parameterised the other way round reads the
+/// same. `None` for a surface that is not a B-spline.
+fn spline_shape(s: &solidcraft_engine::geom::brep::Surface) -> Option<[[u64; 2]; 2]> {
+    use solidcraft_engine::geom::brep::Surface as S;
+    let (u, v, nu, nv) = match s {
+        S::Spline { u_knots, v_knots, points } => (u_knots, v_knots, points.len(), points.first().map_or(0, Vec::len)),
+        S::RationalSpline { u_knots, v_knots, homogeneous } => (u_knots, v_knots, homogeneous.len(), homogeneous.first().map_or(0, Vec::len)),
+        _ => return None,
+    };
+    let dir = |k: &[f64], n: usize| -> Option<[u64; 2]> {
+        let p = k.len().checked_sub(n + 1)?;
+        let inner = k.get(p..=n)?;
+        let spans = inner.windows(2).filter(|w| w[1] > w[0]).count();
+        Some([p as u64, spans as u64])
+    };
+    let (a, b) = (dir(u, nu)?, dir(v, nv)?);
+    Some(if a <= b { [a, b] } else { [b, a] })
+}
+
+/// The `splines` check: every B-spline face of the bodies matches one entry of `want` and every
+/// entry one face (`{degree: [p, q], spans?: [m, n]}`, in either order of directions; without
+/// `spans` only the degrees are graded). `Ok(got)` with what the faces are, `ok` when they match.
+fn splines_match(faces: &[[[u64; 2]; 2]], want: &Value) -> Result<(Value, bool), String> {
+    let list = want.as_array().ok_or("`splines` must be a list of {degree: [p, q], spans?: [m, n]}")?;
+    let pair = |v: &Value| -> Option<[u64; 2]> { Some([v.get(0)?.as_u64()?, v.get(1)?.as_u64()?]) };
+    let mut left: Vec<[[u64; 2]; 2]> = faces.to_vec();
+    let mut ok = true;
+    for w in list {
+        let degree = w.get("degree").and_then(pair).ok_or("each `splines` entry needs `degree: [p, q]`")?;
+        let spans = match w.get("spans").filter(|s| !s.is_null()) {
+            Some(s) => Some(pair(s).ok_or("`spans` must be [m, n]")?),
+            None => None,
+        };
+        let fits = |f: &[[u64; 2]; 2]| {
+            let mine = |d: [u64; 2], s: Option<[u64; 2]>| f[0][0] == d[0] && f[1][0] == d[1] && s.is_none_or(|s| f[0][1] == s[0] && f[1][1] == s[1]);
+            mine(degree, spans) || mine([degree[1], degree[0]], spans.map(|s| [s[1], s[0]]))
+        };
+        match left.iter().position(fits) {
+            Some(i) => {
+                left.remove(i);
+            }
+            None => ok = false,
+        }
+    }
+    let got: Vec<Value> = faces.iter().map(|f| json!({"degree": [f[0][0], f[1][0]], "spans": [f[0][1], f[1][1]]})).collect();
+    Ok((json!(got), ok && left.is_empty()))
+}
+
+/// Largest sine of the angle between a construction's direction (an axis's, a plane's normal)
+/// and the case's: either way along it.
+const CONSTRUCT_DIR_TOL: f64 = 1e-6;
+
+/// The `construction` check: each named construction plane, axis or point, as the timeline
+/// evaluated it, is the case's: a point within `tol` (mm); an axis whose direction is parallel to
+/// `dir` (either way) and whose line passes within `tol` of `through`; a plane whose normal is
+/// parallel to `normal` (either way) and which passes within `tol` of `through`. An axis or plane
+/// is graded as the line or plane it is, never by the origin it happens to keep.
+fn check_construction(s: &solidcraft_engine::Session, want: &Value, tol: f64, c: &mut Checks) {
+    use solidcraft_engine::geom::Vec3;
+    use solidcraft_engine::view::{construction_axes, construction_planes, construction_points};
+    let Some(named) = want.as_object() else {
+        c.push("construction", json!("`construction` must map names to {point} | {axis} | {plane}"), json!("an object"), false);
+        return;
+    };
+    let vec = |v: &Value| v3(v).map(Vec3::from);
+    let parallel = |a: Vec3, b: Vec3| a.normalized().zip(b.normalized()).is_some_and(|(a, b)| a.cross(b).len() <= CONSTRUCT_DIR_TOL);
+    for (name, w) in named {
+        let what = format!("construction {name}");
+        let (got, ok) = if let Some(p) = w.get("point").and_then(vec) {
+            match construction_points(s).into_iter().find(|x| &x.1 == name) {
+                Some((_, _, q)) => (json!({"point": q}), q.dist(p) <= tol),
+                None => (json!("no such construction point"), false),
+            }
+        } else if let Some((through, dir)) = w.get("axis").and_then(|a| vec(&a["through"]).zip(vec(&a["dir"]))) {
+            match construction_axes(s).into_iter().find(|x| &x.1 == name) {
+                Some((_, _, o, d)) => {
+                    let off = d.normalized().map(|u| (through - o) - u * (through - o).dot(u)).map_or(f64::INFINITY, Vec3::len);
+                    (json!({"axis": {"origin": o, "dir": d, "through_off_mm": off}}), parallel(d, dir) && off <= tol)
+                }
+                None => (json!("no such construction axis"), false),
+            }
+        } else if let Some((through, normal)) = w.get("plane").and_then(|p| vec(&p["through"]).zip(vec(&p["normal"]))) {
+            match construction_planes(s).into_iter().find(|x| &x.1 == name) {
+                Some((_, _, pl)) => {
+                    let n = pl.normal();
+                    let off = n.normalized().map_or(f64::INFINITY, |u| (through - pl.origin).dot(u).abs());
+                    (json!({"plane": {"origin": pl.origin, "normal": n, "through_off_mm": off}}), parallel(n, normal) && off <= tol)
+                }
+                None => (json!("no such construction plane"), false),
+            }
+        } else {
+            (json!("give {point: [x,y,z]}, {axis: {through, dir}} or {plane: {through, normal}}"), false)
+        };
+        c.push(&what, got, w.clone(), ok);
+    }
+}
+
 fn unsupported(e: &str) -> bool {
     e.contains("not supported yet")
 }
@@ -271,6 +581,56 @@ fn case_name(dir: &str) -> (String, String) {
     let p = std::path::Path::new(dir);
     let name = |q: Option<&std::path::Path>| q.and_then(|q| q.file_name()).map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     (name(p.parent()), name(Some(p)))
+}
+
+/// The area a polygon of `[x, y]` points encloses (shoelace), unsigned.
+fn polygon_area(points: &Value) -> f64 {
+    let pts: Vec<(f64, f64)> = points.as_array().into_iter().flatten().filter_map(|p| Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?))).collect();
+    pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| a.0 * b.1 - b.0 * a.1).sum::<f64>().abs() / 2.0
+}
+
+/// The `flat_pattern` check, against the script's last `sheet.flat_pattern` result: `size_mm`
+/// ([w, h] of the outline), `area_mm2` (the outline loops' area less the cut-outs') and
+/// `bend_lines` ([[x, y], [x, y]] each, the bends' centre lines in flat coordinates, every one
+/// matched to its own one of the result's, either way round, and as many of them).
+fn flat_pattern_checks(c: &mut Checks, want: &Value, results: &[Value], rel: f64, abs: f64) {
+    let Some(got) = results.iter().rev().find(|r| r.get("flat_size_mm").is_some()) else {
+        c.push("flat_pattern", json!("no sheet.flat_pattern result"), want.clone(), false);
+        return;
+    };
+    if let Some(w) = want.get("size_mm").and_then(Value::as_array) {
+        let g = &got["flat_size_mm"];
+        let ok = w.len() == 2
+            && (0..2).all(|k| match (g.get(k).and_then(Value::as_f64), w.get(k).and_then(Value::as_f64)) {
+                (Some(g), Some(w)) => (g - w).abs() <= abs,
+                _ => false,
+            });
+        c.push("flat_pattern.size_mm", json!([g.get(0), g.get(1)]), json!(w), ok);
+    }
+    if let Some(w) = want.get("area_mm2").and_then(Value::as_f64) {
+        let loops = |k: &str| got[k].as_array().into_iter().flatten().map(polygon_area).sum::<f64>();
+        c.rel("flat_pattern.area_mm2", loops("outline") - loops("cutouts"), Some(w), rel);
+    }
+    if let Some(w) = want.get("bend_lines").and_then(Value::as_array) {
+        let line = |v: &Value| -> Option<[f64; 4]> {
+            let (a, b) = (v.get(0)?, v.get(1)?);
+            Some([a.get(0)?.as_f64()?, a.get(1)?.as_f64()?, b.get(0)?.as_f64()?, b.get(1)?.as_f64()?])
+        };
+        let mut left: Vec<[f64; 4]> = got["bends"].as_array().into_iter().flatten().filter_map(|b| line(&json!([b["start"], b["end"]]))).collect();
+        let got_lines = json!(left.iter().map(|l| [[l[0], l[1]], [l[2], l[3]]]).collect::<Vec<_>>());
+        let near = |p: [f64; 4], q: [f64; 4]| (0..4).all(|k| (p[k] - q[k]).abs() <= abs);
+        let mut ok = left.len() == w.len();
+        for l in w.iter().map(line) {
+            let found = l.and_then(|l| left.iter().position(|g| near(*g, l) || near(*g, [l[2], l[3], l[0], l[1]])));
+            match found {
+                Some(i) => {
+                    left.swap_remove(i);
+                }
+                None => ok = false,
+            }
+        }
+        c.push("flat_pattern.bend_lines", got_lines, json!(w), ok);
+    }
 }
 
 fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
@@ -292,7 +652,15 @@ fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
         out["error"] = json!(missing);
         return out;
     }
-    let commands = match scratch(&area, &name).and_then(|o| read_json(&format!("{dir}/recipe.json")).and_then(|r| script(dir, &o, &r))) {
+    let scratch_dir = match scratch(&area, &name) {
+        Ok(o) => o,
+        Err(e) => {
+            out["status"] = json!("fail");
+            out["error"] = json!(e);
+            return out;
+        }
+    };
+    let commands = match read_json(&format!("{dir}/recipe.json")).and_then(|r| script(dir, &scratch_dir, &r)) {
         Ok(s) => s,
         Err(e) => {
             out["status"] = json!("fail");
@@ -328,7 +696,7 @@ fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
     let ran = s.run_script(&commands);
     // The commands' own time, without process start or grading: the ladder's timing golden.
     out["seconds"] = json!(clock.elapsed().as_secs_f64());
-    match (ran, may_refuse) {
+    let answers = match (ran, may_refuse) {
         (Err(e), _) if crashed(&e.to_string()) => {
             out["status"] = json!("crash");
             out["error"] = json!(e.to_string());
@@ -364,8 +732,8 @@ fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
             out["error"] = json!("succeeded where the case expects a refusal");
             return out;
         }
-        (Ok(_), _) => {}
-    }
+        (Ok(r), _) => r,
+    };
 
     // Every body in the world, imported components included.
     let world = match s.world_state() {
@@ -383,6 +751,17 @@ fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
     // body), else one per body.
     let want_shells = want["shells"].as_u64();
     let mut shells = 0u64;
+    // What the faces lie on and the edges only one face uses, over every body, as the records
+    // hold them: for `surface_types`, `splines` and `boundary_edges`.
+    let (mut kinds, mut spline_faces, mut boundary) = (std::collections::BTreeSet::new(), Vec::new(), 0u64);
+    for b in &world.bodies {
+        let record = b.body.record();
+        for f in &record.faces {
+            kinds.insert(surface_word(&f.surface));
+            spline_faces.extend(spline_shape(&f.surface));
+        }
+        boundary += record.edges.iter().filter(|e| e.uses.len() == 1).count() as u64;
+    }
     for b in &world.bodies {
         let m = match solidcraft_engine::kernel::measure(&b.body) {
             Ok(m) => m,
@@ -504,6 +883,28 @@ fn check_case(dir: &str, dumps: Option<&std::path::Path>) -> Value {
         c.vec("bbox.min", got.bbox.0, want_bbox.map(|b| b.0), abs);
         c.vec("bbox.max", got.bbox.1, want_bbox.map(|b| b.1), abs);
     }
+    output_checks(&mut c, &want, &scratch_dir, &answers, rel);
+    count(&mut c, "boundary_edges", boundary);
+    if has("surface_types") {
+        // The set of surface kinds the faces lie on, exactly: none missing, none extra.
+        let want_kinds: std::collections::BTreeSet<&str> = want["surface_types"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let ok = want_kinds == kinds.iter().copied().collect();
+        c.push("surface_types", json!(kinds), want["surface_types"].clone(), ok);
+    }
+    if has("splines") {
+        match splines_match(&spline_faces, &want["splines"]) {
+            Ok((got, ok)) => c.push("splines", got, want["splines"].clone(), ok),
+            Err(e) => c.push("splines", json!(e), want["splines"].clone(), false),
+        }
+    }
+    // With no body and no `bbox` the diagonal is not finite: positions then take ABS_FRAC of 1 mm.
+    let pos_tol = if abs.is_finite() { abs } else { ABS_FRAC };
+    if has("construction") {
+        check_construction(&s, &want["construction"], pos_tol, &mut c);
+    }
+    if has("flat_pattern") {
+        flat_pattern_checks(&mut c, &want["flat_pattern"], &answers, rel, abs);
+    }
     out["status"] = json!(if c.pass { "pass" } else { "fail" });
     out["checks"] = json!(c.list);
     out
@@ -555,6 +956,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use super::*;
 
     fn case_dir(root: &std::path::Path, name: &str, recipe: &Value) -> String {
@@ -581,6 +984,177 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A bicubic face of 4 × 3 spans and a bilinear one of one span: degrees and spans graded in
+    /// either order of directions, spans only where given, and every face must be accounted for.
+    #[test]
+    fn splines_match_degrees_and_spans_in_either_order() {
+        use solidcraft_engine::geom::brep::Surface;
+        let knots = |p: usize, spans: usize| -> Vec<f64> {
+            let mut k = vec![0.0; p + 1];
+            k.extend((1..spans).map(|i| i as f64));
+            k.extend(vec![spans as f64; p + 1]);
+            k
+        };
+        let face = |pu: usize, su: usize, pv: usize, sv: usize| Surface::Spline {
+            u_knots: knots(pu, su),
+            v_knots: knots(pv, sv),
+            points: vec![vec![[0.0; 3]; pv + sv]; pu + su],
+        };
+        let faces: Vec<_> = [face(3, 4, 3, 3), face(1, 1, 1, 1)].iter().filter_map(spline_shape).collect();
+        assert_eq!(faces[0], [[3, 3], [3, 4]]);
+        let ok = |w: Value| splines_match(&faces, &w).unwrap().1;
+        assert!(ok(json!([{"degree": [1, 1], "spans": [1, 1]}, {"degree": [3, 3], "spans": [4, 3]}])));
+        assert!(ok(json!([{"degree": [3, 3]}, {"degree": [1, 1]}])));
+        assert!(!ok(json!([{"degree": [3, 3], "spans": [4, 4]}, {"degree": [1, 1]}])), "wrong spans");
+        assert!(!ok(json!([{"degree": [3, 3]}])), "a face left over");
+        assert!(!ok(json!([{"degree": [3, 3]}, {"degree": [1, 1]}, {"degree": [1, 1]}])), "an entry with no face");
+        assert!(splines_match(&faces, &json!([{"spans": [1, 1]}])).is_err());
+        assert_eq!(spline_shape(&Surface::Plane { origin: [0.0; 3], u_axis: [1.0, 0.0, 0.0], v_axis: [0.0, 1.0, 0.0] }), None);
+        assert_eq!(surface_word(&face(1, 1, 1, 1)), "bspline");
+    }
+
+    #[test]
+    fn json_parts_match_within_tolerance_and_whole_numbers_exactly() {
+        let got = json!({"bends": [{"angle_deg": 90.00001, "direction": "up", "count": 3}], "extra": 1});
+        assert_eq!(json_mismatch(&got, &json!({"bends": [{"angle_deg": 90.0, "direction": "up"}]}), 1e-3, 0.0, ""), None);
+        assert!(json_mismatch(&got, &json!({"bends": [{"count": 4}]}), 1e-3, 0.0, "").is_some_and(|m| m.contains(".bends[0].count")));
+        assert!(json_mismatch(&got, &json!({"bends": []}), 1e-3, 0.0, "").is_some_and(|m| m.contains("1 items, want 0")));
+        assert!(json_mismatch(&got, &json!({"missing": 1}), 1e-3, 0.0, "").is_some_and(|m| m.contains("missing")));
+        assert!(json_mismatch(&got, &json!({"bends": [{"direction": "down"}]}), 1e-3, 0.0, "").is_some());
+    }
+
+    #[test]
+    fn csv_rows_are_keyed_by_the_header_and_read_quoted_fields() {
+        let rows = csv_rows("body,angle_deg,note\r\n\"a, \"\"b\"\"\",90.5,x\r\n\"c\",180,\r\n");
+        assert_eq!(rows, vec![json!({"body": "a, \"b\"", "angle_deg": 90.5, "note": "x"}), json!({"body": "c", "angle_deg": 180.0, "note": ""})]);
+    }
+
+    #[test]
+    fn dxf_layers_count_entities_and_measure_their_length() {
+        let pair = |c: &str, v: &str| format!("{c}\n{v}\n");
+        let mut t = String::new();
+        // A circle in the BLOCKS section is not an entity of the drawing.
+        for (c, v) in [("0", "SECTION"), ("2", "BLOCKS"), ("0", "CIRCLE"), ("8", "CUT"), ("40", "9"), ("0", "ENDSEC")] {
+            t += &pair(c, v);
+        }
+        t += &pair("0", "SECTION");
+        t += &pair("2", "ENTITIES");
+        for e in [
+            vec![("0", "LINE"), ("8", "OUTLINE"), ("10", "0"), ("20", "0"), ("11", "3"), ("21", "4")],
+            vec![("0", "ARC"), ("8", "OUTLINE"), ("10", "0"), ("20", "0"), ("40", "2"), ("50", "270"), ("51", "0")],
+            vec![("0", "CIRCLE"), ("8", "CUT"), ("10", "5"), ("20", "5"), ("40", "1")],
+            vec![("0", "LWPOLYLINE"), ("8", "BEND_UP"), ("90", "2"), ("70", "128"), ("10", "0"), ("20", "1"), ("10", "10"), ("20", "1")],
+            vec![
+                ("0", "ELLIPSE"),
+                ("8", "CUT"),
+                ("10", "0"),
+                ("20", "0"),
+                ("11", "10"),
+                ("21", "0"),
+                ("40", "1"),
+                ("41", "0"),
+                ("42", "6.283185307179586"),
+            ],
+        ] {
+            for (c, v) in e {
+                t += &pair(c, v);
+            }
+        }
+        t += &pair("0", "ENDSEC");
+        t += &pair("0", "EOF");
+        let l = dxf_layers(&t);
+        assert_eq!(l["OUTLINE"]["LINE"], 1);
+        assert_eq!(l["OUTLINE"]["ARC"], 1);
+        assert!((l["OUTLINE"]["length_mm"].as_f64().unwrap() - (5.0 + PI)).abs() < 1e-9, "{l}");
+        assert_eq!(l["CUT"]["CIRCLE"], 1);
+        assert_eq!(l["CUT"]["ELLIPSE"], 1);
+        // A circle of radius 1 and an ellipse of ratio 1 (a circle of radius 10).
+        assert!((l["CUT"]["length_mm"].as_f64().unwrap() - 22.0 * PI).abs() < 1e-6, "{l}");
+        assert!((l["BEND_UP"]["length_mm"].as_f64().unwrap() - 10.0).abs() < 1e-9, "{l}");
+    }
+
+    #[test]
+    fn output_checks_read_the_files_and_answers_a_case_names() {
+        let out = std::env::temp_dir().join(format!("kernel-cases-files-{}", std::process::id()));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("t.json"), r#"{"bends": [{"angle_deg": 90}]}"#).unwrap();
+        std::fs::write(out.join("t.csv"), "bend,angle_deg\r\n1,90\r\n").unwrap();
+        std::fs::write(out.join("t.dxf"), "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nOUTLINE\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDSEC\n").unwrap();
+        let dir = out.to_string_lossy().to_string();
+        let run = |want: Value| {
+            let mut c = Checks { list: Vec::new(), pass: true };
+            output_checks(&mut c, &want, &dir, &[json!({"count": 3})], 1e-3);
+            c.pass
+        };
+        assert!(run(json!({"files": [{"path": "t.json", "json": {"bends": [{"angle_deg": 90.0}]}}]})));
+        assert!(run(json!({"files": [{"path": "t.csv", "csv": [{"bend": 1, "angle_deg": 90.0}]}]})));
+        assert!(run(json!({"files": [{"path": "t.dxf", "dxf": {"OUTLINE": {"LINE": [1, 8], "ARC": 0, "length_mm": 1.0}}}]})));
+        assert!(!run(json!({"files": [{"path": "t.dxf", "dxf": {"OUTLINE": {"LINE": [2, 8]}}}]})));
+        assert!(!run(json!({"files": [{"path": "t.dxf", "dxf": {"CUT": {"CIRCLE": 1}}}]})));
+        assert!(!run(json!({"files": [{"path": "none.json", "json": {}}]})));
+        assert!(run(json!({"results": [{"step": 1, "json": {"count": 3}}]})));
+        assert!(!run(json!({"results": [{"step": 2, "json": {}}]})));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn construction_is_graded_as_the_point_line_or_plane_it_is() {
+        let mut s = solidcraft_engine::Session::default();
+        let script = json!({"commands": [
+            {"command": "construct.point.three_planes", "params": {"a": "XY", "b": "XZ", "c": "YZ", "name": "Pin"}},
+            {"command": "construct.axis.two_planes", "params": {"a": "XZ", "b": "YZ", "name": "Spine"}},
+            {"command": "construct.plane.offset", "params": {"base": "XY", "offset": "5 mm", "name": "Shelf"}},
+        ]});
+        s.run_script(&script).unwrap();
+        let grade = |want: Value| {
+            let mut c = Checks { list: Vec::new(), pass: true };
+            check_construction(&s, &want, 1e-3, &mut c);
+            c.pass
+        };
+        // An axis is its line, either way along it, through any point of it; a plane likewise.
+        assert!(grade(json!({
+            "Pin": {"point": [0, 0, 0]},
+            "Spine": {"axis": {"through": [0, 0, 40], "dir": [0, 0, -1]}},
+            "Shelf": {"plane": {"through": [7, -3, 5], "normal": [0, 0, 2]}},
+        })));
+        assert!(!grade(json!({"Pin": {"point": [0, 0, 0.01]}})));
+        assert!(!grade(json!({"Spine": {"axis": {"through": [0.01, 0, 0], "dir": [0, 0, 1]}}})));
+        assert!(!grade(json!({"Spine": {"axis": {"through": [0, 0, 0], "dir": [0, 0.01, 1]}}})));
+        assert!(!grade(json!({"Shelf": {"plane": {"through": [0, 0, 5.01], "normal": [0, 0, 1]}}})));
+        assert!(!grade(json!({"Shelf": {"plane": {"through": [0, 0, 5], "normal": [1, 0, 0]}}})));
+        // A name the timeline has not got, or of another kind, fails.
+        assert!(!grade(json!({"Pin": {"plane": {"through": [0, 0, 0], "normal": [0, 0, 1]}}})));
+        assert!(!grade(json!({"Nothing": {"point": [0, 0, 0]}})));
+        assert!(!grade(json!({"Pin": {"centre": [0, 0, 0]}})));
+    }
+
+    #[test]
+    fn results_are_read_from_each_commands_reply() {
+        let replies = [json!({"center": [1.0, 2.0, 3.0], "volume": 24000.0}), json!({"summary": {"worst": "g1"}, "count": 1})];
+        let grade = |results: Value| {
+            let mut c = Checks { list: Vec::new(), pass: true };
+            output_checks(&mut c, &json!({ "results": results }), "", &replies, 1e-3);
+            c.pass
+        };
+        assert!(grade(json!([
+            {"step": 1, "pointer": "/center", "json": [1.0, 2.0, 3.0]},
+            {"step": 1, "pointer": "/volume", "json": 24010.0},
+            {"step": 2, "pointer": "/summary/worst", "json": "g1"},
+            {"step": 2, "json": {"count": 1}},
+        ])));
+        assert!(!grade(json!([{"step": 1, "pointer": "/volume", "json": 24100.0}])));
+        assert!(grade(json!([{"step": 1, "pointer": "/volume", "json": 24100.0, "rel": 0.01}])));
+        assert!(!grade(json!([{"step": 1, "pointer": "/center", "json": [1.0, 2.0, 3.01]}])));
+        assert!(grade(json!([{"step": 1, "pointer": "/center", "json": [1.0, 2.0, 3.01], "abs_mm": 0.02}])));
+        assert!(!grade(json!([{"step": 2, "pointer": "/summary/worst", "json": "g2"}])));
+        // A whole number is exact: a count.
+        assert!(!grade(json!([{"step": 2, "pointer": "/count", "json": 2}])));
+        // A step or a part that is not there fails, as does an entry without a step.
+        assert!(!grade(json!([{"step": 3, "pointer": "/count", "json": 1}])));
+        assert!(!grade(json!([{"step": 2, "pointer": "/missing", "json": null}])));
+        assert!(!grade(json!([{"pointer": "/count", "json": 1}])));
+    }
+
     #[test]
     fn a_base_cycle_is_an_error_not_a_hang() {
         let root = std::env::temp_dir().join(format!("kernel-cases-cycle-{}", std::process::id()));
@@ -589,5 +1163,28 @@ mod tests {
         let r = read_json(&format!("{a}/recipe.json")).unwrap();
         assert!(script(&a, "/scratch", &r).unwrap_err().contains("deeper than"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The flat pattern is graded on the last `sheet.flat_pattern` result: its size, its outline's
+    /// area less the cut-outs', and its bend lines matched either way round, one for one.
+    #[test]
+    fn flat_pattern_grades_size_area_and_bend_lines() {
+        let flat = json!({"flat_size_mm": [10.0, 4.0, 2.0],
+            "outline": [[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]]], "cutouts": [[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]],
+            "bends": [{"start": [5.0, 0.0], "end": [5.0, 4.0]}]});
+        let results = [json!({"volume_mm3": 1.0}), flat];
+        let grade = |want: Value| {
+            let mut c = Checks { list: Vec::new(), pass: true };
+            flat_pattern_checks(&mut c, &want, &results, 1e-3, 1e-3);
+            c.pass
+        };
+        assert!(grade(json!({"size_mm": [10.0, 4.0], "area_mm2": 39.0, "bend_lines": [[[5.0, 4.0], [5.0, 0.0]]]})));
+        assert!(!grade(json!({"area_mm2": 40.0})), "the cut-out is not material");
+        assert!(!grade(json!({"size_mm": [10.0, 5.0]})));
+        assert!(!grade(json!({"bend_lines": [[[5.0, 0.0], [5.0, 4.0]], [[5.0, 0.0], [5.0, 4.0]]]})), "one bend line matches one only");
+        assert!(!grade(json!({"bend_lines": [[[6.0, 0.0], [6.0, 4.0]]]})));
+        let mut c = Checks { list: Vec::new(), pass: true };
+        flat_pattern_checks(&mut c, &json!({"area_mm2": 1.0}), &results[..1], 1e-3, 1e-3);
+        assert!(!c.pass, "no flat pattern was made");
     }
 }

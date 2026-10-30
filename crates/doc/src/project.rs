@@ -366,8 +366,9 @@ fn edge_curves(body: Option<&crate::ModelBody>, e: usize) -> Vec<WireCurve> {
 }
 
 /// The sketch segments `segs` of `ss` projected along the sketch normal `normal` (turned toward
-/// the face) onto the face of `target` at `at`: SMLib's projection, the pieces that meet end to
-/// end joined into one wire each, every wire its points (for display) and its exact curves.
+/// the face) onto the face of `target` at `at`: SMLib's projection, the side of the face the
+/// projection meets first ([`first_hits`]), the pieces that meet end to end joined into one wire
+/// each, every wire its points (for display) and its exact curves.
 fn projected_wires(
     target: &crate::ModelBody,
     at: Vec3,
@@ -378,28 +379,117 @@ fn projected_wires(
 ) -> Result<(Vec<Vec<Vec3>>, Vec<Vec<WireCurve>>)> {
     let from = segs.first().map(|s| ss.plane.to_world(s.start())).unwrap_or(at);
     let toward = if (at - from).dot(normal) < 0.0 { normal * -1.0 } else { normal };
-    joined_wires(crate::kernel::project_onto_face(&target.body, at, &ss.plane, segs, toward)?, size * 1e-6)
+    let curves = crate::kernel::project_onto_face(&target.body, at, &ss.plane, segs, toward)?;
+    joined_wires(first_hits(target, curves, toward)?, size * 1e-6)
 }
 
-/// Record curves as wires: curves that meet end to end (within `tol`) one wire, each wire its
-/// points (for display) and its exact curves.
+/// Of the curves a parallel projection along `toward` made on a face of `target`, the ones the
+/// projection meets first: SMLib gives every curve where the projecting lines cross the face
+/// (both sides of a sphere), and a projection onto a surface is where they first hit it. A curve
+/// is kept when the first hit along the line through its middle, on the body's mesh, is the
+/// curve itself (within the mesh's chord tolerance, a few times over), not a point of the body
+/// in front of it.
+fn first_hits(
+    target: &crate::ModelBody,
+    curves: Vec<(solidcraft_geom::brep::Curve, [f64; 2])>,
+    toward: Vec3,
+) -> Result<Vec<(solidcraft_geom::brep::Curve, [f64; 2])>> {
+    let Some(dir) = toward.normalized() else { return Ok(curves) };
+    let mesh = target.mesh();
+    let reach = 2.0 * mesh.bounds().diagonal().max(1e-9);
+    let slack = 4.0 * target.display_tol();
+    let mut kept = Vec::with_capacity(curves.len());
+    for (curve, interval) in curves {
+        let eval = solidcraft_geom::brep::eval::CurveEval::new(&curve).map_err(|e| DocError::Invalid(format!("projected curve: {e}")))?;
+        let mid = eval.point(0.5 * (interval[0] + interval[1])).ok_or_else(|| DocError::Invalid("projected curve: no middle point".into()))?;
+        let origin = mid - dir * reach;
+        let front = mesh.raycast(origin, dir).is_some_and(|(t, _)| t < reach - slack);
+        if !front {
+            kept.push((curve, interval));
+        }
+    }
+    Ok(kept)
+}
+
+/// Record curves as wires: curves that meet end to end (within `tol`) one wire, in any order and
+/// direction they come (a projection split at a sphere's pole into two pieces that both end there
+/// joins again there, the second run the other way), each wire its points (for display) and its
+/// exact curves.
 fn joined_wires(curves: Vec<(solidcraft_geom::brep::Curve, [f64; 2])>, tol: f64) -> Result<(Vec<Vec<Vec3>>, Vec<Vec<WireCurve>>)> {
     let (mut wires, mut exact): (Vec<Vec<Vec3>>, Vec<Vec<WireCurve>>) = (Vec::new(), Vec::new());
     for (curve, interval) in curves {
         let pts = crate::kernel::PathPiece::Segs(crate::kernel::curve_path(&curve, interval)?).points();
-        let Some(start) = pts.first().copied() else { continue };
-        match (wires.last_mut(), exact.last_mut()) {
-            (Some(w), Some(e)) if w.last().is_some_and(|end| end.dist(start) <= tol) => {
-                w.extend(pts.into_iter().skip(1));
-                e.push(WireCurve { curve, interval });
-            }
-            _ => {
-                wires.push(pts);
-                exact.push(vec![WireCurve { curve, interval }]);
+        if pts.is_empty() {
+            continue;
+        }
+        wires.push(pts);
+        exact.push(vec![WireCurve { curve, interval }]);
+    }
+    // Join a wire onto the one that ends where it starts (or ends, turned round), until no two
+    // meet: each join removes a wire.
+    'join: loop {
+        for i in 0..wires.len() {
+            for j in 0..wires.len() {
+                let (Some(a), Some(b)) = (wires.get(i), wires.get(j)) else { continue };
+                let (Some(end), Some(start), Some(last)) = (a.last(), b.first(), b.last()) else { continue };
+                let turned = if i == j {
+                    continue;
+                } else if end.dist(*start) <= tol {
+                    false
+                } else if end.dist(*last) <= tol && exact.get(j).is_some_and(|e| e.iter().all(|c| reversed(c).is_some())) {
+                    true
+                } else {
+                    continue;
+                };
+                let (mut w, mut e) = (wires.remove(j), exact.remove(j));
+                if turned {
+                    w.reverse();
+                    e = e.iter().rev().filter_map(reversed).collect();
+                }
+                let i = if j < i { i - 1 } else { i };
+                if let (Some(into), Some(curves)) = (wires.get_mut(i), exact.get_mut(i)) {
+                    into.extend(w.into_iter().skip(1));
+                    curves.extend(e);
+                }
+                continue 'join;
             }
         }
+        break;
     }
     Ok((wires, exact))
+}
+
+/// `c` run the other way: the same points, its parameter `t` now `c0 + c1 - t` over the curve's
+/// own knots (a line's `1 - t`, a circle's or ellipse's angle negated with its y axis turned).
+/// Exact; `None` for a curve kind it doesn't turn.
+fn reversed(c: &WireCurve) -> Option<WireCurve> {
+    use solidcraft_geom::brep::{Curve, Frame};
+    let [t0, t1] = c.interval;
+    let flip = |frame: &Frame| Frame { origin: frame.origin, x_axis: frame.x_axis, y_axis: frame.y_axis.map(|v| -v) };
+    let (curve, interval) = match &c.curve {
+        Curve::Line { start, end } => (Curve::Line { start: *end, end: *start }, [1.0 - t1, 1.0 - t0]),
+        Curve::Circle { frame, radius } => (Curve::Circle { frame: flip(frame), radius: *radius }, [-t1, -t0]),
+        Curve::Ellipse { frame, radii } => (Curve::Ellipse { frame: flip(frame), radii: *radii }, [-t1, -t0]),
+        Curve::Spline { knots, points } => {
+            let sum = knots.first()? + knots.last()?;
+            (
+                Curve::Spline { knots: knots.iter().rev().map(|k| sum - k).collect(), points: points.iter().rev().copied().collect() },
+                [sum - t1, sum - t0],
+            )
+        }
+        Curve::RationalSpline { knots, homogeneous } => {
+            let sum = knots.first()? + knots.last()?;
+            (
+                Curve::RationalSpline {
+                    knots: knots.iter().rev().map(|k| sum - k).collect(),
+                    homogeneous: homogeneous.iter().rev().copied().collect(),
+                },
+                [sum - t1, sum - t0],
+            )
+        }
+        _ => return None,
+    };
+    Some(WireCurve { curve, interval })
 }
 
 /// Curve `ci` of the solved sketch `ss` as its exact pieces in space, in the order its polyline
@@ -426,7 +516,10 @@ fn projected_edges(body: &crate::ModelBody, mesh: &Mesh, plane: &Plane, edges: &
     let mut out = Vec::new();
     for (e, exact) in edges.iter().zip(exact_edges(body, plane, edges)) {
         match exact {
-            Some(g) => out.extend(g),
+            Some(mut g) => {
+                at_vertices(body, mesh, plane, *e, &mut g);
+                out.extend(g);
+            }
             None => {
                 if let Some(pts) = mesh.edges.get(*e) {
                     out.extend(fit_world(plane, pts));
@@ -435,6 +528,51 @@ fn projected_edges(body: &crate::ModelBody, mesh: &Mesh, plane: &Plane, edges: &
         }
     }
     out
+}
+
+/// Edge `e`'s exact pieces `g` with their outer ends on the edge's vertices, where they lie
+/// within the edge's and the reading's tolerance of them. An edge's curve need only pass within
+/// its tolerance of its vertices, and an arc is read off a NURBS within the planar-edge
+/// tolerance: one SMLib made (a shell's offset corner) ended 2e-6 mm from the line it meets, and
+/// the two ends, not taken for one point, left the loop open, so an offset of one curve found
+/// no chain to follow. The vertex is the point both edges share.
+fn at_vertices(body: &crate::ModelBody, mesh: &Mesh, plane: &Plane, e: usize, g: &mut [LinkGeom]) {
+    let record = body.body.record();
+    let Some(edge) = record.edges.get(e) else { return };
+    let Some((first, last)) = mesh.edges.get(e).and_then(|pts| pts.first().zip(pts.last())) else { return };
+    // The pieces are read within the planar-edge tolerance of the edge's curve, which passes
+    // within its own tolerance of the vertices.
+    let tol = edge.vertices.iter().filter_map(|v| record.vertices.get(*v as usize)).map(|v| v.tolerance).fold(edge.tolerance, f64::max)
+        + body.body.planar_edges_tolerance();
+    // Each vertex moves the piece end nearest it (the pieces' order and direction need not be
+    // the edge's).
+    for v in [plane.to_local(*first), plane.to_local(*last)] {
+        let mut best: Option<(f64, &mut Vec2)> = None;
+        for piece in g.iter_mut() {
+            if let LinkGeom::Line(a, b) | LinkGeom::Arc { a, b, .. } | LinkGeom::Conic { a, b, .. } = piece {
+                for p in [a, b] {
+                    let d = p.dist(v);
+                    if d <= tol && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                        best = Some((d, p));
+                    }
+                }
+            }
+        }
+        if let Some((_, p)) = best {
+            *p = v;
+        }
+    }
+    // An arc is its centre and two ends on one circle: with its ends moved, its centre moves to
+    // the nearest point equally far from both (on their bisector), or the sketch would move an
+    // end back off the vertex onto the circle through the other.
+    for piece in g.iter_mut() {
+        if let LinkGeom::Arc { c, a, b } = piece
+            && let Some(across) = Vec2::new(a.y - b.y, b.x - a.x).normalized()
+        {
+            let mid = (*a + *b) * 0.5;
+            *c = mid + across * (*c - mid).dot(across);
+        }
+    }
 }
 
 /// A boundary segment as the link geometry that is the same curve.

@@ -130,7 +130,7 @@ fn exporter_up(import: &solidcraft_kernel::StepImport) -> Option<(&'static str, 
     if import.system.trim().starts_with("SolidCraft") {
         return Some(("z", "SolidCraft"));
     }
-    let named = import.system.to_ascii_lowercase().contains("solidworks");
+    let named = [&import.system, &import.preprocessor, &import.description].iter().any(|h| h.to_ascii_lowercase().contains("solidworks"));
     named.then_some(("y", "SolidWorks"))
 }
 
@@ -660,13 +660,15 @@ fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     // their links.
     let st = s.model.state();
     let mut held = Vec::new();
-    let doc = if s.pending_moves.is_empty() {
+    // The exploded view is shown only: the links are where the design places them.
+    let moves = s.uncaptured_moves();
+    let doc = if moves.is_empty() {
         std::borrow::Cow::Borrowed(&*s.doc)
     } else {
         let placed = solidcraft_doc::joints::solve(&s.doc, &st).world;
         let mut doc = (*s.doc).clone();
         for o in &mut doc.occurrences {
-            match s.pending_moves.get(&o.id) {
+            match moves.get(&o.id) {
                 Some(_) if placed.contains_key(&o.id) => held.push(o.name.clone()),
                 Some(t) => o.transform = *t,
                 None => {}

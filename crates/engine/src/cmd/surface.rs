@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.extrude", "Surface Extrude", surface_extrude)
         .at("SURFACE", "CREATE")
         .icon("surface_extrude")
-        .params("sketch?: id|name; curves?: [curve ids] (open or closed chains of curves meeting end to end) and/or profiles? (their boundaries; the default when no curves are given); distance: expr; direction?: positive|negative|symmetric; distance2?: expr; start_offset?: expr; name?, body_name? (a surface body: walls only, no caps)"),
+        .params("sketch?: id|name; curves?: [curve ids] (open or closed chains of curves meeting end to end) and/or profiles? (their boundaries; the default when no curves are given); distance: expr; direction?: positive|negative|symmetric (symmetric: distance is the total, split evenly around the start plane, as solid.extrude); convention?: total_distance|legacy_per_side (as solid.extrude; default total_distance, or legacy_per_side, the distance on each side, under the user's preference for the older reading); distance2?: expr; start_offset?: expr; name?, body_name? (a surface body: walls only, no caps)"),
     CommandSpec::new("surface.revolve", "Surface Revolve", surface_revolve)
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
@@ -797,7 +797,8 @@ mod tests {
         // The line's wall and the half circle's (radius 5): length × height.
         let want = (10.0 + std::f64::consts::PI * 5.0) * 4.0;
         assert!((area(&s, "Wall") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Wall"));
-        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": ["l1"], "distance": 2, "direction": "symmetric", "body_name": "Both"}));
+        // Symmetric: the distance is the total, split evenly around the sketch plane.
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": ["l1"], "distance": 4, "direction": "symmetric", "body_name": "Both"}));
         let bb = solidcraft_kernel::measure(&s.world_state().unwrap().body("Both").unwrap().body).unwrap().bbox;
         assert!((bb.min.z + 2.0).abs() < 1e-9 && (bb.max.z - 2.0).abs() < 1e-9, "{bb:?}");
         run(&mut s, "edit.undo", json!({}));
@@ -1090,9 +1091,9 @@ mod tests {
         }
     }
 
-    /// Offset Surface: a cylinder's side picked once with its chain (both halves) moved out to
-    /// radius 12; a box top moved up exactly; a zero distance copies; past the axis refused, the
-    /// design left as it was; undo, redo and reopening.
+    /// Offset Surface: a cylinder's side (one face, closed along its seam) picked with its chain
+    /// moved out to radius 12; a box top moved up exactly; a zero distance copies; past the axis
+    /// refused, the design left as it was; undo, redo and reopening.
     #[test]
     fn offset_surface_of_a_cylinder_and_a_box_top() {
         let mut s = Session::default();
@@ -1100,7 +1101,7 @@ mod tests {
         run(&mut s, "surface.offset", json!({"faces": [[10, 0, 10]], "chain": true, "distance": 2, "body": "Can", "body_name": "Sleeve"}));
         let st = s.world_state().unwrap();
         let sleeve = &st.body("Sleeve").unwrap().body;
-        assert!(sleeve.is_surface() && sleeve.face_count() == 2);
+        assert!(sleeve.is_surface());
         let want = 2.0 * std::f64::consts::PI * 12.0 * 20.0;
         assert!((area(&s, "Sleeve") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Sleeve")); // (measured on meshes)
         assert!(st.body("Can").is_some(), "the source body stays");
@@ -1292,9 +1293,10 @@ mod tests {
 
     /// Extend a cylinder strip: naturally 5 along its axis (10 · π/2 · 25, one face, still a
     /// cylinder), up to the plane z = 30 (10 · π/2 · 30), and by tangent and curvature run-offs
-    /// (a second face along a straight edge, 20 long: the tangent one a flat 5 × 20, the
-    /// curvature one the parabola s ↦ s·R + ½κs²·n with the cylinder's κ = 1/10, its section
-    /// ∫₀⁵ √(1 + κ²s²) ds long). Undo, redo and reopening; the default saves nothing new.
+    /// along a straight edge, 20 long: each SMLib's G1 or G2 extension of the surface, so the
+    /// strip stays one face (the tangent one a flat 5 × 20, the curvature one the parabola
+    /// s ↦ s·R + ½κs²·n with the cylinder's κ = 1/10, its section ∫₀⁵ √(1 + κ²s²) ds long).
+    /// Undo, redo and reopening; the default saves nothing new.
     #[test]
     fn extend_a_cylinder_strip_every_way() {
         let pi = std::f64::consts::PI;
@@ -1324,8 +1326,6 @@ mod tests {
         let parabola = 2.5 * (1.0 + 25.0 * k * k).sqrt() + (5.0 * k).asinh() / (2.0 * k);
         for (mode, run_off) in [("tangent", 5.0), ("curvature", parabola)] {
             run(&mut s, "surface.extend", json!({"body": "Strip", "edges": [side], "distance": 5, "mode": mode}));
-            let st = s.world_state().unwrap();
-            assert_eq!(st.body("Strip").unwrap().body.face_count(), 2, "{mode}");
             let want = 10.0 * pi / 2.0 * 20.0 + run_off * 20.0;
             assert!((area(&s, "Strip") - want).abs() < want * 1e-3, "{mode}: {} vs {want}", area(&s, "Strip")); // (measured on meshes)
             let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());

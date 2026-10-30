@@ -347,9 +347,9 @@ impl ModelBody {
         self.mesh.get().cloned()
     }
 
-    /// The isoparametric curves of face `face` for Isocurve Analysis: spaced by `count` on the
-    /// face's surface (so faces on one surface share them), exact and cut to its trims
-    /// ([`kernel::iso_grid`]), their points at the chord
+    /// The isoparametric curves of face `face` for Isocurve Analysis: `count` each way, evenly
+    /// spaced across the face (faces on one surface spaced together, so they share them), exact
+    /// and cut to its trims ([`kernel::iso_grid`]), their points at the chord
     /// tolerance of the viewport's display quality. Worked out once per face, count and display
     /// quality, and shared by every clone of this body (timeline snapshots, world states). A mesh
     /// body has no surfaces, so none.
@@ -390,7 +390,8 @@ pub struct SolvedSketch {
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
 /// large for the geometry around them is reduced where it doesn't fit, to the largest that works
 /// for each group of edges sharing a face; the radius per edge is returned. With
-/// [`FilletFit::Taper`](crate::FilletFit::Taper) it tapers along each edge it doesn't fit.
+/// [`FilletFit::Taper`](crate::FilletFit::Taper) it tapers along each edge it doesn't fit. With
+/// the exact fit a radius too large is refused, naming the largest that fits ([`with_largest_fit`]).
 fn fillet_fitted(
     body: &kernel::Body,
     edges: &[Vec3],
@@ -398,6 +399,9 @@ fn fillet_fitted(
     fit: crate::FilletFit,
 ) -> std::result::Result<(kernel::Body, Option<Vec<f64>>), kernel::KernelError> {
     match kernel::fillet(body, edges, r) {
+        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Exact => {
+            Err(with_largest_fit(why, "radius", || kernel::fillet_max(body, edges, r)))
+        }
         Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max_each(body, edges, r)? {
             // Built at the radius asked for after all (the groups apart): nothing reduced.
             Some((used, b)) => Ok((b, used.iter().any(|u| *u < r).then_some(used))),
@@ -405,6 +409,25 @@ fn fillet_fitted(
         },
         Err(kernel::KernelError::TooLarge(_)) if fit == crate::FilletFit::Taper => kernel::fillet_tapered(body, edges, r).map(|(b, _)| (b, None)),
         other => other.map(|b| (b, None)),
+    }
+}
+
+/// A blend's refusal as too large (`why`) with the largest `size` (radius, distance) that fits,
+/// as `search` finds it by building candidates ([`kernel::fillet_max`]): the refusal as it is
+/// when none fits or the search itself fails (a candidate failing for another reason says
+/// nothing about the size).
+fn with_largest_fit(
+    why: String,
+    size: &str,
+    search: impl FnOnce() -> std::result::Result<Option<(f64, kernel::Body)>, kernel::KernelError>,
+) -> kernel::KernelError {
+    match search() {
+        Ok(Some((largest, _))) => kernel::KernelError::TooLarge(format!("{why}; the largest {size} that fits is {} mm", show_mm(largest))),
+        Ok(None) => kernel::KernelError::TooLarge(why),
+        Err(e) => {
+            log::debug!("the largest {size} that fits: {e}");
+            kernel::KernelError::TooLarge(why)
+        }
     }
 }
 
@@ -535,6 +558,10 @@ pub struct ModelState {
     /// How the pieces a join split off into bodies of their own touched the others (by feature
     /// id), for its notice.
     kept_separate: BTreeMap<u64, KeptSeparate>,
+    /// For a feature saved before format 14 that split a body, a digest of the later features'
+    /// picks its pieces were named by (by feature id, see [`crate::lineage::order_legacy_lumps`]):
+    /// the state stands for the feature only while those picks are the same.
+    legacy_picks: BTreeMap<u64, u64>,
 }
 
 /// How a piece a join split off into a body of its own (`Touching::Separate`) touched the
@@ -645,7 +672,7 @@ impl ModelState {
     /// After a feature evaluated to this state from `before` with cache key `key`: bodies it
     /// made or changed take that key, sketches it made a digest of their solved geometry (see
     /// [`quantize`]); the rest keep theirs.
-    fn stamp(&mut self, before: &Arc<ModelState>, f: &Feature, key: u64, mats: Vec<Mat>) {
+    fn stamp(&mut self, doc: &Document, before: &Arc<ModelState>, f: &Feature, key: u64, mats: Vec<Mat>) {
         let feature = f.id;
         let depth = before.bodies.iter().filter_map(|b| b.names.depth()).max().unwrap_or(0) + 1;
         let sheets = if f.kind.is_sheet() { self.sheets.clone() } else { Vec::new() };
@@ -654,7 +681,13 @@ impl ModelState {
         // the feature was saved when they were named in that order).
         if !f.shell_piece_order {
             crate::lineage::order_lumps(&mut self.bodies, &origin);
+        } else {
+            crate::lineage::order_legacy_lumps(&mut self.bodies, before, doc, f);
         }
+        match crate::lineage::legacy_picks_digest(&self.bodies, before, doc, f) {
+            0 => self.legacy_picks.remove(&f.id),
+            d => self.legacy_picks.insert(f.id, d),
+        };
         // The bodies before the feature by name, in their order (names repeat only in damaged
         // states): every lookup below is the first match of a linear search, without walking
         // every earlier body for every body, after every feature.
@@ -1328,6 +1361,15 @@ fn context_digest(doc: &Document, vals: &BTreeMap<String, Value>) -> u64 {
     h.finish()
 }
 
+/// Whether `after`, a state feature `f` evaluated to from `before` in an earlier evaluation, is
+/// still its result in `doc`: a feature saved before format 14 names the pieces it splits a body
+/// into as the later features pick them ([`crate::lineage::order_legacy_lumps`]), which neither
+/// its fingerprint nor its cache key cover. (A script replays those features after it: the state
+/// made before they were there named the pieces otherwise.)
+fn legacy_current(doc: &Document, f: &Feature, before: &ModelState, after: &ModelState) -> bool {
+    !f.shell_piece_order || after.legacy_picks.get(&f.id).copied().unwrap_or(0) == crate::lineage::legacy_picks_digest(&after.bodies, before, doc, f)
+}
+
 /// The cache key of a feature evaluation: its own inputs, the document context and the state it
 /// starts from. Features that replay other features' definitions (patterns and mirrors of
 /// features) also take the chain fingerprint, which covers every earlier definition.
@@ -1860,9 +1902,11 @@ impl Model {
             if f.suppressed && !rolled_back {
                 reserved.extend(f.body_names.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).map(str::to_string));
             }
+            // A feature that names its pieces as later features pick them (saved before format 14)
+            // has a result only while those picks are what they were.
             if reuse
                 && !unkept
-                && let Some(old) = self.results.get(i).filter(current)
+                && let Some(old) = self.results.get(i).filter(current).filter(|old| old.skipped || legacy_current(doc, f, &state, &old.state))
             {
                 if !old.skipped {
                     state = old.state.clone();
@@ -1898,7 +1942,13 @@ impl Model {
                 cache_key(f, fp, fingerprint(doc, 0, f, &vals, false, &self.step_digests) ^ placement_digest(doc, f, Some(&state)), ctx, &state);
             let kept = self.kept.0.as_ref().filter(|_| !self.no_cache);
             if !self.no_cache
-                && let Some(c) = self.cache.lock().ok().and_then(|mut m| m.get(key)).or_else(|| kept.and_then(|k| k.get(key)))
+                && let Some(c) = self
+                    .cache
+                    .lock()
+                    .ok()
+                    .and_then(|mut m| m.get(key))
+                    .or_else(|| kept.and_then(|k| k.get(key)))
+                    .filter(|c| c.error.is_some() || legacy_current(doc, f, &state, &c.state))
             {
                 if let Some(k) = kept {
                     k.put(key, &c);
@@ -1927,7 +1977,12 @@ impl Model {
             }
             // An active result hidden by the marker, or evaluated ahead on these same inputs
             // (the same chain of definitions from the start). Changed inputs never reuse it.
-            if let Some(r) = rolled.as_ref().filter(current).or_else(|| primed.as_ref().and_then(|p| p.get(&f.id)).filter(current)) {
+            if let Some(r) = rolled
+                .as_ref()
+                .filter(current)
+                .or_else(|| primed.as_ref().and_then(|p| p.get(&f.id)).filter(current))
+                .filter(|r| r.error.is_some() || legacy_current(doc, f, &state, &r.state))
+            {
                 restored += 1;
                 if r.error.is_none() {
                     state = r.state.clone();
@@ -2010,7 +2065,7 @@ impl Model {
                         }
                         _ => mats,
                     };
-                    next.stamp(&state, f, key, mats);
+                    next.stamp(doc, &state, f, key, mats);
                     for b in &mut next.bodies {
                         if !b.transferred {
                             b.component = match doc.body_components.get(&b.name) {
@@ -3226,7 +3281,8 @@ pub fn edge_refs(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Vec3]) 
 }
 
 /// Persistent names of the edges picked at `pts`, each on the body it lies on (see
-/// [`picked_bodies`]).
+/// [`picked_bodies`]): of the edge a blend takes at each pick (at a vertex where a seam meets a
+/// rim, the rim), else of the nearest edge.
 pub fn edge_names_for(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Vec3]) -> Vec<String> {
     let Some(on) = picked_bodies(st, body, pts) else { return Vec::new() };
     let mut out = vec![String::new(); pts.len()];
@@ -3240,7 +3296,14 @@ pub fn edge_names_for(st: &ModelState, body: &Option<crate::BodyName>, pts: &[Ve
         // The body's names are worked out once for all its picks.
         let idx: Vec<usize> = on.iter().enumerate().filter(|(_, t)| **t == ti).map(|(i, _)| i).collect();
         let at: Vec<Vec3> = idx.iter().filter_map(|i| pts.get(*i).copied()).collect();
-        for (i, n) in idx.into_iter().zip(crate::naming::edge_names_at(b, &at)) {
+        let names = match kernel::blend_edges(&b.body, &at) {
+            Ok(edges) => {
+                let all = crate::naming::edge_names(b);
+                edges.iter().map(|e| all.get(*e).cloned().unwrap_or_default()).collect()
+            }
+            Err(_) => crate::naming::edge_names_at(b, &at),
+        };
+        for (i, n) in idx.into_iter().zip(names) {
             if let Some(slot) = out.get_mut(i) {
                 *slot = n;
             }
@@ -5078,6 +5141,15 @@ fn path_points(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Option<
     for id in ids {
         if let Some(wi) = ps.sketch.wire_index(id) {
             pieces.push(match ps.sketch.wires.get(wi) {
+                // A drawn 3D arc is its circle, from its start counter-clockwise about its normal
+                // (its three fit points define it; a spline through them is not the arc).
+                Some(solidcraft_sketch::Wire { arc: Some(arc), .. }) => {
+                    let x = (arc.start - arc.center).normalized().ok_or_else(|| DocError::Invalid("a 3D arc of no radius".into()))?;
+                    let y = arc.normal.cross(x);
+                    let frame = solidcraft_geom::brep::Frame { origin: arc.center.into(), x_axis: x.into(), y_axis: y.into() };
+                    let circle = solidcraft_geom::brep::Curve::Circle { frame, radius: arc.radius };
+                    kernel::PathPiece::Segs(kernel::curve_path(&circle, [0.0, solidcraft_sketch::arc_sweep(arc)])?)
+                }
                 Some(w) if w.fit.len() >= 3 => kernel::PathPiece::Spline { fit: w.fit.clone(), reversed: false },
                 Some(w) if !w.exact.is_empty() => {
                     let mut segs = Vec::new();
@@ -6249,7 +6321,10 @@ fn chamfer_with(
     };
     Ok(match side {
         Some(s) => kernel::chamfer_sides(b, edges, d, s, flip)?,
-        None => kernel::chamfer(b, edges, d)?,
+        None => match kernel::chamfer(b, edges, d) {
+            Err(kernel::KernelError::TooLarge(why)) => return Err(with_largest_fit(why, "distance", || kernel::chamfer_max(b, edges, d)).into()),
+            other => other?,
+        },
     })
 }
 

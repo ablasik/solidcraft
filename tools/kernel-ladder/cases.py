@@ -530,11 +530,11 @@ case(T5, "005-countersink", "a countersunk hole: d6.6 through, d12 x 90 deg coun
 case(T5, "006-tapped-m6-through", "an M6 tapped hole through: the tap drill d5 (major - pitch), cosmetic thread",
      [H(position=top, thread="M6")],
      {"body_count": 1, "volume_mm3": VB - PI * 6.25 * 20, "faces": 7}, "M6 coarse pitch 1: tap drill 6 - 1 = 5; removed pi 2.5^2 20; the cosmetic thread adds no geometry", base=B1)
-ch8 = 3.375 / math.tan(math.radians(59))
+ch8 = 3.4 / math.tan(math.radians(59))
 case(T5, "007-tapped-m8-blind", "an M8 tapped blind hole 12 deep with a 118 deg drill point",
      [H(position=top, thread="M8", depth=12, type="drilled", tip_angle=118)],
-     {"body_count": 1, "volume_mm3": VB - PI * 3.375 ** 2 * 12 - PI * 3.375 ** 2 * ch8 / 3, "faces": 8},
-     "M8 coarse pitch 1.25: tap drill (major - pitch) 6.75; removed pi r^2 12 to the shoulder + the point cone pi r^2 (r/tan59)/3", base=B1)
+     {"body_count": 1, "volume_mm3": VB - PI * 3.4 ** 2 * 12 - PI * 3.4 ** 2 * ch8 / 3, "faces": 8},
+     "M8 coarse pitch 1.25: the tap maker's drill 6.8 (Yamawa YEU23 p.704); removed pi r^2 12 to the shoulder + the point cone pi r^2 (r/tan59)/3", base=B1)
 r, Rc = 2.1, 20
 vint = quad(lambda y: 2 * math.sqrt(max(r * r - y * y, 0)) * 2 * math.sqrt(Rc * Rc - y * y), -r, r, 128)
 case(T5, "008-tapped-m5-into-curved-face", "an M5 tapped hole drilled radially through a cylinder r20 lying along X",
@@ -568,6 +568,29 @@ case(T5, "013-part-holes", "the running part: an M6 tapped through hole, an M5 t
      {"body_count": 1, "volume_mm3": V5, "faces": 20},
      "removed pi 2.5^2 20 (M6, tap drill 5) + pi 2.1^2 8 (M5, tap drill 4.2, flat) + pi 1.65^2 35; faces +1 +2 +1", base=C4)
 C5 = up(T5, "013-part-holes")
+# Tapped holes of the other catalogued families: cosmetic threads in a hole drilled to the tap
+# maker's drill (crates/doc/src/thread_catalog.rs), so a drilled cylinder is all the geometry.
+case(T5, "014-tapped-1-4-20-unc-through", "a 1/4-20 UNC tapped hole through the stock: drilled #7 (0.201 in), cosmetic thread",
+     [H(position=top, thread="1/4-20 UNC")],
+     {"body_count": 1, "volume_mm3": VB - PI * (0.201 * 25.4 / 2) ** 2 * 20, "faces": 7},
+     "ASME B1.1 1/4-20 UNC: D = 0.25 in, P = 1/20 in, basic minor D1 = D - 1.082532 P = 0.1959 in; the tap drill is #7, 0.201 in = 5.1054 mm "
+     "(the cutting-tap drill for about 75% thread, Guhring's table in thread_catalog.rs); removed pi 2.5527^2 20; the cosmetic thread adds no geometry: + one cylinder face", base=B1)
+case(T5, "015-tapped-1-4-28-unf-blind", "a 1/4-28 UNF tapped blind hole 10 deep, flat bottom: drilled 5.45 mm, cosmetic thread",
+     [H(position=top, thread="1/4-28 UNF", depth=10)],
+     {"body_count": 1, "volume_mm3": VB - PI * 2.725 ** 2 * 10, "faces": 8},
+     "ASME B1.1 1/4-28 UNF: D = 0.25 in, P = 1/28 in, basic minor D1 = D - 1.082532 P = 5.368 mm; the tap maker's drill 5.45 mm (Guhring, thread_catalog.rs), "
+     "above D1 as a drill must be; removed pi 2.725^2 10; + wall and floor", base=B1)
+case(T5, "016-tapped-rc-1-2-through", "an Rc 1/2 tapped hole through the stock (ISO 7-1 internal taper): a straight hole at the tap maker's 17.6 mm, cosmetic thread",
+     [H(position=top, thread="Rc 1/2")],
+     {"body_count": 1, "volume_mm3": VB - PI * 8.8 ** 2 * 20, "faces": 7},
+     "ISO 7-1 Rc 1/2: gauge diameter d = 20.955 at the face, 14 threads per inch, h = 0.640327 P, minor d1 = d - 2h = 18.631 there and 1/16 smaller per mm deeper "
+     "(18.631 - 13.2/16 = 17.806 at the end of the 13.2 mm useful thread); a straight (not reamed) hole takes the tap maker's 17.6 (Yamawa YEU23 p.709, the largest for "
+     "non-full threads): removed pi 8.8^2 20; + one cylinder face", base=B1)
+case(T5, "017-tapped-1-4-npt-through", "a 1/4-18 NPT tapped hole through the stock (ASME B1.20.1): a straight hole at the tap maker's 10.85 mm, cosmetic thread",
+     [H(position=top, thread="1/4-18 NPT")],
+     {"body_count": 1, "volume_mm3": VB - PI * 5.425 ** 2 * 20, "faces": 7},
+     "ASME B1.20.1 1/4-18 NPT: E0 = 0.47739 in, L1 = 0.2278 in, h = 0.8 P; at the face the minor E1 - h = 0.48163 - 0.04444 in = 11.105 mm, 1/16 smaller per mm deeper; "
+     "a straight hole takes the tap maker's 10.85 (Yamawa YEU23 p.710): removed pi 5.425^2 20; + one cylinder face", base=B1)
 
 # ---------------------------------------------------------------- 06 threads
 def thr(face, **p):
@@ -759,14 +782,141 @@ case(T6, "019-external-tr40x14-p7-two-start", "a modelled two-start trapezoidal 
                    "groove of pitch 7 would: over 42 mm (three leads, six pitches) between free ends") + "ISO 2904 for P 7: 30 deg, H1 = P/2, crest flat 0.366 P, "
      "ac = 0.5 (P 6..12), external minor d3 = d - 2 (H1 + ac) = 32")
 
-rf10 = 5 - 5 * math.sqrt(3) / 2 * 1.5 / 8
-case(T6, "017-external-m10-chamfered-tip", "001's modelled M10 thread with ISO 4753's chamfered end at both free ends: a 45 deg cone down to the minor diameter, cut after the groove",
-     cylT + [thr([5, 0, 15], designation="M10", tip="chamfer")],
+rf10 = 5 - 17 / 24 * math.sqrt(3) / 2 * 1.5  # ISO 724: d3 = d - 2 (17/24) H
+case(T6, "017-external-m10-chamfered-tip", "001's modelled M10 thread with ISO 4753's chamfered end at both free ends: a 45 deg cone down to the external minor diameter d3, cut after the groove",
+     cylT + [thr([5, 0, 15], designation="M10", tip="both")],
      {"body_count": 1, "volume_mm3": ext_volume(10, 1.5, [(0, 5 - rf10, lambda z: rf10 + z), (5 - rf10, 25 + rf10, lambda z: 5), (25 + rf10, 30, lambda z: rf10 + 30 - z)]),
       "tolerance": {"rel": 1e-4}},
      TMETH.replace("Tolerance 0.5%: solid.thread cuts faceted by design (chords within P/200 on the body, P/100 on the tool)", "Tolerance 0.01%: SMLib's exact screw sweep") +
-     "; the chamfer is axisymmetric and cut after the groove, so it only lowers the stock's outer radius: r <= d_f/2 + distance from the end (45 deg), d_f the minor diameter d - 5H/4 = 8.376 "
-     "(ISO 4753 chamfered end: the end's diameter at most the minor diameter)")
+     "; the chamfer is axisymmetric and cut after the groove, so it only lowers the stock's outer radius: r <= d_f/2 + distance from the end (45 deg), d_f the external minor diameter d3 = d - 1.226869 P = 8.160 "
+     "(ISO 724; ISO 4753 chamfered end: the end's diameter at most the minor diameter), below the modelled root d1")
+
+# Pipe threads (crates/doc/src/thread_forms.rs, pipe_thread_sizes.rs): ISO 228-1 / ISO 7-1, 55 deg,
+# the triangle H truncated to the depth h, equally at crest and root, flats where the standard has
+# rounds; ASME B1.20.1 NPT, 60 deg, H = 0.866025 P truncated to h = 0.8 P.
+P14 = INCH / 14
+H_PAR, H_TAP, H55 = 0.960491 * P14, 0.960237 * P14, 0.640327 * P14
+t275 = math.tan(math.radians(27.5))
+G12 = 20.955
+PIPE = ("the space between the teeth is a groove of straight flanks, its tooth (H - h) tan(half angle) wide at the crest and its groove as wide at the root (the truncations "
+        "split equally); the standard's crest and root rounds are flats here. ")
+shaft_form("020-external-g-1-2", "a modelled G 1/2 parallel pipe thread (ISO 228-1, 55 deg) on a d20.955 shaft, six turns", "bspp", "G 1/2", G12, P14,
+           (H_PAR - H55) * t275, 27.5, 27.5, G12 / 2 - H55,
+           PIPE + "ISO 228-1 G 1/2: d = 20.955, 14 threads per inch, H = 0.960491 P, h = 0.640327 P, so the crest flat (H - h) tan27.5 = 0.16667 P and the minor d1 = d - 2h = 18.631")
+r1rp = G12 / 2 - H55
+vrp = 6 * form_turn(P14, (H_PAR - H55) * t275, r1rp, 27.5, 27.5, r1rp, G12 / 2, internal=True)
+case(T6, "021-internal-rp-1-2", "a modelled Rp 1/2 parallel internal pipe thread (ISO 7-1) in a d18.631 (its minor) bore through a 40x40 block six turns thick",
+     [box([-20, -20, 0], 40, 40, 6 * P14, body_name="Part"), cyl([0, 0, -1], r1rp, 6 * P14 + 2, body_name="Bore"), C("solid.combine", target="Part", tools=["Bore"], operation="cut"),
+      thr([r1rp, 0, 3 * P14], designation="Rp 1/2")],
+     {"body_count": 1, "volume_mm3": 1600 * 6 * P14 - PI * r1rp ** 2 * 6 * P14 - vrp, "tolerance": TOL_F},
+     FMETH.replace("between free ends", "through the block, both ends free") + PIPE + "ISO 7-1 Rp 1/2, the parallel internal thread an R screws into: the ISO 228-1 profile "
+     "(H = 0.960491 P, h = 0.640327 P) at the gauge diameters, d = 20.955, D1 = d - 2h = 18.631, the bore; the groove from the bore wall out to r 10.4775, "
+     "w(r) = P - 0.16667 P - (r - 9.3155) 2 tan27.5")
+
+# Taper pipe threads: a screw sweep whose section moves off the axis 1/32 of its rise (1 in 16 on
+# the diameter), the crests cut by the major cone (external) or minor cone (internal) as a die or tap
+# cuts them. What a moving section removes is exact by the sweep's Jacobian (sweep_removed).
+TAPER = ("ISO 7-1 / ASME B1.20.1 taper 1 in 16 on the diameter. The thread starts at its free end with the standard's diameter there and its diameters grow into the material "
+         "(the external major d0 + y/16 at y mm in; the internal minor d1 - y/16). The crests are the cone's: the material outside the external major cone (inside the internal "
+         "minor cone) along the thread is cut as the die (tap) cuts it. The groove is the sweep of the profile's section, rising P a turn and moving P/32 a turn off the axis, so "
+         "a point (rho, zeta) of the section at turn t lies at r = rho + c t, z = z0 + zeta + P t, the volume element is 2 pi r dA dt, and the groove removes "
+         "2 pi int_0^T (int int r dA over the section within the material) dt, exact while turns don't overlap (Gauss on 400 panels a turn: the integrand is piecewise polynomial in t). ")
+def taper_ext(name, what, desig, d0, L, P, flat, half, h, Rcyl, Ls, extra):
+    a = Ls - L
+    cone = lambda z: d0 / 2 + (Ls - z) / 32
+    crest_a = cone(a)
+    sec = groove_section(P, flat, crest_a, half, half, crest_a - h, max(crest_a, Rcyl) + 0.1)
+    A = [(0, -1, a), (0, 1, -Ls), (1, 1 / 32, -(d0 / 2 + Ls / 32)), (1, 0, -Rcyl)]
+    B = [(0, 1, -a), (0, -1, 0), (1, 0, -Rcyl)]
+    turns = (L + P) / P
+    groove_v = sweep_removed(sec, a, P, turns, -P / 32, [A, B])
+    env = PI * quad_split(lambda z: max(0.0, Rcyl ** 2 - cone(z) ** 2), a, Ls, 200, 8)
+    v = PI * Rcyl ** 2 * Ls - env - groove_v
+    case(T6, name, what, [cyl([0, 0, 0], Rcyl, Ls, body_name="Part"), thr([Rcyl, 0, Ls / 2], designation=desig, **{"from": [0, 0, Ls]})],
+         {"body_count": 1, "volume_mm3": v, "bbox": {"min": [-Rcyl, -Rcyl, 0], "max": [Rcyl, Rcyl, Ls]}, "tolerance": TOL_F},
+         TAPER + extra + " It starts at the free top end z = %g and runs the standard length L = %.4f down to z = %.4f, where it stops square inside the face (the groove's section centred "
+         "there, the cut below it bounded by the pipe's surface only). V = pi R^2 %g - the ring outside the cone (pi int (R^2 - r_cone^2) where the cone is inside the pipe) "
+         "- the groove (%.6f). Bbox: the pipe's" % (Ls, L, a, Ls, groove_v))
+taper_ext("022-external-r-1-2-taper", "a modelled R 1/2 taper pipe thread (ISO 7-1, 55 deg, 1 in 16) on a 21.3 mm pipe (ISO 65), its standard 13.2 mm from the pipe's end",
+          "R 1/2", G12 - 8.2 / 16, 13.2, P14, (H_TAP - H55) * t275, 27.5, H55, 21.3 / 2, 25,
+          PIPE + "ISO 7-1 R 1/2 (Table 1): gauge diameter d = 20.955 a basic gauge length 8.2 from the small end, so d0 = 20.955 - 8.2/16 = 20.4425 at the pipe's end; "
+          "14 threads per inch, H = 0.960237 P, h = 0.640327 P; useful thread 13.2. The pipe is ISO 65's 21.3 OD, outside the major cone over the whole thread (21.2675 at its end).")
+E0, L1, L2 = 0.75843, 0.320, 0.5337
+taper_ext("023-external-1-2-npt", "a modelled 1/2-14 NPT taper pipe thread (ASME B1.20.1, 60 deg, 1 in 16) on its 0.840 in pipe, its effective thread L2 from the end",
+          "1/2-14 NPT", (E0 + 0.8 / 14) * INCH, L2 * INCH, P14, (0.866025 - 0.8) * P14 * math.tan(math.radians(30)), 30.0, 0.8 * P14, 0.840 * INCH / 2, 25,
+          "ASME B1.20.1 (H28 Table VII.2) 1/2-14 NPT: pipe OD D = 0.840 in, E0 = 0.75843 in the pitch diameter at the small end, h = 0.8 P truncated equally at crest and root "
+          "(0.033 P each, a 0.038 P flat), so the major at the end is E0 + h = 20.7156 mm, growing 1/16; L2 = 0.5337 in = 13.556. The major cone passes the pipe's OD "
+          "(10.668) 9.93 mm in, so from there to L2 the crests are the pipe's surface, as the standard's imperfect threads are.")
+# Rc internal: the minor cone shrinks into the hole from the face (the gauge plane, ISO 7-1: the
+# internal thread's reference diameter is at its face).
+Lrc, rb = 13.2, 8.8
+m0 = (G12 - 2 * H55) / 2
+rm = lambda z: m0 - (Lrc - z) / 32
+sec_rc = groove_section(P14, (H_TAP - H55) * t275, rm(-P14), 27.5, 27.5, rm(-P14) + H55, rb - 0.2, internal=True)
+g_rc = sweep_removed(sec_rc, -P14, P14, (Lrc + 2 * P14) / P14, P14 / 32, [[(0, -1, 0), (0, 1, -Lrc), (-1, 1 / 32, m0 - Lrc / 32), (1, 0, -19)]])
+env_rc = PI * quad_split(lambda z: rm(z) ** 2 - rb ** 2, 0, Lrc, 200, 8)
+case(T6, "024-internal-rc-1-2-taper", "a modelled Rc 1/2 internal taper pipe thread (ISO 7-1) in a d17.6 hole (the tap maker's) through a 13.2 mm plate, from its top face",
+     [box([-20, -20, 0], 40, 40, Lrc, body_name="Part"), cyl([0, 0, -1], rb, Lrc + 2, body_name="Bore"), C("solid.combine", target="Part", tools=["Bore"], operation="cut"),
+      thr([rb, 0, Lrc / 2], designation="Rc 1/2", **{"from": [0, 0, Lrc]})],
+     {"body_count": 1, "volume_mm3": 1600 * Lrc - PI * rb ** 2 * Lrc - env_rc - g_rc, "bbox": {"min": [-20, -20, 0], "max": [20, 20, Lrc]}, "tolerance": TOL_F},
+     TAPER + PIPE + "ISO 7-1 Rc 1/2: the gauge diameter d = 20.955 at the face (z = 13.2), so the minor there is d1 = d - 2h = 18.631, shrinking 1/16 per mm down; "
+     "the plate is the useful thread 13.2 thick, so the minor cone stays outside the 17.6 hole (17.806 at the bottom). Both faces are free ends, the groove running a pitch "
+     "past each. V = 40^2 13.2 - pi 8.8^2 13.2 - the ring inside the minor cone (pi int (r_m^2 - 8.8^2), %.6f) - the groove (%.6f)" % (env_rc, g_rc))
+
+# A buttress thread's steep flank (DIN 513-1, 3 deg): which way it faces decides how near the shoulder
+# the groove may come, since it stops with its whole section clear of it (004's rule): the section's
+# extent toward the shoulder at the tool's outer edge (0.05 P past the crest) is the 3 deg flank's or
+# the 30 deg one's.
+PS, dS = 4.0, 20.0
+tS3, tS30 = math.tan(math.radians(3)), math.tan(math.radians(30))
+flatS = (PS - 0.75 * PS * (tS3 + tS30)) / 2
+r3S = dS / 2 - 0.86777 * PS
+for name, steep, lo, hi, what in [("025-external-s20x4-steep-flank-end-to-shoulder", "end", 3, 30, "the steep flank toward the thread's end (up, the default): the 3 deg wall faces the shoulder"),
+                                  ("026-external-s20x4-steep-flank-start-to-shoulder", "start", 30, 3, "the steep flank toward the thread's start (down): the 30 deg wall faces the shoulder")]:
+    sec = groove_section(PS, flatS, dS / 2, lo, hi, r3S, dS / 2 + 0.05 * PS)
+    w_lo = -min(z for _, z in sec)
+    s0 = 10 + w_lo
+    g = sweep_removed(sec, s0, PS, (40 + PS - s0) / PS, 0.0, [[(0, -1, 10), (0, 1, -40), (1, 0, -10)], [(0, 1, -10), (0, -1, 0), (1, 0, -15)]])
+    case(T6, name, "a modelled S20x4 buttress thread on a d20 shaft down to a d30 shoulder, " + what,
+         [cyl([0, 0, 0], 15, 10, body_name="Part"), cyl([0, 0, 10], 10, 30, operation="join", targets=["Part"]), thr([10, 0, 25], designation="S20x4", steep_flank=steep)],
+         {"body_count": 1, "volume_mm3": PI * 225 * 10 + PI * 100 * 30 - g, "bbox": {"min": [-15, -15, 0], "max": [15, 15, 40]}, "tolerance": TOL_F},
+         "DIN 513-1 S20x4: 3 deg load flank, 30 deg clearance flank, flats (P - 0.75 P (tan3 + tan30))/2 = 0.26384 P, external minor d3 = d - 2 x 0.86777 P = 13.058. "
+         "steep_flank %s puts the %d deg wall on the groove's side toward the shoulder (z = 10); the groove stops with its section clear of the shoulder, its centre "
+         "%.6f above it (the section's extent that way at r = 10.2, 0.05 P past the crest, the tool's outer edge), and runs out a pitch past the free top end. "
+         "V = pi 15^2 10 + pi 10^2 30 - the groove 2 pi int_0^T (int int r dA of the section within the shaft) dt (%.6f; a straight screw sweep, Pappus turn by turn, "
+         "with the free end's partial turn integrated). 025 and 026 differ by where the groove stops" % (steep, lo, w_lo, g), base=None)
+
+# The tip options (ISO 4753 chamfered end): none is 001, both is 017.
+case(T6, "027-external-m10-chamfered-start", "001's modelled M10 thread with ISO 4753's chamfered end at the end it starts from only (`tip: start`, from the top)",
+     cylT + [thr([5, 0, 15], designation="M10", tip="start", **{"from": [0, 0, 30]})],
+     {"body_count": 1, "volume_mm3": ext_volume(10, 1.5, [(0, 25 + rf10, lambda z: 5), (25 + rf10, 30, lambda z: rf10 + 30 - z)]), "tolerance": {"rel": 1e-4}},
+     TMETH.replace("Tolerance 0.5%: solid.thread cuts faceted by design (chords within P/200 on the body, P/100 on the tool)", "Tolerance 0.01%: SMLib's exact screw sweep") +
+     "; as 017 at the top end only: the 45 deg cone down to d3 = d - 2 (17/24) H = 8.160 (ISO 724) at z = 30, cut after the groove, lowers the stock's radius to r_f + (30 - z); "
+     "the bottom end stays as cut, the groove running out past it")
+cT = 2.5 / math.tan(math.radians(30))
+def tr_volume(sections, P=4.0, crest=10.0, r3=7.75):
+    flat = P / 2 * (1 - t15)
+    m = lambda r: 1.0 if r <= r3 else 1 - (P - flat - (crest - r) * 2 * t15) / P
+    def ring(R):
+        return quad(lambda r: r, 0, min(R, r3)) + (quad(lambda r: r * m(r), r3, R, 64) if R > r3 else 0.0)
+    return 2 * PI * sum(quad(lambda z: ring(f(z)), z0, z1, 64) for z0, z1, f in sections)
+trS = [cyl([0, 0, 0], 10, 24, body_name="Part")]
+case(T6, "028-external-tr20x4-chamfer-30-deg-2.5-deep", "011's modelled Tr20x4 thread with chamfered ends at its own angle and depth: 30 deg to the axis, 2.5 mm in from the major diameter",
+     trS + [thr([10, 0, 12], designation="Tr20x4", tip="both", chamfer_angle="30 deg", chamfer_depth="2.5 mm")],
+     {"body_count": 1, "volume_mm3": tr_volume([(0, cT, lambda z: 7.5 + z * math.tan(math.radians(30))), (cT, 24 - cT, lambda z: 10.0),
+                                                   (24 - cT, 24, lambda z: 7.5 + (24 - z) * math.tan(math.radians(30)))]), "tolerance": TOL_F},
+     "ISO 2904 Tr20x4 (011): crest flat 0.366 P, minor d3 = 15.5. Averaged over the turn every meridian half-plane holds the same sections (a screw motion), so "
+     "V = 2 pi int int r m(r) dr dz over the stock's section, m = 1 - w(r)/P the tooth's share of a pitch (1 below the root r 7.75). Both ends are free: the chamfer, "
+     "axisymmetric and cut after the groove, lowers the stock's radius to 7.5 + y tan30 at y mm from each end (the cone at 30 deg to the axis through d_f = d - 2 x 2.5 = 15, "
+     "below the root, so a whole ring is left on the end), reaching the major 4.330 mm in")
+case(T6, "029-external-tr20x4-chamfer-needs-depth", "011's Tr20x4 thread with a chamfered tip and no depth: refused, ISO 4753 is for metric threads",
+     trS + [thr([10, 0, 12], designation="Tr20x4", tip="both")], {"outcome": "refused", "refusal": "ISO 4753's chamfered end is for ISO metric threads"},
+     "ISO 4753's chamfered end (d_f at most the external minor diameter, ISO 724's d3) is defined for ISO metric threads only: a trapezoidal thread has no standard chamfer depth, "
+     "so without `chamfer_depth` there is no right answer and the thread must be refused, naming the depth to give", source="invariants")
+case(T6, "030-square-thread-refused", "a square thread on a d10 x 30 cylinder: refused, no current standard defines one",
+     cylT + [thr([5, 0, 15], form="square")], {"outcome": "refused", "refusal": "no current standard defines a square thread"},
+     "ISO, ASME and DIN define no square thread (Machinery's Handbook gives only historical proportions), so no dimension of it can be taken from a standard: the right answer "
+     "is a refusal pointing to trapezoidal (ISO 2904) or acme (ASME B1.5)", source="invariants")
 
 # ---------------------------------------------------------------- 07 fillets
 F = lambda edges, r, **p: C("solid.fillet", edges=edges, radius=r, **p)
@@ -814,7 +964,7 @@ case(T7, "010-corner-unequal-r7-r3", "an r7 vertical round at a corner, then r3 
      "Faces: 6 planes + the r7 cylinder + the r3 chain's cylinder, torus, cylinder; edges: 5 round the bottom, 5 round the top, 5 vertical (two r7 tangent lines, the box's "
      "three other verticals), the chain's three on the walls and two end arcs, its two seams; vertices from Euler (V - E + F = 2): 14", base=B1)
 case(T7, "016-corner-three-sequential-r5-r3-r7", 'rounds r5 and r3 on the two top edges at a corner, then r7 on the vertical edge under them: refused, the r7 cannot exist',
-     [F([corner[0]], 5), F([corner[1]], 3, tangent_chain=False), F([[60, 40, 8]], 7)], {"outcome": "refused"},
+     [F([corner[0]], 5), F([corner[1]], 3, tangent_chain=False), F([[60, 40, 8]], 7)], {"outcome": "refused", "refusal": "the fillet is larger than the faces beside its edges allow"},
      "the r7 runs on (tangent chain) up the side x=60 along its arc on the r5 round, a circle of radius 5 about the r5 axis: the r7's contact line on that face would be the arc offset 7 towards its centre, radius 5 - 7 < 0, so the blend passes through itself; and along the seam of the r5 and r3 rounds no ball over r3 fits the r3 round. No such round exists, so the right answer is a clean refusal (SMLib: no room for the rolling ball). 018 is the same corner with a radius that fits.", base=B1, source="invariants")
 case(T7, "018-corner-three-sequential-r5-r3-r2", 'rounds r5 and r3 on the two top edges at a corner, then r2 on the vertical edge under them, run on up into the corner',
      [F([corner[0]], 5), F([corner[1]], 3, tangent_chain=False), F([[60, 40, 8]], 2)], {"body_count": 1, "faces": 11, "bbox": BBOX},
@@ -1119,12 +1269,12 @@ case(T11, "002-flange", "a revolved flange and hub with a bore, six bolt holes, 
 w30 = ext_half_width(30, 3.5)
 case(T11, "003-threaded-flange", "the flange with a modelled M30 thread on its hub, between the round and the chamfer, and M8 tapped holes in the disk",
      [thr([15, 0, 20], designation="M30"), H(position=[0, 28, 10], thread="M8", name="Tap"), C("solid.pattern.circular", features=["Tap"], axis="Z", count=3)],
-     {"body_count": 1, "volume_mm3": Vf - groove(30, 3.5, [(13 + w30, 28.5, lambda z: 15), (28.5, 30, lambda z: 15 - (z - 28.5))]) - 3 * PI * 3.375 ** 2 * 10,
+     {"body_count": 1, "volume_mm3": Vf - groove(30, 3.5, [(13 + w30, 28.5, lambda z: 15), (28.5, 30, lambda z: 15 - (z - 28.5))]) - 3 * PI * 3.4 ** 2 * 10,
       "bbox": {"min": [-40, -40, 0], "max": [40, 40, 30]}, "tolerance": {"rel": 1e-4}},
      "the hub's cylinder (r15) runs from the r3 round at its root (z 13) to the 1.5 chamfer at its top (z 28.5): the M30 groove (P 3.5) stops w = %.6f clear of the round, "
      "a shoulder (06/007's rule), and runs out through the chamfer, a free end (06/006's): it removes the stock less 2 pi int int r m(r) dr dz over z 13 + w..28.5 at r 15 and the chamfer "
-     "(r 15 - (z - 28.5)); the bore r8 is inside the root r 13.1. The M8 tap drills (6.75) go through the 10 mm disk at r 28, 90 deg + k 120, clear of the bolt holes (30 deg apart): "
-     "3 pi 3.375^2 10. Bbox: the flange's" % w30, base=up(T11, "002-flange"))
+     "(r 15 - (z - 28.5)); the bore r8 is inside the root r 13.1. The M8 tap drills (6.8, the tap maker's) go through the 10 mm disk at r 28, 90 deg + k 120, clear of the bolt holes (30 deg apart): "
+     "3 pi 3.4^2 10. Bbox: the flange's" % w30, base=up(T11, "002-flange"))
 case(T11, "004-housing", "the running part with every tier: back wall, boss, slot, spline window, tapped holes, rounds, chamfers, shell, vents, and a modelled M16 thread on the boss",
      [thr([23, 15, 25], designation="M16")],
      {"body_count": 1, "volume_mm3": V9 - 4 * PI * 1.5 ** 2 * 1.5 - groove(16, 2, [(21 + w16, 29, lambda z: 8), (29, 30, lambda z: 8 - (z - 29))]),
@@ -1132,14 +1282,151 @@ case(T11, "004-housing", "the running part with every tier: back wall, boss, slo
      "10/008 less the M16 groove on the boss: its cylinder runs from the r1 root round (z 21, a shoulder: the groove stops w = %.6f clear of it) to the 1 mm top chamfer "
      "(z 29, run out through it, a free end); the groove's root r 6.917 stays outside the boss's 1.5 wall's inside (r 6.5), so it cuts the wall only. Bbox: the part's" % w16, base=C10)
 
+# ---------------------------------------------------------------- 12 sheet metal
+# A sheet body is its flat pattern (crates/doc/src/sheet.rs): the base, and per flange a bend zone
+# BA = theta (R + K T) wide and its panel. Folded, a panel moves rigidly and a bend zone of
+# thickness T becomes an annular sector, theta/2 ((R + T)^2 - R^2) per mm = theta T (R + T/2): with
+# K = 0.5 that is T x BA, so the folded part holds exactly the flat area x T. Rule: T = 2, R = 1,
+# K = 0.5, corner gap g = 0.5. An edge flange at the default position has its outer virtual sharp on
+# the picked edge: the base is cut back s0 = (R + T) tan(theta/2) and the bend starts there; its
+# height H runs from that sharp along the outer face, so the panel past the bend is H - s0 long.
+T12 = "12-sheet-metal"
+TS, RS, KS, GS = 2.0, 1.0, 0.5, 0.5
+WS, DS, HS = 100.0, 60.0, 20.0
+SQ2 = math.sqrt(2)
+RULE = C("sheet.manage_rules", name="Sheet 2 mm", thickness="2 mm", active=True, bend_radius="1 mm", k_factor=KS, gap="0.5 mm")
+def sm_ba(deg):
+    return math.radians(deg) * (RS + KS * TS)
+def sm_s0(deg):
+    return (RS + TS) * math.tan(math.radians(deg) / 2)
+SMETH = ("T = 2, R = 1, K = 0.5, the corner gap g = 0.5. A bend zone is BA = theta (R + K T) wide in the flat; folded it is an annular sector holding theta T (R + T/2) a mm "
+         "of bend, T BA with K = 0.5, and every panel moves rigidly, so V = T x the flat area. An edge flange's outer virtual sharp is on the picked edge: the base is cut "
+         "back s0 = (R + T) tan(theta/2), the bend starts there, and its panel is H - s0 long (H from the sharp along the outer face). ")
+case(T12, "001-base-flange", "a 100 x 60 base flange, 2 mm sheet", [RULE] + sketch("XY", C("sketch.rectangle.two_point", p0=[0, 0], p1=[WS, DS]), name="Base") +
+     [C("sheet.flange", type="base", sketch="Base")],
+     {"body_count": 1, "volume_mm3": WS * DS * TS, "area_mm2": 2 * (WS * DS + WS * TS + DS * TS), "faces": 6, "edges": 12, "vertices": 8,
+      "bbox": {"min": [0, 0, 0], "max": [WS, DS, TS]}},
+     "the sketch's rectangle extruded the rule's 2 mm up: V = 100 60 2, A = 2 (100 60 + 100 2 + 60 2); a box's 6 faces, 12 edges, 8 vertices")
+S1 = up(T12, "001-base-flange")
+ba90, s90 = sm_ba(90), sm_s0(90)
+A2 = WS * (DS - s90) + WS * ba90 + WS * (HS - s90)
+case(T12, "002-edge-flange-90", "a 20 mm 90 deg edge flange along the base's front edge",
+     [C("sheet.flange", type="edge", edges=[[WS / 2, 0, TS]], height=HS, angle=90)],
+     {"body_count": 1, "volume_mm3": TS * A2, "faces": 10, "bbox": {"min": [0, 0, 0], "max": [WS, DS, HS]}},
+     SMETH + "At 90 deg s0 = 3 and BA = pi: the base keeps 100 x 57, the bend pi x 100, the panel 17 x 100; V = 2 (5700 + 100 pi + 1700). The flange's outer face is flush "
+     "with the edge (y = 0) and reaches z = 20. Faces: base top and bottom, its three free ends, the bend's two cylinders, the flange's inner and outer faces and its top: 10, "
+     "each end of the L (x = 0, x = 100) one plane", base=S1)
+S2 = up(T12, "002-edge-flange-90")
+FOUR = [[WS / 2, 0, TS], [WS, DS / 2, TS], [WS / 2, DS, TS], [0, DS / 2, TS]]
+def tray_area(deg):
+    """The flat area of 001 with flanges H high at `deg` on all four edges, closed at the corners: each
+    panel end runs on (or is cut back) on the mitre plane halving the two inner faces, g/2 clear of it."""
+    th = math.radians(deg)
+    s0, ba, leg = sm_s0(deg), sm_ba(deg), HS - sm_s0(deg)
+    ext = RS * math.sin(th) - GS / SQ2
+    lens = [WS - 2 * s0, DS - 2 * s0] * 2
+    base = (WS - 2 * s0) * (DS - 2 * s0)
+    return base + sum(ba * L + leg * (L + 2 * ext + leg * math.cos(th)) for L in lens), ext, s0, ba, leg
+CORNER = ("Closing a corner (sheet.rs close_corner): every point of a panel's end keeps g/2 from the plane halving the two flanges' inner faces. For the flange on y = 0, "
+          "its bend along x from the corner (s0, s0), a point s up its panel (rigid, turned theta about the bend axis T + R up) on the face z of the sheet keeps that distance from "
+          "x = s0 - R sin(theta) - s cos(theta) + g/sqrt2 + (T - z) sin(theta) on; the inner face z = T needs least, so the end is the line x = s0 - e - s cos(theta), "
+          "e = R sin(theta) - g/sqrt2: the panel runs on e past its bend's end at its foot and a further cos(theta) per mm up it (outward below 90 deg, cut back above). "
+          "Each panel is the trapezoid leg x (L + 2e + leg cos(theta)), its bend BA x L, L the base's edge less 2 s0 (the bend ends square at the corner). ")
+a3, e3, *_ = tray_area(90)
+case(T12, "003-four-flanges-90-closed-corners", "20 mm 90 deg flanges on all four edges, made together: the corners close with the rule's gap, notch relief",
+     [C("sheet.flange", type="edge", edges=FOUR, height=HS, angle=90, corner_relief_shape="notch")],
+     {"body_count": 1, "volume_mm3": TS * a3, "bbox": {"min": [0, 0, 0], "max": [WS, DS, HS]}},
+     SMETH + CORNER + "At 90 deg: s0 = 3, BA = pi, leg 17, e = 1 - g/sqrt2 = 0.646447 (the panel ends T + g/sqrt2 short of the other's outer face line, gap g between the "
+     "inner edges), no slant. Base 94 x 54, bends pi (2 94 + 2 54), panels 17 (2 (94 + 2e) + 2 (54 + 2e)); V = 2 x that = %.6f. The walls' outer faces stand on the "
+     "edges: bbox 100 x 60 x 20. The notch relief cuts nothing: the bends end square at the corners" % (TS * a3), base=S1)
+S3 = up(T12, "003-four-flanges-90-closed-corners")
+for name, deg, what in [("004-four-flanges-72-leaning-out", 72, "leaning out: the panel ends run on along a slant"),
+                        ("005-four-flanges-108-leaning-in", 108, "leaning in over the base: the panel ends are cut back along a slant where they would overlap")]:
+    th = math.radians(deg)
+    a, e, s0, ba, leg = tray_area(deg)
+    if deg < 90:
+        lo, zmax = -HS * math.cos(th), HS * math.sin(th) + TS * math.cos(th)
+        bb = "the walls lean out: the outer face's far edge is H cos(theta) = %.6f outside each edge, and the inner face's far edge is highest, H sin(theta) + T cos(theta)" % -lo
+    else:
+        lo, zmax = s0 - (RS + TS), HS * math.sin(th)
+        bb = ("the walls lean in: what reaches furthest out is each bend's outer face a quarter turn in, s0 - (R + T) = %.6f inside the edge, and the outer face's far edge "
+              "is highest, H sin(theta)" % lo)
+    case(T12, name, "20 mm flanges at %d deg on all four edges, made together and closed at the corners, " % deg + what,
+         [C("sheet.flange", type="edge", edges=FOUR, height=HS, angle=deg)],
+         {"body_count": 1, "volume_mm3": TS * a, "bbox": {"min": [lo, lo, 0], "max": [WS - lo, DS - lo, zmax]}},
+         SMETH + CORNER + "At %d deg: s0 = 3 tan%g = %.6f, BA = %.6f, leg %.6f, e = %.6f, the slant cos(theta) = %.6f a mm up. V = 2 x the flat area = %.6f. Bbox: %s" %
+         (deg, deg / 2, s0, ba, leg, e, math.cos(th), TS * a, bb), base=S1)
+RELIEF = ("A corner relief (sheet.rs plan_relief) is cut from the base at the corner of the bends, size/2 = r along both edges: a quarter disc (round) or an r x r square "
+          "(rectangular) at a square corner; both bends then start r from the corner, and the panels keep the ends the closing gave them. ")
+for name, shape, take, how in [("006-corner-relief-round", "round", PI * 4 / 4, "pi r^2/4 = pi"), ("007-corner-relief-rectangular", "rectangular", 4.0, "r^2 = 4")]:
+    case(T12, name, "003's tray with a %s corner relief 4 mm across at each corner" % shape,
+         [C("sheet.flange", type="edge", edges=FOUR, height=HS, angle=90, corner_relief_shape=shape, corner_relief="4 mm")],
+         {"body_count": 1, "volume_mm3": TS * (a3 - 4 * take - 8 * 2 * ba90), "bbox": {"min": [0, 0, 0], "max": [WS, DS, HS]}},
+         SMETH + RELIEF + "r = 2: each corner takes %s of the base and 2 mm of each of its two bends (2 BA = 2 pi); V = 2 (003's flat area - 4 x that - 8 x 2 pi)" % how, base=S1)
+case(T12, "008-corner-relief-tear", "003's tray with torn corners: the bends run to the corner and each end is cut straight, in the flat, to where its panel's end starts",
+     [C("sheet.flange", type="edge", edges=FOUR, height=HS, angle=90, corner_relief_shape="tear")],
+     {"body_count": 1, "volume_mm3": TS * (a3 + 4 * ba90 * e3), "bbox": {"min": [0, 0, 0], "max": [WS, DS, HS]}},
+     SMETH + "A torn corner (sheet.rs tear_corner) cuts nothing from the base: each bend zone's end runs straight from the corner, on its start line, to the panel's end at its "
+     "far edge, e = %.6f further along (003's closing), so each torn end adds the triangle BA e / 2 to the bend zone; folded, the end is a helix and the column of sheet under each "
+     "flat point still holds T of material (K = 0.5). V = 2 (003's flat area + 8 pi e / 2)" % e3, base=S1)
+hem_len, hem_gap = 8.0, 1.0
+hem_leg = hem_len - (hem_gap + TS)
+case(T12, "009-hem-on-the-back-edge", "002's L with an 8 mm hem on the base's back edge, folded under it with a 1 mm inner radius",
+     [C("sheet.hem", edges=[[WS / 2, DS, TS]], length=hem_len, gap=hem_gap)],
+     {"body_count": 1, "volume_mm3": TS * (A2 + WS * (PI * (hem_gap + KS * TS) + hem_leg)), "bbox": {"min": [0, 0, -(2 * hem_gap + TS)], "max": [WS, DS + hem_gap + TS, HS]}},
+     SMETH + "A hem (sheet.rs add_hem) is a 180 deg bend starting at the edge, its inner radius the gap, folded under the face it is picked on (the top here, so down), "
+     "its length to the outer face: the leg is 8 - (1 + 2) = 5 and BA = pi (1 + 1) = 2 pi. V = 2 (002's flat area + 100 (2 pi + 5)). Bbox: the bend's outer face reaches "
+     "R + T = 3 past the edge (y 63) and, a half turn round its axis 1 mm under the base, down to z = -(2 R + T) = -4", base=S2)
+FL = [C("sheet.fold", points=[[70, 0, TS], [70, DS, TS]], angle=90)]
+fleg = WS - 70 - ba90 / 2
+FOLDB = {"min": [0, 0, 0], "max": [70 - ba90 / 2 + RS + TS, DS, RS + TS + fleg]}
+FMETH12 = ("A fold (sheet.rs add_fold) takes its bend zone out of the sheet, so the flat stays 100 x 60 and V = 2 x 6000 = 12000. Centred on the line x = 70 the zone runs "
+           "from 70 - pi/2; the larger side stays, the 30 mm side folds up 90 deg about the axis at x = 70 - pi/2, z = T + R: its outer face (the flat bottom) stands at "
+           "x = 70 - pi/2 + R + T = %.6f and its panel, 30 - pi/2 long, rises from z = R + T to %.6f. " % (FOLDB["max"][0], FOLDB["max"][2]))
+case(T12, "010-fold-90", "001's base folded 90 deg up along a sketch line across it at x = 70", FL,
+     {"body_count": 1, "volume_mm3": WS * DS * TS, "faces": 10, "bbox": FOLDB},
+     SMETH + FMETH12 + "Faces as 002's L: 10", base=S1)
+case(T12, "011-fold-unfolded", "010's fold unfolded: the flat 100 x 60 plate again", [C("sheet.unfold")],
+     {"body_count": 1, "volume_mm3": WS * DS * TS, "bbox": {"min": [0, 0, 0], "max": [WS, DS, TS]}},
+     SMETH + FMETH12 + "Unfolded every panel lies in the base's plane where it was cut from: the 100 x 60 x 2 plate, the base in its place", base=up(T12, "010-fold-90"))
+case(T12, "012-fold-refolded", "011's flat refolded: 010's part again", [C("sheet.refold")],
+     {"body_count": 1, "volume_mm3": WS * DS * TS, "faces": 10, "bbox": FOLDB},
+     SMETH + FMETH12 + "Refolding gives the folded part back: 010's numbers", base=up(T12, "011-fold-unfolded"))
+# The flat pattern of 003's tray: its outline (the size and the area) and its four bend lines, the
+# centre lines of the bend zones, half BA out from the base's cut-back edges.
+reach = HS - s90 + ba90 - s90
+cl = s90 - ba90 / 2
+case(T12, "013-flat-pattern", "the flat pattern of 003's tray: its outline's size and area, and its four bend lines", [C("sheet.flat_pattern")],
+     {"body_count": 1, "volume_mm3": TS * a3,
+      "flat_pattern": {"size_mm": [WS + 2 * reach, DS + 2 * reach], "area_mm2": a3,
+                       "bend_lines": [[[s90, cl], [WS - s90, cl]], [[WS - cl, s90], [WS - cl, DS - s90]], [[s90, DS - cl], [WS - s90, DS - cl]], [[cl, s90], [cl, DS - s90]]]}},
+     SMETH + "The flat pattern is drawn in the base's frame (the base in its place). Each flange lies flat past its edge: s0 back from it, then BA and the leg, so it reaches "
+     "H - s0 + BA - s0 = 20 - BD = %.6f past the edge (BD = 2 (R + T) tan45 - BA = 6 - pi): the outline is (100 + 2 x that) x (60 + 2 x that), its area 003's flat area "
+     "(%.6f, the notched corners open). The bend lines are the bend zones' centre lines, BA/2 out from the cut-back edges: y = 3 - pi/2 and 57 + pi/2 from x = 3 to 97, "
+     "x = 3 - pi/2 and 97 + pi/2 from y = 3 to 57" % (reach, a3), base=S3)
+# A bracket: a flange, a lip on that flange's far edge, and a hole through the base.
+H1, H2 = 30.0, 10.0
+leg1 = H1 - s90 - s90
+leg2 = H2 - s90
+A14 = WS * (DS - s90) + WS * ba90 + WS * leg1 + WS * ba90 + WS * leg2 - PI * 25
+case(T12, "014-bracket", "a bracket: a 30 mm flange on the front edge, a 10 mm lip turned out on its far edge, a d10 hole through the base",
+     [C("sheet.flange", type="edge", edges=[[WS / 2, 0, TS]], height=H1, angle=90),
+      C("sheet.flange", type="edge", edges=[[WS / 2, 0, H1]], height=H2, angle=90),
+      H(position=[WS / 2, 35, TS], diameter=10)],
+     {"body_count": 1, "volume_mm3": TS * A14, "bbox": {"min": [0, -(H2 - TS), 0], "max": [WS, DS, H1]}},
+     SMETH + "The flange (as 002, H 30) stands on y = 0 up to z = 30. The lip is picked on that flange's far edge on its outer face (y = 0), the panel's bottom face, so it "
+     "bends down there, turning out over y < 0; its outer virtual sharp is on the edge (z = 30, y = 2, the flange's top-face plane), so the flange's panel is cut back s0 = 3 "
+     "more (30 - 3 - 3 = 24) and the lip's outer face is the plane z = 30, its panel 10 - 3 = 7, reaching y = 2 - 10 = -8. The hole (d10 at (50, 35)) is a cut-out of the "
+     "flat. V = 2 (100 57 + 100 pi + 100 24 + 100 pi + 100 7 - 25 pi). Bbox: x 0..100, y -8..60, z 0..30", base=S1)
+
 # manifest: tiers in order, cases in authoring order until --record sorts them by time
 WHAT = {
     T1: "primitives with closed-form volumes", T2: "booleans in the degeneracy classes, and cuts that end in a single line",
     T3: "extrudes and revolves of line-and-arc profiles", T4: "spline profiles, sweeps and lofts", T5: "holes and tapped holes",
     T6: "modelled threads", T7: "constant, variable and corner fillets", T8: "chamfers", T9: "shells and offsets",
-    T10: "patterns and mirrors", T11: "parts combining every tier"}
+    T10: "patterns and mirrors", T11: "parts combining every tier", T12: "sheet metal: flanges, closed corners, reliefs, hems, folds and the flat pattern"}
 mpath = os.path.join(ROOT, "ladder.json")
-order = [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11]
+order = [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12]
 try:
     with open(mpath) as f:
         listed = {t["tier"]: t["cases"] for t in json.load(f)["tiers"]}

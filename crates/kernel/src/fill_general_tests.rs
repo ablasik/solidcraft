@@ -108,7 +108,7 @@ fn rim_points(body: &Body, per: usize) -> Vec<Vec3> {
     let r = body.record();
     let mut out = Vec::new();
     for e in r.edges.iter().filter(|e| e.uses.len() == 1) {
-        let c = CurveEval::new(&e.curve).unwrap();
+        let c = CurveEval::new(e.parameters()).unwrap();
         let [t0, t1] = e.interval;
         for k in 0..per {
             out.push(c.point(t0 + (t1 - t0) * (k as f64 + 0.5) / per as f64).unwrap());
@@ -164,8 +164,21 @@ fn check_face(name: &str, open: &Body, fill: &Body) -> f64 {
     assert!(fill.is_surface());
     assert!(fill.face_count() >= 1, "{name}: a face");
     let (own, made) = (open.record(), fill.record());
+    // The same kind of curve on the same curve it is parameterised on, to rounding (SMLib makes a
+    // conic's frame and NURBS form again on a round trip, the last bit of a coordinate apart).
+    let close = |p: &[f64], q: &[f64]| p.len() == q.len() && p.iter().zip(q).all(|(x, y)| (x - y).abs() <= 1e-12 * (1.0 + x.abs().max(y.abs())));
+    let same = |c: &b::Curve, d: &b::Curve| match (c, d) {
+        (b::Curve::Spline { knots: k, points: p }, b::Curve::Spline { knots: l, points: q }) => {
+            k == l && p.len() == q.len() && p.iter().zip(q).all(|(x, y)| close(x, y))
+        }
+        (b::Curve::RationalSpline { knots: k, homogeneous: p }, b::Curve::RationalSpline { knots: l, homogeneous: q }) => {
+            k == l && p.len() == q.len() && p.iter().zip(q).all(|(x, y)| close(x, y))
+        }
+        _ => c == d,
+    };
+    let kind = |e: &b::Edge| std::mem::discriminant(&e.curve);
     for e in made.edges.iter().filter(|e| e.uses.len() == 1) {
-        assert!(own.edges.iter().any(|o| o.curve == e.curve), "{name}: an edge that is not the body's");
+        assert!(own.edges.iter().any(|o| kind(o) == kind(e) && same(o.parameters(), e.parameters())), "{name}: an edge that is not the body's");
     }
     let faces = Faces::of(fill);
     let tol = face_tolerance(open);
@@ -238,7 +251,7 @@ fn free_edge_points(body: &Body) -> Vec<Vec3> {
         .edges
         .iter()
         .filter(|e| e.uses.len() == 1)
-        .map(|e| CurveEval::new(&e.curve).unwrap().point(0.5 * (e.interval[0] + e.interval[1])).unwrap())
+        .map(|e| CurveEval::new(e.parameters()).unwrap().point(0.5 * (e.interval[0] + e.interval[1])).unwrap())
         .collect::<Vec<_>>();
     // In a fixed order.
     points.sort_by(|a, b| (a.z, a.y, a.x).partial_cmp(&(b.z, b.y, b.x)).unwrap());

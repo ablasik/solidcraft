@@ -356,7 +356,14 @@ fn boundary(
         }
         let n = uvs.len();
         let pole = |q: &[f64; 2]| (0..2).any(|d| pole_along(*q, d));
-        if let Some(k) = (0..n).find(|&k| uvs.get(k).is_some_and(|q| !pole(q)) && uvs.get((k + n - 1) % n).is_some_and(|q| !pole(q))) {
+        let off = |k: usize| uvs.get(k).is_some_and(|q| !pole(q));
+        // A node off the poles whose predecessor is off them too; failing that (a whole sphere's
+        // seam in two segments: pole, equator, pole), one whose predecessor is a pole on the same
+        // edge, so the step into it is the edge's own and the step into that pole, from the
+        // edge before, is in the loop where it is unwrapped like any other.
+        let same_edge = |k: usize| segs.get((k + n - 1) % n).zip(segs.get(k)).is_some_and(|(a, b)| a.0 == b.0);
+        let start = (0..n).find(|&k| off(k) && off((k + n - 1) % n)).or_else(|| (0..n).find(|&k| off(k) && same_edge(k)));
+        if let Some(k) = start {
             uvs.rotate_left(k);
             pts.rotate_left(k);
             segs.rotate_left(k);
@@ -917,6 +924,7 @@ fn plan_face(
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
         sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE);
+        sag::flip(s, tol, reach, &fixed, &all, &mut triangles);
     }
     // Both evaluators take a closed spline's parameters inside its active interval.
     for q in &mut all {
@@ -1125,7 +1133,8 @@ fn graded(a: [f64; 2], b: [f64; 2], sa: f64, sb: f64, h: f64, speed: [f64; 2], f
     all.into_iter().filter(|t| *t > 0.0 && *t < 1.0).collect()
 }
 
-/// Every boundary segment (consecutive nodes of a loop) is the side of exactly one triangle:
+/// Every boundary segment (consecutive nodes of a loop) is the side of exactly one triangle (two
+/// for a slit the loops run along both ways):
 /// the face covers its boundary with nothing missing or doubled, so it meets its neighbours
 /// exactly. Some boundary nodes are one vertex, a side ending on any of them the same side: pole
 /// copies of one node (consecutive in a loop, at one point, the segment between them of no
@@ -1178,12 +1187,19 @@ fn closed_boundary(ranges: &[std::ops::Range<usize>], fixed: &[Vec3], uvs: &[[f6
             }
         }
     }
-    ranges.iter().all(|r| {
-        (0..r.len()).all(|k| {
+    // Each boundary side has a triangle for every time the loops run along it: one, or two for
+    // a slit (a side run out and back, where the face meets itself along a line: a hole's wall
+    // touching the wall round it), one triangle either side.
+    let mut runs: HashMap<(u32, u32), u32> = HashMap::new();
+    for r in ranges {
+        for k in 0..r.len() {
             let (a, b) = segment(r, k);
-            side(a, b).is_none_or(|k| sides.get(&k).copied() == Some(1))
-        })
-    })
+            if let Some(k) = side(a, b) {
+                *runs.entry(k).or_default() += 1;
+            }
+        }
+    }
+    runs.iter().all(|(k, n)| sides.get(k).copied() == Some(*n))
 }
 
 #[cfg(test)]

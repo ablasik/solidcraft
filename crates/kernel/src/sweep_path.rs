@@ -221,6 +221,21 @@ fn frames_toward(tangents: &[Vec3], d: Vec3) -> Result<Vec<[Vec3; 3]>> {
         .collect()
 }
 
+/// Kept as drawn (parallel), the profile flattens to nothing where the path runs along its
+/// plane: the path, by its directions of travel `tangents` (the first leaving the profile), has to
+/// cross the plane at 5 degrees or more all the way.
+pub(crate) fn crossing_check(plane: &Plane, tangents: &[Vec3]) -> Result<()> {
+    let n = plane.normal().normalized().ok_or_else(|| KernelError::Invalid("sweep frame".into()))?;
+    let t0 = *tangents.first().ok_or_else(|| KernelError::Invalid("sweep path".into()))?;
+    let axis = if n.dot(t0) < 0.0 { n * -1.0 } else { n };
+    if tangents.iter().any(|t| t.dot(axis) < 5f64.to_radians().sin()) {
+        return Err(KernelError::Invalid(
+            "kept parallel, the profile would lie along the sweep path: the path must keep crossing the profile's plane (by 5 deg or more)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Stations shaped by sweep options: each maps a world vector at the first station to its image
 /// at its own (twisted and scaled about the profile's normal through the first station, then
 /// turned by the orientation's frames), optionally stretched across a corner (mitre). Twist and
@@ -246,12 +261,8 @@ pub(crate) fn controlled_stations(
     // Twist and scale act about the profile's normal, pointing the way the path leaves it.
     let n = plane.normal().normalized().ok_or_else(|| KernelError::Invalid("sweep frame".into()))?;
     let axis = if n.dot(t0) < 0.0 { n * -1.0 } else { n };
-    // Kept as drawn, the profile flattens to nothing where the path runs along its plane: the
-    // path has to cross it at 5 degrees or more all the way.
-    if ctl.orientation == SweepOrientation::Parallel && tangents.iter().any(|t| t.dot(axis) < 5f64.to_radians().sin()) {
-        return Err(KernelError::Invalid(
-            "kept parallel, the profile would lie along the sweep path: the path must keep crossing the profile's plane (by 5 deg or more)".into(),
-        ));
+    if ctl.orientation == SweepOrientation::Parallel {
+        crossing_check(plane, tangents)?;
     }
     let mut run = Vec::with_capacity(pts.len());
     let mut total = 0.0;
@@ -457,8 +468,9 @@ mod tests {
         let want = std::f64::consts::PI * 4.0 * len;
         assert!((v - want).abs() < 0.02 * want, "{v} vs {want}");
         // The path is its lines (no wall is fitted through the points): a wall per profile
-        // segment (the circle's two arcs) along each of the 40 lines, and two caps.
-        assert_eq!(b.faces(0.01).unwrap().len(), 2 * 40 + 2, "walls along each line");
+        // segment (the circle is one closed arc, one edge in SMLib) along each of the 40 lines,
+        // and two caps.
+        assert_eq!(b.faces(0.01).unwrap().len(), 40 + 2, "walls along each line");
         // An L-shaped path (a sharp corner) with a holed square: mitred ruled walls.
         let path = [Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0), Vec3::new(20.0, 0.0, 20.0)];
         let plane = Plane::from_normal(Vec3::ZERO, Vec3::Z).unwrap();
@@ -470,6 +482,30 @@ mod tests {
         assert!((v - want).abs() < 0.03 * want, "{v} vs {want}");
         assert!(sweep_path(&plane, &region, &[Vec3::ZERO]).is_err());
         assert!(sweep_path(&plane, &region, &[Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 0.0)]).is_err());
+    }
+
+    /// A profile at a slant to its path (drawn flat, the path rising steeply from it) swept
+    /// along a polyline whose lines are shorter than the slant: each section reaches past both
+    /// mitres of its line, so each line's walls are carried on far enough past the corner for
+    /// all of it to meet the mitre. The square's centre is on the path, so the volume is the
+    /// section square to the path times the path's length, `16 cos(slant) L`; a line carried
+    /// short of a mitre leaves a notch with a face of its section in it. Every face is named.
+    #[test]
+    fn a_slanted_profile_meets_itself_at_every_mitre() {
+        use crate::history::FaceOrigin;
+        let path: Vec<Vec3> = (0..=20).map(|i| Vec3::new((f64::from(i) * 0.2).sin() * 10.0, 0.0, f64::from(i))).collect();
+        let b = sweep_path(&Plane::XY, &square(2.0), &path).unwrap();
+        let len: f64 = path.windows(2).map(|w| w[0].dist(w[1])).sum();
+        let slant = (path[1] - path[0]).normalized().unwrap().z;
+        let want = 16.0 * slant * len;
+        let v = b.mesh(&crate::MeshTolerance::chord(0.01)).unwrap().measure().volume;
+        assert!((v - want).abs() < 1e-6 * want, "{v} vs {want}");
+        let h = b.history().unwrap();
+        let caps = |end: bool| h.faces.iter().filter(|f| f.origins == [FaceOrigin::Cap { end }]).count();
+        assert_eq!((caps(false), caps(true)), (1, 1));
+        for (i, f) in h.faces.iter().enumerate() {
+            assert!(matches!(f.origins[..], [FaceOrigin::Profile { .. }] | [FaceOrigin::Cap { .. }]), "face {i}: {f:?}");
+        }
     }
 
     fn square(h: f64) -> Region2 {

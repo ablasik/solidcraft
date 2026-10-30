@@ -82,10 +82,19 @@ mod native_tests {
     fn edges_are_on_smlibs_curves() {
         let cyl = Brep::make_cylinder([0.0; 3], 5.0, 10.0).unwrap().to_native().unwrap();
         let side = cyl.faces.iter().find(|f| matches!(f.surface, b::Surface::Cylinder { .. })).unwrap();
-        assert!((side.domain[0][1] - side.domain[0][0] - TAU).abs() < 1e-12);
-        assert_eq!(side.domain[1], [0.0, 10.0]);
+        // The side is on SMLib's NURBS form of the cylinder (its domain is the form's): the whole
+        // turn, so its domain's two u ends meet, from the base to the top.
+        let form = b::eval::SurfaceEval::new(side.parameters()).unwrap();
+        let [[u0, u1], [v0, v1]] = side.domain;
+        for v in [v0, v1] {
+            let (a, z) = (form.point([u0, v]).unwrap(), form.point([u1, v]).unwrap());
+            assert!(a.dist(z) < 1e-9, "{a:?} {z:?}");
+        }
+        let heights = [form.point([u0, v0]).unwrap().z, form.point([u0, v1]).unwrap().z];
+        assert!(heights.iter().any(|h| h.abs() < 1e-9) && heights.iter().any(|h| (h - 10.0).abs() < 1e-9), "{heights:?}");
         for e in &cyl.edges {
-            let eval = b::eval::CurveEval::new(&e.curve).unwrap();
+            // Evaluated on the curve its interval is on (a circle's NURBS form).
+            let eval = b::eval::CurveEval::new(e.parameters()).unwrap();
             let [a, z] = e.interval;
             // Ends on the edge's vertices.
             for (t, v) in [(a, e.vertices[0]), (z, e.vertices[1])] {
@@ -94,6 +103,7 @@ mod native_tests {
                 assert!((p - Vec3::new(q[0], q[1], q[2])).len() < 1e-9, "{:?} at {t}", e.curve);
             }
             if let b::Curve::Circle { radius, .. } = e.curve {
+                let [a, z] = e.curve_interval().unwrap();
                 assert!((radius - 5.0).abs() < 1e-12 && (z - a - TAU).abs() < 1e-9);
             }
         }
@@ -126,7 +136,8 @@ mod native_tests {
                 p[0].abs() < 1e-9 && (p[1] - 14.5).abs() < 1e-9
             })
         };
-        let middle = |e: &b::Edge| b::eval::CurveEval::new(&e.curve).unwrap().point(0.5 * (e.interval[0] + e.interval[1])).unwrap();
+        // On the curve the interval is on (a circle's NURBS form).
+        let middle = |e: &b::Edge| b::eval::CurveEval::new(e.parameters()).unwrap().point(0.5 * (e.interval[0] + e.interval[1])).unwrap();
         let copies: Vec<&b::Edge> = record.edges.iter().filter(|e| on_line(e)).collect();
         assert_eq!(copies.len(), 2);
         for copy in copies {
@@ -225,6 +236,138 @@ mod native_tests {
         assert!(check.is_valid(), "{check}");
         let got = back.mass_properties(MEASURE_ACCURACY).unwrap().volume;
         assert!((got - want).abs() < 1e-6 * want, "volume {got} vs {want}");
+    }
+
+    /// The variable round r1 -> r5 along a box's top back edge run on into the R5 round of its
+    /// corner (ladder 07-fillets/012): its end trimmed by the R5 cylinder is a NURBS edge, whose
+    /// interval SMLib gave 7e-15 before the first knot. The record's interval is the NURBS's own
+    /// where it overshoots it by rounding, and the record validates; farther past it stays an error.
+    #[test]
+    fn a_nurbs_edge_interval_a_rounding_past_its_knots_is_moved_onto_them() {
+        let block = Brep::make_box([0.0; 3], [60.0, 40.0, 20.0]).unwrap();
+        let rounded = block.fillet(&[[60.0, 40.0, 10.0]], 0.1, 5.0).unwrap();
+        let r = rounded.fillet_variable([27.5, 40.0, 20.0], 0.1, [0.0, 40.0, 20.0], 1, &[0.0, 0.0, 1.0, 1.0], &[1.0, 5.0]).unwrap();
+        let arrays = r.arrays().unwrap();
+        let kinds = arrays.ints.get(&EDGE_CURVE_TYPE).cloned().unwrap_or_default();
+        let counts = arrays.ints.get(&EDGE_NURBS_VERTEX_COUNT).cloned().unwrap_or_default();
+        let orders = arrays.ints.get(&EDGE_NURBS_ORDER).cloned().unwrap_or_default();
+        let forms = arrays.ints.get(&EDGE_NURBS_FORM).cloned().unwrap_or_default();
+        let knots = arrays.reals.get(&EDGE_NURBS_KNOTS).cloned().unwrap_or_default();
+        // Each NURBS block's first and last knots of its domain, in edge order.
+        let (mut at, mut block_of) = (0usize, Vec::new());
+        for (n, o) in counts.iter().zip(&orders) {
+            let (n, o) = (*n as usize, *o as usize);
+            block_of.push((knots[at + o - 1], knots[at + n]));
+            at += n + o;
+        }
+        let mut nurbs = 0usize;
+        let mut edge = None;
+        for (e, kind) in kinds.iter().enumerate() {
+            let has_block = *kind == CURVE_NURBS || forms.get(e) == Some(&1);
+            if *kind == CURVE_NURBS && edge.is_none() {
+                edge = Some((e, block_of[nurbs]));
+            }
+            nurbs += usize::from(has_block);
+        }
+        let (e, (first, last)) = edge.expect("the round's end on the cylinder is a NURBS edge");
+        let shifted = |by: f64| {
+            let mut a = arrays.clone();
+            a.reals.get_mut(&EDGE_RANGE).unwrap()[2 * e] = first - by;
+            a
+        };
+        let (record, _) = native(&shifted(7e-15)).unwrap();
+        record.validate().unwrap();
+        assert!(record.edges.iter().any(|x| x.interval[0] == first && x.interval[1] <= last), "an interval on the NURBS's first knot");
+        assert!(native(&shifted(1e-3)).map(|(r, _)| r.validate()).map_or(true, |v| v.is_err()), "a real overshoot is not moved");
+    }
+
+    /// [`outer_area`] as it was: every edge of the body copied into a record for each face.
+    #[allow(clippy::unwrap_used)] // test reference
+    fn outer_area_copying_every_edge(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
+        let Some(Loop::Edges(outer)) = face.loops.first() else { return Ok(0.0) };
+        let records: Vec<b::Edge> = edges
+            .iter()
+            .map(|e| b::Edge {
+                nurbs: e.nurbs.clone(),
+                curve: e.curve.clone(),
+                interval: e.interval,
+                vertices: e.vertices,
+                tolerance,
+                uses: Vec::new(),
+            })
+            .collect();
+        let lookup = |e: u32| {
+            let edge = records.get(e as usize)?;
+            Some(EdgeGeometry { curve: edge.nurbs.as_ref().unwrap_or(&edge.curve), interval: edge.interval, tolerance: edge.tolerance })
+        };
+        let given = face.given.first().map(std::slice::from_ref).unwrap_or(&[]);
+        let curves = pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &[Loop::Edges(outer.clone())], given, lookup, tolerance)?;
+        let mut pts: Vec<[f64; 2]> = Vec::new();
+        for (pc, &(e, forward)) in curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer) {
+            let [a, z] = edges.get(e as usize).unwrap().interval;
+            let mut run: Vec<[f64; 2]> = (0..=32).filter_map(|i| point2(pc, a + (z - a) * f64::from(i) / 32.0)).collect();
+            if !forward {
+                run.reverse();
+            }
+            pts.extend(run);
+        }
+        let n = pts.len();
+        Ok(0.5 * (0..n).map(|k| (pts[k], pts[(k + 1) % n])).map(|(p, q)| p[0] * q[1] - q[0] * p[1]).sum::<f64>())
+    }
+
+    /// A face's outer area reads only its own loop's edges, and is bit for bit what copying every
+    /// edge of the body gave: the export's face turns, and so its records and numbering, are
+    /// unchanged. Each body's record faces are counter-clockwise by convention, so positive.
+    #[test]
+    fn a_faces_outer_area_reads_only_its_own_loop_and_is_unchanged() {
+        let block = Brep::make_box([0.0; 3], [31.0, 29.0, 10.0]).unwrap();
+        let hole = Brep::make_cylinder([12.0, 14.5, -1.0], 5.0, 12.0).unwrap();
+        let rounded = Brep::make_box([0.0; 3], [60.0, 40.0, 20.0]).unwrap().fillet(&[[60.0, 40.0, 10.0]], 0.1, 5.0).unwrap();
+        let mut bodies: Vec<(&str, Brep)> = primitives().into_iter().map(|(name, b, _)| (name, b)).collect();
+        bodies.push(("box minus cylinder", block.boolean(&hole, crate::BooleanOp::Subtract).unwrap().unwrap()));
+        bodies.push(("rounded box", rounded));
+        for (name, body) in bodies {
+            let record = body.to_native().unwrap_or_else(|e| panic!("{name}: {e}"));
+            let edges: Vec<Edge> = record
+                .edges
+                .iter()
+                .map(|e| Edge {
+                    curve: e.curve.clone(),
+                    nurbs: e.nurbs.clone(),
+                    interval: e.interval,
+                    vertices: e.vertices,
+                    reversed: false,
+                    trim_map: None,
+                })
+                .collect();
+            for (f, rf) in record.faces.iter().enumerate() {
+                // Without SMLib's trims (the pcurve routine) and with the record's pcurves as them.
+                for with_given in [false, true] {
+                    let loops: Vec<Loop> = rf
+                        .loops
+                        .iter()
+                        .map(|l| match l {
+                            b::Loop::Edges { edges } => Loop::Edges(edges.iter().map(|u| (u.edge, u.forward)).collect()),
+                            b::Loop::Vertex { vertex } => Loop::Vertex(*vertex),
+                        })
+                        .collect();
+                    let given = rf
+                        .loops
+                        .iter()
+                        .map(|l| match l {
+                            b::Loop::Edges { edges } => edges.iter().map(|u| with_given.then(|| u.pcurve.clone())).collect(),
+                            b::Loop::Vertex { .. } => Vec::new(),
+                        })
+                        .collect();
+                    let records = loops.iter().map(|_| Vec::new()).collect();
+                    let face = Face { nurbs: rf.nurbs.clone(), surface: rf.surface.clone(), domain: rf.domain, agrees: true, loops, records, given };
+                    let now = outer_area(&face, &edges, record.tolerance).unwrap_or_else(|e| panic!("{name}: face {f}: {e}"));
+                    let before = outer_area_copying_every_edge(&face, &edges, record.tolerance).unwrap();
+                    assert_eq!(now.to_bits(), before.to_bits(), "{name}: face {f}, trims given {with_given}: {now} != {before}");
+                    assert!(now > 0.0, "{name}: face {f}, trims given {with_given}: area {now}");
+                }
+            }
+        }
     }
 
     #[test]

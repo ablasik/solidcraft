@@ -470,11 +470,16 @@ fn iso_groove(p: f64, d: f64, wall: f64, internal: bool) -> [(f64, f64); 4] {
 }
 
 /// Each face's triangles, in 3D, cover as much area as its surface over the triangles' own
-/// parameters, within 5% (a coarse tolerance on a small curved face, a few percent): nothing
-/// zigzags across the face, which multiplies its area. The surface's area by the midpoint rule
-/// on sixteen pieces of each parameter triangle.
+/// parameters, within 5% (a coarse tolerance on a small curved face, a few percent) and the
+/// sails along its boundary: nothing zigzags across the face, which multiplies its area. The
+/// surface's area by the midpoint rule on sixteen pieces of each parameter triangle. A face's
+/// boundary sides are its edges' chords, each up to the chord tolerance `tol` off its edge, and
+/// between a chord of length L and its edge lies a sail of surface of at most 2/3 L tol (a
+/// parabolic segment) that flat triangles bridge rather than follow: a face no wider than its
+/// chords sag (the thread's crest band where it runs out through the block's end, 0.06 mm sag
+/// at 0.1) takes up to that much more or less area however it is triangulated inside.
 #[cfg(feature = "smlib")]
-fn assert_faces_lie_flat(name: &str, plan: &solidcraft_geom::tess::TessPlan) {
+fn assert_faces_lie_flat(name: &str, plan: &solidcraft_geom::tess::TessPlan, tol: f64) {
     for fp in &plan.faces {
         let Some(s) = fp.surface.and_then(|i| plan.surfaces.get(i as usize)) else { continue };
         let at = |i: u32| {
@@ -504,7 +509,21 @@ fn assert_faces_lie_flat(name: &str, plan: &solidcraft_geom::tess::TessPlan) {
                 }
             }
         }
-        assert!((flat - surface).abs() <= 0.05 * surface, "{name}: face {} has {flat} mm² of triangles over {surface} mm² of surface", fp.face);
+        // The boundary: the sides of exactly one triangle.
+        let mut sides: HashMap<(u32, u32), u32> = HashMap::new();
+        for t in &fp.triangles {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *sides.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        let boundary: f64 = sides.iter().filter(|(_, n)| **n == 1).map(|((a, b), _)| at(*a).dist(at(*b))).sum();
+        let sails = 2.0 / 3.0 * boundary * tol;
+        assert!(
+            (flat - surface).abs() <= 0.05 * surface + sails,
+            "{name}: face {} has {flat} mm² of triangles over {surface} mm² of surface (its boundary's sails {sails})",
+            fp.face
+        );
     }
 }
 
@@ -534,7 +553,7 @@ fn a_modelled_thread_in_a_bore_meshes_inside_its_block() {
         let m = closed_display_mesh("thread in a bore", &body, tol);
         let chord = max_chord(&body, &m);
         assert!(chord <= tol * 1.05, "thread in a bore at {tol}: chord {chord}");
-        assert_faces_lie_flat("thread in a bore", &ok(body.mesh_plan(&crate::MeshTolerance { chord: tol, angle: Some(crate::DISPLAY_ANGLE) })));
+        assert_faces_lie_flat("thread in a bore", &ok(body.mesh_plan(&crate::MeshTolerance { chord: tol, angle: Some(crate::DISPLAY_ANGLE) })), tol);
     }
 }
 
@@ -560,7 +579,7 @@ fn a_thread_root_band_running_out_through_an_end_face_lies_on_its_surface() {
         let chord = max_chord(&body, &m);
         assert!(chord <= tol * 1.05, "thread run out at {tol}: chord {chord}");
         assert!(m.triangles.len() < 60_000, "thread run out at {tol}: {} triangles", m.triangles.len());
-        assert_faces_lie_flat("thread run out", &ok(body.mesh_plan(&crate::MeshTolerance { chord: tol, angle: Some(crate::DISPLAY_ANGLE) })));
+        assert_faces_lie_flat("thread run out", &ok(body.mesh_plan(&crate::MeshTolerance { chord: tol, angle: Some(crate::DISPLAY_ANGLE) })), tol);
     }
 }
 
@@ -648,6 +667,39 @@ fn loops_touching_at_a_shared_vertex_bound_the_face() {
     let fill = cdt::Fill { seeds: &[], refine: None, shape: false, lenient: false };
     let Some((_, triangles)) = cdt::triangulate(&uvs, &ranges, fill) else { panic!("triangulates") };
     assert!(closed_boundary(&ranges, &fixed, &uvs, &triangles), "the triangles follow both holes through their shared vertex");
+}
+
+/// A face meeting itself along a line (a hole's wall tangent inside the wall round it, cut from
+/// the boss side's top rim down to the hole's bottom): its loop runs up the slit and back down
+/// it, with the face on both sides. The iso-line grid's band beside the slit is the face on
+/// either side of it, and the triangles follow the slit both ways and cover the whole square.
+#[test]
+fn a_slit_in_a_trimmed_face_has_the_face_on_both_sides() {
+    // The square [0, 8] × [0, 4], its loop starting at the slit's tip (3, 1) up to the top, round
+    // the square and back down the slit.
+    let mut uvs: Vec<[f64; 2]> = (1..=4).map(|k| [3.0, k as f64]).collect();
+    uvs.extend((0..3).rev().map(|k| [k as f64, 4.0]));
+    uvs.extend((0..4).rev().map(|k| [0.0, k as f64]));
+    uvs.extend((1..=8).map(|k| [k as f64, 0.0]));
+    uvs.extend((1..=4).map(|k| [8.0, k as f64]));
+    uvs.extend((3..8).rev().map(|k| [k as f64, 4.0]));
+    uvs.extend((2..4).rev().map(|k| [3.0, k as f64]));
+    let fixed: Vec<Vec3> = uvs.iter().map(|q| Vec3::new(q[0], q[1], 0.0)).collect();
+    let ranges = [std::ops::Range { start: 0, end: uvs.len() }];
+    let traces = motorcycle::traces(&uvs, &ranges, [1.0, 1.0], 0.0);
+    let lines = |n: usize, top: f64| (0..=n).map(|k| top * k as f64 / n as f64).collect::<Vec<f64>>();
+    let Some((extra, triangles)) = cutgrid::cut_grid(&uvs, &ranges, &lines(16, 8.0), &lines(8, 4.0), &traces, [1.0, 1.0]) else { panic!("meshes") };
+    assert!(closed_boundary(&ranges, &fixed, &uvs, &triangles), "the triangles follow the slit both ways");
+    let mut all = uvs.clone();
+    all.extend(extra);
+    let area: f64 = triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| all[i as usize]);
+            0.5 * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+        })
+        .sum();
+    assert!((area - 32.0).abs() < 1e-12, "area {area}");
 }
 
 /// A face whose loop is a thin lune meshes: a half disc of radius 2.5 less a circle through the
@@ -784,11 +836,16 @@ fn a_face_bounded_by_two_short_arcs_keeps_an_area_to_mesh() {
     let sq = [[3000.0, 0.0, 0.0], [5000.0, 0.0, 0.0], [5000.0, 2000.0, 0.0], [3000.0, 2000.0, 0.0]];
     let plane = Surface::Plane { origin: [0.0; 3], u_axis: [1.0, 0.0, 0.0], v_axis: [0.0, 1.0, 0.0] };
     let mut edges = vec![
-        PartEdge { curve: circle(-c), interval: [top, PI - top], vertices: [0, 1] },
-        PartEdge { curve: circle(c), interval: [PI + top, TAU - top], vertices: [1, 0] },
+        PartEdge { nurbs: None, curve: circle(-c), interval: [top, PI - top], vertices: [0, 1] },
+        PartEdge { nurbs: None, curve: circle(c), interval: [PI + top, TAU - top], vertices: [1, 0] },
     ];
     for k in 0..4 {
-        edges.push(PartEdge { curve: line(sq[k], sq[(k + 1) % 4]), interval: [0.0, 1.0], vertices: [2 + k as u32, 2 + ((k + 1) % 4) as u32] });
+        edges.push(PartEdge {
+            nurbs: None,
+            curve: line(sq[k], sq[(k + 1) % 4]),
+            interval: [0.0, 1.0],
+            vertices: [2 + k as u32, 2 + ((k + 1) % 4) as u32],
+        });
     }
     let uses = |es: &[u32]| es.iter().map(|&edge| PartUse { edge, forward: true, given: None }).collect::<Vec<_>>();
     let mut vertices = vec![[half, 0.0, 0.0], [-half, 0.0, 0.0]];
@@ -863,4 +920,136 @@ fn a_loop_corner_within_its_tolerance_of_a_pole_is_a_pole() {
     assert!((area - 3f64.sqrt()).abs() < 0.01 * 3f64.sqrt(), "area {area}");
     let Err(e) = plan(&pyramid_past_a_near_pole(1e-8), 0.01, None) else { panic!("no pole without the tolerance") };
     assert!(e.to_string().contains("winds around the surface"), "{e}");
+}
+
+/// A whole sphere as one face (its seam the only edge) in a body many times its size: at the
+/// body's chord the seam gets two segments, pole to equator to pole, and every node off the poles
+/// follows a pole. The loop used to start at a pole and close across the other, which unwrapped
+/// to a whole turn: "boundary winds around the surface", and the sphere was left out (a sealed
+/// void r 2 in a 60 mm block). It meshes closed.
+#[test]
+fn a_small_sphere_void_in_a_large_block_meshes() {
+    let block = ok(crate::box_solid(Vec3::new(-30.0, -30.0, 0.0), Vec3::new(30.0, 30.0, 60.0)));
+    let ball = ok(crate::sphere(Vec3::new(0.0, 0.0, 30.0), 2.0));
+    let hollow = cut(&block, &ball);
+    let tol = hollow.size() * 0.01;
+    let (m, stats) = match plan(&record(&hollow), tol, None) {
+        Ok((p, stats)) => (p.evaluate(), stats),
+        Err(e) => panic!("plan: {e}"),
+    };
+    assert!(stats.unmeshed.is_empty(), "{:?}", stats.unmeshed.iter().map(|u| &u.reason).collect::<Vec<_>>());
+    assert_watertight(&m, "block with a sphere void");
+    assert_eq!(hollow.unmeshed_faces(), 0);
+}
+
+/// A sheet whose section is an S (a cubic 30 long, 1.5 off its chord each way, its middle on the
+/// chord), straight across, meshed as fans with one triangle flat on the chord across its middle
+/// (A, B at the sides, C a hair above the chord a third along). The chord's middle lies on the
+/// surface while the triangle's short sides sag: splitting those left a child with the chord and
+/// its vertex nearer to it, without end (a loft side of a bike frame refined to slivers until the
+/// point budget ran out, its area counted three times). The flat triangle now splits the chord,
+/// and refinement ends within its budget with no sliver.
+#[test]
+fn sag_refinement_across_an_inflection_ends_without_slivers() {
+    let mut ctrl = Vec::new();
+    for j in 0..2 {
+        for (i, z) in [0.0, 4.0, -4.0, 0.0].into_iter().enumerate() {
+            ctrl.push([10.0 * i as f64, 10.0 * f64::from(j), z, 1.0]);
+        }
+    }
+    let s = EvalSurface::Nurbs {
+        degree: [3, 1],
+        knots: [vec![0., 0., 0., 0., 1., 1., 1., 1.], vec![0., 0., 1., 1.]],
+        count: [4, 2],
+        ctrl,
+        closed: [false, false],
+    };
+    // Boundary: bottom and top rows of n + 1 nodes (their sides within the tolerance, 0.5), A and
+    // B halfway up the ends. Inside: C. Bottom fan from A, the triangle A B C, top fan from C.
+    let n = 6u32;
+    let mut uv: Vec<[f64; 2]> = Vec::new();
+    for i in 0..=n {
+        uv.push([f64::from(i) / f64::from(n), 0.0]);
+    }
+    for i in 0..=n {
+        uv.push([f64::from(i) / f64::from(n), 1.0]);
+    }
+    let (bottom, top) = (0u32, n + 1);
+    let (a, b, c) = (2 * n + 2, 2 * n + 3, 2 * n + 4);
+    uv.extend([[0.0, 0.5], [1.0, 0.5], [1.0 / 3.0, 0.5 + 1e-3]]);
+    let mut tris: Vec<[u32; 3]> = vec![[a, bottom, bottom + 1]];
+    tris.extend((1..n).map(|i| [a, bottom + i, bottom + i + 1]));
+    tris.push([a, bottom + n, b]);
+    tris.push([a, b, c]);
+    tris.push([c, b, top + n]);
+    tris.extend((0..n).rev().map(|i| [c, top + i + 1, top + i]));
+    tris.push([c, top, a]);
+    // The sides along the ends are straight.
+    let fixed: Vec<Vec3> = Vec::new();
+    let tol = 0.5;
+    let start = uv.len();
+    super::sag::refine(&s, tol, 1e-9, &fixed, &mut uv, &mut tris, 20_000);
+    assert!(uv.len() - start < 1_000, "{} points added: refinement ran to its budget", uv.len() - start);
+    for t in &tris {
+        let [p, q, r] = t.map(|i| uv[i as usize]);
+        let area = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        let longest = [(p, q), (q, r), (r, p)].iter().map(|(x, y)| (x[0] - y[0]).hypot(x[1] - y[1])).fold(0.0, f64::max);
+        assert!(area > 1e-6 * longest * longest, "a sliver {t:?}: {p:?} {q:?} {r:?}");
+    }
+}
+
+/// A sheet curved across (a parabola 20 wide, 3.2 high at a tenth in from either side) and two
+/// triangles standing on a chord across the curve: their corners on the surface, their planes
+/// across it, so they count far more than the area under them. The flip lays them along the
+/// sheet, on the straight side along it.
+#[test]
+fn triangles_standing_across_a_curved_sheet_are_flipped_along_it() {
+    let mut ctrl = Vec::new();
+    for j in 0..2 {
+        for (i, z) in [5.0, -5.0, 5.0].into_iter().enumerate() {
+            ctrl.push([10.0 * i as f64 - 10.0, 10.0 * f64::from(j), z, 1.0]);
+        }
+    }
+    let s = EvalSurface::Nurbs {
+        degree: [2, 1],
+        knots: [vec![0., 0., 0., 1., 1., 1.], vec![0., 0., 1., 1.]],
+        count: [3, 2],
+        ctrl,
+        closed: [false, false],
+    };
+    let uv = vec![[0.1, 0.5], [0.9, 0.5], [0.5, 0.52], [0.5, 0.48]];
+    let mut tris = vec![[0, 1, 2], [1, 0, 3]];
+    let area = |tris: &[[u32; 3]]| -> f64 {
+        tris.iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|i| s.eval(uv[i as usize][0], uv[i as usize][1]).0);
+                (b - a).cross(c - a).len() / 2.0
+            })
+            .sum()
+    };
+    let before = area(&tris);
+    super::sag::flip(&s, 0.1, 1e-9, &[], &uv, &mut tris);
+    let after = area(&tris);
+    let sides: Vec<(u32, u32)> = tris.iter().flat_map(|t| (0..3).map(move |k| (t[k].min(t[(k + 1) % 3]), t[k].max(t[(k + 1) % 3])))).collect();
+    assert!(sides.contains(&(2, 3)) && !sides.contains(&(0, 1)), "{tris:?}");
+    assert!(after < 0.5 * before, "{before} -> {after}");
+}
+
+/// A disc with a boss standing on it tangent inside its rim: the disc's top is a ring whose inner
+/// circle touches the outer one, one loop through the touching vertex. There both circles leave
+/// along one tangent, and with the outer chord twice the inner (as their samplings fall) the inner
+/// circle's first node lies on the outer's last chord: no triangulation keeps both. That chord is
+/// halved, and the ring meshes strictly, to its area (300 pi), not the inner disc's.
+#[test]
+fn a_ring_touching_itself_at_a_vertex_meshes_strictly() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2};
+    let prism = |c: Vec2, r: f64, z0: f64, z1: f64| {
+        ok(crate::extrude(&Plane::XY, &[Region2 { outer: Loop2::circle(c, r), holes: vec![] }], z0, z1)).pop().unwrap()
+    };
+    let stepped =
+        ok(crate::boolean(&prism(Vec2::ZERO, 20.0, 0.0, 5.0), &prism(Vec2::new(10.0, 0.0), 10.0, 5.0, 15.0), crate::BoolOp::Union)).unwrap();
+    let (_, stats) = ok(plan(&record(&stepped), 1e-4, None));
+    assert!(stats.lenient.is_empty(), "{:?}", stats.lenient.iter().map(|r| &r.reason).collect::<Vec<_>>());
+    let ring = ok(stepped.faces(1e-4)).into_iter().find(|f| (f.centroid.z - 5.0).abs() < 1e-6).unwrap();
+    assert!((ring.area - 300.0 * PI).abs() < 0.05, "ring area {}", ring.area);
 }

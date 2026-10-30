@@ -927,9 +927,15 @@ mod tests {
             }
         }
         assert_eq!(equivalent(&original, source.size(), &same, source.size()), Some(true));
-        let last = original.faces.len() - 1;
-        let outward = preflight(&original).unwrap()[last];
-        let runs = loop_runs(&original, last, 0, outward).unwrap();
+        // A cap: a face whose plane is square to z (the record's face order is SMLib's, its last
+        // face may be the hole's wall).
+        let cap = original
+            .faces
+            .iter()
+            .position(|f| plane_of(&f.surface).is_some_and(|(_, u, v)| u.cross(v).normalized().is_some_and(|n| n.z.abs() > 0.9)))
+            .unwrap();
+        let outward = preflight(&original).unwrap()[cap];
+        let runs = loop_runs(&original, cap, 0, outward).unwrap();
         assert!(
             loops_same(
                 &cap_loop(&runs, &Plane::XY, 3e-9, &mut 2_000_000).unwrap(),
@@ -950,8 +956,10 @@ mod tests {
         let region = solidcraft_geom::Loop2::polygon(&[Vec2::ZERO, Vec2::new(20., 0.), Vec2::new(20., 20.), Vec2::new(0., 20.)]);
         let doubled = CapLoop { segments: region.segs.iter().chain(&region.segs).copied().collect(), area: Interval::enclosing(800., 1e-8).unwrap() };
         assert!(separated_material(&[doubled], 1e-6, &mut 16_000_000).is_none());
-        let thin = crate::box_solid(Vec3::ZERO, Vec3::new(20., 20., 1e-5)).unwrap();
-        assert!(cert(&thin, 3e-6).is_none());
+        // Thinner than a body's tolerance (2e-5): SMLib refuses it as a solid; built, it gets none.
+        if let Ok(thin) = crate::box_solid(Vec3::ZERO, Vec3::new(20., 20., 1e-5)) {
+            assert!(cert(&thin, 3e-6).is_none());
+        }
     }
 
     #[test]

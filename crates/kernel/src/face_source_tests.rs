@@ -27,6 +27,12 @@ fn box_certificates_are_six_construction_roles_with_dimension_stable_axes() {
         (Vec3::new(2., 3., 4.), Vec3::new(12., 23., 34.)),
         (Vec3::new(12., 23., 34.), Vec3::new(2., 3., 4.)),
         (Vec3::new(2., -8., 4.), Vec3::new(22., 43., 54.)),
+        // A side far shorter than the body (a 0.3 mm label of a metre): its walls' edges lie
+        // closer together than the sweep's body-sized nearness, and each keeps its own role.
+        (Vec3::new(500., -0.3, 1400.), Vec3::new(1500., 0., 1800.)),
+        // Far thinner than the body's flatness tolerance (0.1 µm in 14 mm): each cap is in its
+        // own plane only.
+        (Vec3::ZERO, Vec3::new(10., 10., 1e-4)),
     ] {
         let body = crate::box_solid(a, b).unwrap().with_box_certificate(42).unwrap();
         let mut roles = std::collections::HashSet::new();
@@ -94,7 +100,14 @@ fn construction_planes_follow_reflected_and_sheared_affine_images() {
         [[-1., 0., 0., 0.], [0.4, 2., 0., 0.], [0., 0.3, 1., 0.], [8., 9., 10., 1.]],
     ] {
         let placed = transform_matrix(&body, m).unwrap();
-        for (original, transformed) in body.face_sources().unwrap().iter().zip(placed.face_sources().unwrap()) {
+        // SMLib numbers the placed faces afresh: each is matched with the face its history names.
+        let history = placed.history().unwrap();
+        let originals = body.face_sources().unwrap();
+        for (f, transformed) in placed.face_sources().unwrap().iter().enumerate() {
+            let [crate::history::FaceOrigin::Face { operand: 0, face }] = history.faces[f].origins.as_slice() else {
+                panic!("face {f} has no one origin")
+            };
+            let original = &originals[*face];
             let (
                 Some(FaceSource::Box { producer: a, axis: aa, high: ah, plane: ap }),
                 Some(FaceSource::Box { producer: b, axis: ba, high: bh, plane: bp }),
@@ -259,7 +272,7 @@ fn constructed_annulus_sides_follow_exact_source_edges() {
             }
             assert!(vertices > 0);
         }
-        assert_eq!((outer, inner), (2, 2), "full circles split into two actual edges each");
+        assert_eq!((outer, inner), (1, 1), "each full circle sweeps one side face");
         assert_eq!(sources.iter().filter(|source| matches!(source, Some(FaceSource::ExtrudeCap { .. }))).count(), 2);
     }
 }
@@ -298,7 +311,7 @@ fn constructed_large_arc_split_and_reversal_preserve_one_source_segment() {
                 _ => None,
             })
             .collect();
-        assert_eq!(arcs.len(), 2, "large input arc explicitly creates two actual boundary edges");
+        assert_eq!(arcs.len(), 1, "the large input arc sweeps one side face");
         assert!(arcs.iter().all(|(radius, sweep)| (**radius - 10.).abs() < 1e-12 && (sweep.abs() - std::f64::consts::PI * 5. / 3.).abs() < 1e-12));
         assert_eq!(sources.iter().filter(|source| matches!(source, Some(FaceSource::ExtrudeSide { segment: Seg2::Line { .. }, .. }))).count(), 1);
         let mesh = body.mesh(&crate::MeshTolerance::chord(0.001)).unwrap();

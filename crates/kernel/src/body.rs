@@ -344,9 +344,25 @@ fn coarse_tolerance(span: f64) -> f64 {
     (span * 0.01).clamp(1e-3, 1.0)
 }
 
-/// Box diagonal of a record's vertices (0 when it has none or no finite extent).
+/// Box diagonal of a record's vertices and points along its edges (0 when it has none or no
+/// finite extent). The edges count: SMLib closes a sphere, a cylinder or a torus along seams, so
+/// its vertices alone can be two poles or a single point (a torus came out 1 mm across, and its
+/// display mesh at a hundredth of that took 214 720 triangles). Points on the edges, not their
+/// control hulls: a rational edge's control points can lie far off it.
 fn span_of(record: &Brep) -> f64 {
-    let bounds: Aabb3 = record.vertices.iter().map(|v| v3(v.point)).collect();
+    let mut bounds: Aabb3 = record.vertices.iter().map(|v| v3(v.point)).collect();
+    for e in &record.edges {
+        if let Ok(c) = brep::eval::CurveEval::new(e.parameters()) {
+            let [t0, t1] = e.interval;
+            for i in 1..4 {
+                if let Some(p) = c.point(t0 + (t1 - t0) * f64::from(i) / 4.0)
+                    && p.is_finite()
+                {
+                    bounds.add(p);
+                }
+            }
+        }
+    }
     let d = if bounds.is_empty() { 0.0 } else { bounds.diagonal() };
     if d.is_finite() && d > 0.0 { d } else { 0.0 }
 }
@@ -360,11 +376,11 @@ fn same_shared<T: PartialEq>(a: &Option<std::sync::Arc<T>>, b: &Option<std::sync
     }
 }
 
-/// `record`, checked to be a body's: valid structure (budgets, references, loops, regions,
+/// `record`, checked to be a body's: valid structure (references, loops, regions,
 /// canonical order) and at least one face. A solid's faces bound material; a surface body's lie
 /// in open shells.
 fn solid_record(record: Brep) -> Result<Brep> {
-    record.validate().map_err(|e| KernelError::Invalid(e.to_string()))?;
+    record.validate_built().map_err(|e| KernelError::Invalid(e.to_string()))?;
     if record.faces.is_empty() {
         return Err(KernelError::Failed("empty result".into()));
     }
@@ -461,7 +477,8 @@ impl Body {
     }
 
     /// The body of a schema 4 record (a solid, or a surface body of open shells): checked for
-    /// structure (budgets, references, loops, regions, canonical order). Its faces face as the
+    /// structure (references, loops, regions, canonical order; a record from a file is checked
+    /// against the file budgets where it is read). Its faces face as the
     /// record says.
     pub(crate) fn from_record(record: Brep) -> Result<Body> {
         Ok(Body::bare(solid_record(record)?, None))
@@ -555,6 +572,22 @@ impl Body {
     pub(crate) fn inherit_regularization_protection(mut self, input: &Body) -> Self {
         self.regularization_protected |= input.regularization_protected;
         self
+    }
+
+    /// This body with the lines `inputs`' faces were split along on purpose added to its own:
+    /// an operation combining bodies keeps their authored splits (each line once), as it keeps
+    /// their regularization protection.
+    pub(crate) fn inherit_split_lines(self, inputs: &[&Body]) -> Self {
+        let mut lines: Vec<Vec<Vec3>> = self.split_keep().to_vec();
+        for line in inputs.iter().flat_map(|input| input.split_keep()) {
+            if !lines.contains(line) {
+                lines.push(line.clone());
+            }
+        }
+        if lines.len() == self.split_keep().len() {
+            return self;
+        }
+        self.with_split_lines(Some(std::sync::Arc::new(lines)))
     }
 
     /// Exact history of the operation that made this body, relative to that operation's
@@ -1182,6 +1215,13 @@ impl Body {
             .collect())
     }
 
+    /// How far [`Body::planar_edges`] lets a piece it reads as a line or an arc lie from the
+    /// edge's curve (a NURBS within this of a circle is that arc), so how far a piece's ends may
+    /// lie from the edge's vertices.
+    pub fn planar_edges_tolerance(&self) -> f64 {
+        (self.size() * 1e-7).max(1e-9) * 10.0
+    }
+
     /// Edges `indices` (record edge indices) in `plane`'s coordinates, exactly: lines, circular
     /// arcs, and free-form curves as the Bézier spans they are, for a sketch to project them.
     /// `None` for an edge that doesn't lie in a plane parallel to `plane`, isn't read exactly or
@@ -1190,7 +1230,7 @@ impl Body {
         if self.is_mesh() {
             return vec![None; indices.len()];
         }
-        let tol = (self.size() * 1e-7).max(1e-9) * 10.0;
+        let tol = self.planar_edges_tolerance();
         indices
             .iter()
             .map(|i| {
@@ -1327,6 +1367,10 @@ impl Body {
     pub fn parts(&self, groups: &[Vec<usize>]) -> Result<Vec<Body>> {
         let regions = self.record.material_regions();
         let counts = [(self.face_count(), self.edge_count())];
+        // Sources are by face position: a table of another length belongs to another body.
+        if self.face_sources.as_ref().is_some_and(|all| all.len() != self.face_count()) {
+            return Err(KernelError::Invalid("lumps: face source table does not match the body".into()));
+        }
         groups
             .iter()
             .map(|group| {

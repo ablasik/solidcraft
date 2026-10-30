@@ -21,9 +21,18 @@ pub enum BoolOp {
 /// everything or an intersection of disjoint bodies. A result SMLib's check refuses is an error.
 ///
 /// The result carries its exact history ([`Body::history`]) over the operands `[a, b]`, from
-/// SMLib's own tags, or none where a body's order cannot be matched to SMLib's.
+/// SMLib's own tags, or none where a body's order cannot be matched to SMLib's. A cut by a tool
+/// apart from the body is the body itself (its faces and edges kept), and their intersection empty.
 pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     crate::profile::timed(crate::profile::Kind::Boolean, "boolean", || {
+        // A tool apart from the body (their exact boxes, grown by the tolerances, do not meet)
+        // leaves a cut the body itself and an intersection nothing, with no intersection work.
+        if matches!(op, BoolOp::Cut | BoolOp::Intersect) && apart(a, b)? {
+            return Ok(match op {
+                BoolOp::Cut => Some(crate::boolean_record::operand(a, 0, &crate::record::counts(&[a, b]))),
+                _ => None,
+            });
+        }
         let r = guard("SMLib boolean", || crate::smlib_boolean::smlib_boolean(a, b, op));
         with_operand_roles(a, b, op, r)
     })
@@ -40,14 +49,27 @@ pub fn union_all(bodies: &[&Body]) -> Result<Body> {
         if bodies.is_empty() {
             return Err(KernelError::Invalid("a union of no bodies".into()));
         }
-        guard("SMLib union", || crate::smlib_boolean::smlib_union_all(bodies))?.with_preserved_union_planar_sources(bodies)
+        guard("SMLib union", || crate::smlib_boolean::smlib_union_all(bodies))?
+            .inherit_split_lines(bodies)
+            .with_preserved_union_planar_sources(bodies)
     })
 }
 
+/// Whether B-rep bodies `a` and `b` are apart: their exact boxes, each grown by twice its
+/// record's tolerance (as [`union_apart`] takes them), do not meet.
+fn apart(a: &Body, b: &Body) -> Result<bool> {
+    if a.is_mesh() || b.is_mesh() {
+        return Ok(false);
+    }
+    let grown = |x: &Body| x.exact_bounds().map(|bb| bb.inflated(2.0 * x.record().tolerance));
+    Ok(!grown(a)?.meets(&grown(b)?))
+}
+
 /// A boolean's result with what its operands' faces stood for carried over: regularization
-/// protection and the planar construction and shell roles on supports it kept.
+/// protection, the lines they were split along on purpose, and the planar construction and shell roles on supports it kept.
 fn with_operand_roles(a: &Body, b: &Body, op: BoolOp, r: Result<Option<Body>>) -> Result<Option<Body>> {
-    let r = r.map(|result| result.map(|body| body.inherit_regularization_protection(a).inherit_regularization_protection(b)));
+    let r = r
+        .map(|result| result.map(|body| body.inherit_regularization_protection(a).inherit_regularization_protection(b).inherit_split_lines(&[a, b])));
     match op {
         BoolOp::Cut => r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)).transpose()),
         BoolOp::Union => r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(&[a, b])).transpose()),
@@ -141,15 +163,44 @@ pub fn transform_matrix(body: &Body, m: [[f64; 4]; 4]) -> Result<Body> {
         return placed.with_history(history, &[body]);
     }
     let sources = body.transformed_sources(m)?;
-    let placed = match Rigid::of_matrix(&m) {
+    let (placed, sources, paint) = match Rigid::of_matrix(&m) {
         Some(motion) => {
             let moved = Body::from_record(body.record().moved(&motion))?;
             let history = History::identity(&moved);
-            moved.with_history(history, &[body])?
+            (moved.with_history(history, &[body])?, sources, body.paint().cloned())
         }
-        None => transformed(body, &m)?,
+        None => {
+            // SMLib numbers the moved body's faces afresh: each face's source and paint follow it
+            // by the history (a face whose origin is not known keeps no source; with no history
+            // the paint stays as it was).
+            let placed = transformed(body, &m)?;
+            let origin: Vec<Option<usize>> = (0..placed.face_count()).map(|f| moved_from(placed.history(), f)).collect();
+            let sources = sources.map(|s| std::sync::Arc::new(origin.iter().map(|o| o.and_then(|j| s.get(j).cloned().flatten())).collect()));
+            let paint = body.paint().cloned().map(|mut p| {
+                if placed.history().is_none() {
+                    return p;
+                }
+                p.faces = p
+                    .faces
+                    .iter()
+                    .flat_map(|fp| {
+                        origin.iter().enumerate().filter(|(_, o)| **o == Some(fp.face)).map(|(face, _)| crate::FacePaint { face, ..fp.clone() })
+                    })
+                    .collect();
+                p
+            });
+            (placed, sources, paint)
+        }
     };
-    Ok(placed.with_color(body.color()).with_paint(body.paint().cloned()).with_face_sources(sources).inherit_regularization_protection(body))
+    Ok(placed.with_color(body.color()).with_paint(paint).with_face_sources(sources).inherit_regularization_protection(body))
+}
+
+/// The face of the operand that face `f` of a moved body is, by the move's history.
+fn moved_from(history: Option<&History>, f: usize) -> Option<usize> {
+    match history?.faces.get(f)?.origins.as_slice() {
+        [crate::history::FaceOrigin::Face { operand: 0, face }] => Some(*face),
+        _ => None,
+    }
 }
 
 /// `body` moved by a matrix that is not a rigid motion, in SMLib, its history from SMLib's tags.

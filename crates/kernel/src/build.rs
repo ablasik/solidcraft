@@ -799,24 +799,61 @@ pub fn extrude_tapered_between(
     smlib_tapered(plane, region, from, to, foot, dir_sign.signum(), taper, corner)
 }
 
-/// [`extrude_tapered_between`] through SMLib's draft extrusion: one loop (SMLib's takes no
-/// holes), its section at `from` the profile offset by the taper, after any straight foot.
+/// [`extrude_tapered_between`] through SMLib's draft extrusion, its section at `from` the
+/// profile offset by the taper, after any straight foot. SMLib's draft extrusion takes one loop:
+/// a region with holes is its outer loop drafted, less each hole drafted the other way (every
+/// wall leaning by the taper on the material's side), refused only where the taper would make a
+/// hole meet the outer wall or another hole within the extrusion.
 #[allow(clippy::too_many_arguments)]
 fn smlib_tapered(plane: &Plane, region: &Region2, from: f64, to: f64, foot: f64, sign: f64, taper: f64, corner: DraftCorner) -> Result<Body> {
-    if !region.holes.is_empty() {
-        return Err(crate::smlib_sweeps::refuse("draft extrusion of a profile with holes (SMLib's takes one loop)"));
-    }
-    let outer = oriented(region)?.map_loops(|l| l.merged_lines(continues_straight)).outer;
-    let bottom = if from == 0.0 || taper == 0.0 {
-        outer
-    } else {
-        let moved = offset_loop(&outer.lp, from * taper.tan())?;
-        let segs: Option<Vec<Seg2>> = moved.into_iter().collect();
+    let joined = oriented(region)?.map_loops(|l| l.merged_lines(continues_straight));
+    // A loop's section `at` along the extrusion: counter-clockwise, grown by `taper` (a hole's
+    // the other way, as the wall of the material round it leans).
+    let section = |l: &NumberedLoop, at: f64, taper: f64| -> Result<NumberedLoop> {
+        let ccw = l.oriented(false);
+        if at == 0.0 || taper == 0.0 {
+            return Ok(ccw);
+        }
+        let segs: Option<Vec<Seg2>> = offset_loop(&ccw.lp, at * taper.tan())?.into_iter().collect();
         let segs = segs.ok_or_else(|| crate::smlib_sweeps::refuse("draft extrusion that starts before its profile where the taper closes a side"))?;
-        NumberedLoop { lp: Loop2 { segs }, from: outer.from }
+        Ok(NumberedLoop { lp: Loop2 { segs }, from: ccw.from })
     };
+    let outer = section(&joined.outer, from, taper)?;
     let draft = (taper != 0.0).then_some(crate::smlib_sweeps::Draft { taper, foot, corner });
-    crate::smlib_sweeps::extrude(plane, &crate::smlib_sweeps::pieces([&bottom]), Some(region), from * sign, to - from, sign, draft)
+    if joined.holes.is_empty() {
+        return crate::smlib_sweeps::extrude(plane, &crate::smlib_sweeps::pieces([&outer]), Some(region), from * sign, to - from, sign, draft);
+    }
+    let Some(draft) = draft else {
+        return Err(KernelError::Invalid("a tapered extrusion needs a taper".into()));
+    };
+    let holes: Vec<NumberedLoop> = joined.holes.iter().map(|h| section(h, from, -taper)).collect::<Result<_>>()?;
+    // The sections where the walls are farthest moved, the two ends: each hole stays inside the
+    // outer loop and clear of the other holes there (the walls are planes, cones and their like,
+    // which move monotonically in between).
+    for at in [from, to] {
+        let o = section(&joined.outer, at, taper)?;
+        let hs: Vec<NumberedLoop> = joined.holes.iter().map(|h| section(h, at, -taper)).collect::<Result<_>>()?;
+        let pts = |l: &NumberedLoop| l.lp.segs.iter().flat_map(|s| s.polyline(1e-3)).collect::<Vec<Vec2>>();
+        // Apart: no point of either inside the other.
+        let apart = |a: &NumberedLoop, b: &NumberedLoop| !pts(a).iter().any(|p| b.lp.contains(*p)) && !pts(b).iter().any(|p| a.lp.contains(*p));
+        for (i, h) in hs.iter().enumerate() {
+            let inside = pts(h).iter().all(|p| o.lp.contains(*p)) && !pts(&o).iter().any(|p| h.lp.contains(*p));
+            if !inside || hs.iter().skip(i + 1).any(|k| !apart(h, k)) {
+                return Err(KernelError::Invalid("the draft makes a hole meet the outer wall or another hole".into()));
+            }
+        }
+    }
+    let all: Vec<NumberedLoop> = std::iter::once(outer.clone()).chain(holes.iter().map(|h| h.oriented(true))).collect();
+    crate::smlib_sweeps::extrude_drafted_with_holes(
+        plane,
+        &crate::smlib_sweeps::pieces([&outer]),
+        &holes.iter().map(|h| crate::smlib_sweeps::pieces([h])).collect::<Vec<_>>(),
+        &crate::smlib_sweeps::pieces(all.iter()),
+        from * sign,
+        to - from,
+        sign,
+        draft,
+    )
 }
 
 /// A planar region on `plane` as the schema 4 record of one face (an open sheet): the plane's
@@ -1194,6 +1231,62 @@ impl PathSeg {
                 Some((plane.dir_to_world(seg.start_tangent()).normalized()?, plane.dir_to_world(seg.end_tangent()).normalized()?))
             }
             PathSeg::Bezier(b) => Some((b.derivative(0.0)?.normalized()?, b.derivative(1.0)?.normalized()?)),
+        }
+    }
+
+    /// The segment as the rational Bézier span in space that is the same curve on the same
+    /// parameter: a sketch cubic, Bézier or conic carried onto its plane (an affine image keeps
+    /// the weights). `None` for a line or an arc, which have closed forms of their own, and for a
+    /// span that does not evaluate.
+    fn space_bezier(&self) -> Option<crate::point_path::SpaceBezier> {
+        use solidcraft_geom::bspline::HPoint;
+        let PathSeg::Curve { plane, seg } = *self else {
+            return match *self {
+                PathSeg::Bezier(b) => Some(b),
+                _ => None,
+            };
+        };
+        let w = |p: Vec2, weight: f64| HPoint::weighted(plane.to_world(p), weight);
+        match seg {
+            Seg2::Cubic { p0, p1, p2, p3 } => crate::point_path::SpaceBezier::new(&[w(p0, 1.0), w(p1, 1.0), w(p2, 1.0), w(p3, 1.0)]),
+            Seg2::Bezier { n, p } => {
+                let ctrl: Vec<HPoint> = p.get(..=usize::from(n))?.iter().map(|q| w(*q, 1.0)).collect();
+                crate::point_path::SpaceBezier::new(&ctrl)
+            }
+            Seg2::Conic { a, apex, b, w: weight } => crate::point_path::SpaceBezier::new(&[w(a, 1.0), w(apex, weight), w(b, 1.0)]),
+            Seg2::Line { .. } | Seg2::Arc { .. } => None,
+        }
+    }
+
+    /// The segment's length: a line's and an arc's in closed form, a free-form span's by its
+    /// arc-length integral ([`crate::SpaceBezier::length`]). `None` for a segment that does not
+    /// evaluate.
+    pub fn length(&self) -> Option<f64> {
+        let l = match *self {
+            PathSeg::Line { a, b } => a.dist(b),
+            PathSeg::Arc { a, center, angle, .. } => a.dist(center) * angle.abs(),
+            PathSeg::Curve { plane, seg: seg @ (Seg2::Line { .. } | Seg2::Arc { .. }) } => return PathSeg::of_sketch(&plane, &seg).length(),
+            PathSeg::Curve { .. } | PathSeg::Bezier(_) => self.space_bezier()?.length()?,
+        };
+        l.is_finite().then_some(l)
+    }
+
+    /// The point a fraction `f` (0…1) of the way along the segment by arc length, and the unit
+    /// direction of travel there: a line's and an arc's in closed form (an arc's length grows
+    /// with its angle), a free-form span's at the parameter where its arc-length integral reaches
+    /// that fraction ([`crate::SpaceBezier::along`]). `None` for a segment that does not
+    /// evaluate or has no direction.
+    pub fn along(&self, f: f64) -> Option<(Vec3, Vec3)> {
+        let f = f.clamp(0.0, 1.0);
+        match *self {
+            PathSeg::Line { a, b } => Some((a.lerp(b, f), (b - a).normalized()?)),
+            PathSeg::Arc { a, center, axis, angle } => {
+                let k = axis.normalized()?;
+                let p = rotate_about(a, center, k, angle * f);
+                Some((p, (k.cross(p - center) * angle.signum()).normalized()?))
+            }
+            PathSeg::Curve { plane, seg: seg @ (Seg2::Line { .. } | Seg2::Arc { .. }) } => PathSeg::of_sketch(&plane, &seg).along(f),
+            PathSeg::Curve { .. } | PathSeg::Bezier(_) => self.space_bezier()?.along(f),
         }
     }
 
