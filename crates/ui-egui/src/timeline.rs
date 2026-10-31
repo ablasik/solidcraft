@@ -500,6 +500,10 @@ fn select_range(app: &mut SolveApp, order: &[u64], id: u64, add: bool) {
 /// Give a History feature click to a compatible active dialog input in any layout.
 /// Plain clicks keep an existing pick; Ctrl/Command clicks toggle it off.
 pub(crate) fn pick_feature_into_dialog(app: &mut SolveApp, id: u64, modifiers: egui::Modifiers) -> bool {
+    // A pattern or Mirror says why it does not take a sketch (#10057).
+    if app.dialog.as_mut().is_some_and(|d| d.refuse_sketch(&app.session, id)) {
+        return true;
+    }
     let Some(d) = app.dialog.as_mut().filter(|d| d.active_input().is_some_and(|i| i.accept & crate::selection::FEATURES != 0)) else {
         return false;
     };

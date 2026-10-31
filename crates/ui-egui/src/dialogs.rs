@@ -1606,6 +1606,9 @@ impl Dialog {
     /// the command starts. The island inside another profile's hole is left out, or it would fill
     /// the hole. False when the click is not one of those (the caller selects it as usual).
     pub fn pick_sketch(&mut self, s: &Session, id: u64) -> bool {
+        if self.refuse_sketch(s, id) {
+            return true;
+        }
         if self.active != 0
             || !matches!(self.kind, Kind::Extrude { .. } | Kind::Revolve { .. } | Kind::Emboss { .. })
             || !self.inputs.first().is_some_and(|i| i.accept & PROFILES != 0)
@@ -1627,6 +1630,21 @@ impl Dialog {
         self.focus = true;
         self.error = None;
         self.sync_thread(s);
+        true
+    }
+
+    /// A sketch clicked (in the view, the Browser or the History) while a pattern or Mirror waits
+    /// for its bodies or features: a sketch is neither, so the dialog says what to do instead of
+    /// taking nothing in silence (#10057). False when the click is not one of those.
+    pub fn refuse_sketch(&mut self, s: &Session, id: u64) -> bool {
+        if self.active != 0
+            || !is_pattern(&self.kind)
+            || !self.inputs.first().is_some_and(|i| i.accept == BODIES || i.accept == selection::FEATURES)
+            || !s.doc.feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::Sketch { .. }))
+        {
+            return false;
+        }
+        self.error = Some(SKETCH_NOT_OBJECT.to_string());
         true
     }
 
@@ -2411,6 +2429,11 @@ fn objects_label(accept: Accept) -> &'static str {
     if accept == selection::FEATURES { "Features" } else { "Objects" }
 }
 
+/// What a pattern or Mirror says when a sketch is clicked for its objects (#10057). It names what
+/// to pick, so it shows as a hint rather than an error ([`missing_pick`]).
+const SKETCH_NOT_OBJECT: &str =
+    "Pick bodies or features: a sketch is neither. Repeat its curves with the sketch's own Pattern or Mirror, or extrude it first.";
+
 fn is_pattern(k: &Kind) -> bool {
     matches!(k, Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. } | Kind::Mirror)
 }
@@ -2421,7 +2444,8 @@ fn object_type_row(d: &mut Dialog, ui: &mut egui::Ui) {
     let Some(inp) = d.inputs.first_mut() else { return };
     let cur = usize::from(inp.accept == selection::FEATURES);
     let mut ty = cur;
-    choice_row(ui, "Object Type", "pat_obj", &mut ty, &["Bodies", "Features"]);
+    // What the two kinds are, and that a sketch is neither (#10057).
+    choice_row(ui, "Object Type", "pat_obj", &mut ty, &["Bodies", "Features"]).on_hover_text(crate::i18n::tr("ui.pattern_object_type_tip"));
     if ty != cur {
         inp.accept = if ty == 1 { selection::FEATURES } else { BODIES };
         inp.label = objects_label(inp.accept);

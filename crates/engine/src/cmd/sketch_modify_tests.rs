@@ -2420,6 +2420,167 @@ fn an_offset_slot_still_moves_with_the_dimension_that_places_it() {
     }
 }
 
+fn capped_line_offset(fixed_cap: bool) -> Session {
+    let mut s = Session::default();
+    run(
+        &mut s,
+        "timeline.add",
+        json!({
+            "feature": {"id":1,"name":"Capped offset","type":"sketch","plane":{"type":"origin","name":"XY"},"sketch":{
+                "points":[
+                    {"id":"origin","pos":[0,0],"fixed":true},
+                    {"id":"end","pos":[0,50],"fixed":false},
+                    {"id":"oa","pos":[-2,0],"fixed":true},
+                    {"id":"ob","pos":[-2,50],"fixed":true},
+                    {"id":"center","pos":[-1,50],"fixed":false},
+                    {"id":"cap_end","pos":[-2,50],"fixed":fixed_cap}
+                ],
+                "curves":[
+                    {"id":"source","type":"line","a":0,"b":1},
+                    {"id":"offset","type":"line","a":2,"b":3},
+                    {"id":"cap","type":"arc","c":4,"a":1,"b":5}
+                ],
+                "constraints":[
+                    {"id":"vertical","type":"vertical","l":0},
+                    {"id":"length","type":"length","l":0,"value":50,"param":"height"},
+                    {"id":"source_tangent","type":"tangent","a":0,"b":2},
+                    {"id":"offset_tangent","type":"tangent","a":1,"b":2},
+                    {"id":"end_join","type":"coincident","p":3,"q":5}
+                ],
+                "offsets":[{"sources":[["source",true]],"outputs":["offset"],"distance":2,"closed":false}]
+            }},
+            "params":[{"name":"height","expression":"50","unit":"mm"}]
+        }),
+    );
+    run(&mut s, "sketch.edit", json!({"sketch":1}));
+    s
+}
+
+#[test]
+fn a_tangent_cap_follows_its_offset_when_the_source_length_changes() {
+    // #4823: the cap joins the source to the offset's held endpoint. Solving against the old
+    // endpoint first makes every length change look contradictory, before the offset can move.
+    let mut s = capped_line_offset(false);
+    let check = |s: &Session, height: f64| {
+        let world = s.world_state();
+        let solved = world.sketch(1).unwrap();
+        assert!(solved.report.keeps_orientation(), "{:?}", solved.report);
+        assert!(solved.report.fully_constrained());
+        let sk = &solved.sketch;
+        for (id, expected) in [
+            ("origin", Vec2::ZERO),
+            ("end", Vec2::new(0.0, height)),
+            ("oa", Vec2::new(-2.0, 0.0)),
+            ("ob", Vec2::new(-2.0, height)),
+            ("center", Vec2::new(-1.0, height)),
+            ("cap_end", Vec2::new(-2.0, height)),
+        ] {
+            let point = sk.points.iter().find(|p| p.id == id).unwrap();
+            assert!(point.pos.dist(expected) < 1e-6, "{id}: {:?}, expected {expected:?}", point.pos);
+        }
+        assert_eq!(sk.constraints.len(), 5);
+        assert_eq!(sk.offsets.len(), 1);
+    };
+    check(&s, 50.0);
+    let mut previous = 50.0;
+    for height in [60.0, 40.0, 70.0] {
+        run(&mut s, "parameters.change", json!({"name":"height","expression":height.to_string()}));
+        check(&s, height);
+        run(&mut s, "edit.undo", json!({}));
+        check(&s, previous);
+        run(&mut s, "edit.redo", json!({}));
+        check(&s, height);
+        previous = height;
+    }
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened, 70.0);
+}
+
+#[test]
+fn an_offset_cap_fixed_at_the_old_height_still_refuses_a_length_change() {
+    let mut s = capped_line_offset(true);
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    assert!(s.execute("parameters.change", &json!({"name":"height","expression":"60"})).is_err());
+    assert_eq!(s.doc.to_json(), before);
+    assert_eq!(s.undo.len(), undo);
+}
+
+#[test]
+fn a_cap_on_an_offset_arc_keeps_its_radius_through_large_length_edits() {
+    // Two externally tangent source arcs: radii 3 and 6, centres separated by (4, -sqrt(65)).
+    // Their inward/outward offsets share those centres; a radius-1 cap closes the 2 mm gap.
+    // The preliminary keep-start solve used to stretch that cap onto another tangency branch.
+    let dy = 65.0_f64.sqrt();
+    let end_dy = 11.0_f64.sqrt();
+    for batch in [false, true] {
+        let mut s = Session::default();
+        run(
+            &mut s,
+            "timeline.add",
+            json!({
+                "feature":{"id":1,"name":"Curved cap","type":"sketch","plane":{"type":"origin","name":"XY"},"sketch":{
+                    "points":[
+                        {"id":"origin","pos":[0,0],"fixed":true},
+                        {"id":"end","pos":[0,50]},
+                        {"id":"bend_center","pos":[3,50]},
+                        {"id":"bend_join","pos":[3.0+4.0/3.0,50.0-dy/3.0]},
+                        {"id":"tip_center","pos":[7,50.0-dy]},
+                        {"id":"tip_end","pos":[2,50.0-dy-end_dy]},
+                        {"id":"oa","pos":[-2,0],"fixed":true},
+                        {"id":"ob","pos":[-2,50],"fixed":true},
+                        {"id":"offset_join","pos":[3.0+20.0/9.0,50.0-dy*5.0/9.0],"fixed":true},
+                        {"id":"offset_end","pos":[7.0-10.0/3.0,50.0-dy-end_dy*2.0/3.0],"fixed":true},
+                        {"id":"cap_center","pos":[7.0-25.0/6.0,50.0-dy-end_dy*5.0/6.0]},
+                        {"id":"cap_end","pos":[7.0-10.0/3.0,50.0-dy-end_dy*2.0/3.0]}
+                    ],
+                    "curves":[
+                        {"id":"source","type":"line","a":0,"b":1},
+                        {"id":"bend","type":"arc","c":2,"a":3,"b":1},
+                        {"id":"tip","type":"arc","c":4,"a":3,"b":5},
+                        {"id":"offset","type":"line","a":6,"b":7},
+                        {"id":"bend_offset","type":"arc","c":2,"a":8,"b":7},
+                        {"id":"tip_offset","type":"arc","c":4,"a":8,"b":9},
+                        {"id":"cap","type":"arc","c":10,"a":5,"b":11}
+                    ],
+                    "constraints":[
+                        {"id":"vertical","type":"vertical","l":0},
+                        {"id":"length","type":"length","l":0,"value":50,"param":"height"},
+                        {"id":"bend_tangent","type":"tangent","a":0,"b":1},
+                        {"id":"tip_tangent","type":"tangent","a":1,"b":2},
+                        {"id":"tip_distance","type":"line_circle_distance","l":0,"c":2,"value":1},
+                        {"id":"bend_radius","type":"radius","c":1,"value":3},
+                        {"id":"tip_radius","type":"radius","c":2,"value":6},
+                        {"id":"end_distance","type":"point_line_distance","p":5,"l":0,"value":2},
+                        {"id":"cap_tangent","type":"tangent","a":2,"b":6},
+                        {"id":"end_join","type":"coincident","p":9,"q":11}
+                    ],
+                    "offsets":[{"sources":[["source",true],["bend",false],["tip",true]],
+                        "outputs":["offset","bend_offset","tip_offset"],"distance":2,"closed":false}]
+                }},
+                "params":[{"name":"height","expression":"50","unit":"mm"}]
+            }),
+        );
+        run(&mut s, "sketch.edit", json!({"sketch":1}));
+        let initial = sketch(&s);
+        for height in [55.0, 60.0, 70.0, 40.0] {
+            let params =
+                if batch { json!({"changes":{"height":height.to_string()}}) } else { json!({"name":"height","expression":height.to_string()}) };
+            run(&mut s, "parameters.change", params);
+            let world = s.world_state();
+            let solved = world.sketch(1).unwrap();
+            assert!(solved.report.keeps_orientation() && solved.report.fully_constrained(), "{:?}", solved.report);
+            for (p, before) in solved.sketch.points.iter().zip(&initial.points) {
+                let shift = if matches!(p.id.as_str(), "origin" | "oa") { 0.0 } else { height - 50.0 };
+                let expected = before.pos + Vec2::new(0.0, shift);
+                assert!(p.pos.dist(expected) < 1e-6, "batch={batch}, height={height}, {}: {:?}, expected {expected:?}", p.id, p.pos);
+                assert_eq!(p.fixed, before.fixed, "temporary source holds must not be saved");
+            }
+            assert_eq!(solved.sketch.constraints.len(), 10);
+        }
+    }
+}
+
 #[test]
 fn offset_driver_covers_disconnected_selections_and_refuses_bad_values_atomically() {
     let mut s = new_sketch();
@@ -3544,4 +3705,182 @@ fn a_tangent_arc_can_end_on_an_existing_point() {
     assert!(s.execute("sketch.arc.tangent", &json!({"start": format!("{down}.end"), "curve": down, "end": "nowhere"})).is_err());
     assert!(s.execute("sketch.arc.tangent", &json!({"start": format!("{down}.end"), "curve": down, "end": format!("{down}.end")})).is_err());
     assert_eq!(s.doc.to_json(), before);
+}
+
+/// Where a circle of radius `r1` at the origin meets a circle of radius `r2` at `(-d, 0)`,
+/// then the same on the right. `(top-left, bottom-left, top-right, bottom-right)`.
+fn lobe_corners(r1: f64, r2: f64, d: f64) -> (Vec2, Vec2, Vec2, Vec2) {
+    let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+    let h = (r1 * r1 - a * a).sqrt();
+    (Vec2::new(-a, h), Vec2::new(-a, -h), Vec2::new(a, h), Vec2::new(a, -h))
+}
+
+fn arc_ends(sk: &solidcraft_sketch::Sketch, id: &str) -> (usize, usize, Vec2, Vec2, Vec2) {
+    match sk.curves[sk.curve_index(id).unwrap()].kind {
+        CurveKind::Arc { c, a, b } => (a, b, sk.point(c).unwrap(), sk.point(a).unwrap(), sk.point(b).unwrap()),
+        ref other => panic!("{id} is {other:?}"),
+    }
+}
+
+fn line_ends(sk: &solidcraft_sketch::Sketch, id: &str) -> (usize, Vec2, usize, Vec2) {
+    match sk.curves[sk.curve_index(id).unwrap()].kind {
+        CurveKind::Line { a, b } => (a, sk.point(a).unwrap(), b, sk.point(b).unwrap()),
+        ref other => panic!("{id} is {other:?}"),
+    }
+}
+
+/// Midpoint of the counter-clockwise arc from `a` to `b` around `c`.
+fn ccw_mid(c: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let start = (a - c).angle();
+    let mut sweep = (b - c).angle() - start;
+    if sweep <= 1e-12 {
+        sweep += std::f64::consts::TAU;
+    }
+    c + Vec2::from_angle(start + sweep * 0.5) * c.dist(a)
+}
+
+/// Corners whose ends are separate points offset as one chain. An offset that runs past the
+/// crossing is trimmed back to it; one that stops short is extended until the curves intersect.
+#[test]
+fn offset_corners_trim_the_overlap_and_extend_the_gap() {
+    let (big, small, apart) = (27.5, 12.5, 27.95);
+    let (tl, bl, tr, br) = lobe_corners(big, small, apart);
+    let mut s = new_sketch();
+    let draw = |s: &mut Session, id: &str, center: [f64; 2], start: Vec2, end: Vec2| {
+        run(
+            s,
+            "sketch.arc.center_point",
+            json!({
+                "id": id, "center": center, "start": [start.x, start.y], "end": [end.x, end.y], "connect": false,
+            }),
+        );
+    };
+    draw(&mut s, "top", [0.0, 0.0], tr, tl);
+    draw(&mut s, "left", [-apart, 0.0], tl, bl);
+    draw(&mut s, "bottom", [0.0, 0.0], bl, br);
+    draw(&mut s, "right", [apart, 0.0], br, tr);
+    let sk = sketch(&s);
+    let (top_end, left_start) = (sk.resolve_point("top.end").unwrap(), sk.resolve_point("left.start").unwrap());
+    assert_ne!(top_end, left_start, "the corner is two points");
+    assert!(sk.point(top_end).unwrap().dist(sk.point(left_start).unwrap()) < 1e-9);
+    assert!(!sk.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::Coincident { p, q } if p == top_end || q == top_end)));
+    assert_eq!(profiles(&s).len(), 1, "the four arcs are one profile");
+
+    // Chain off copies the one arc, source angle and all, so the corner stays open.
+    let alone = run(&mut s, "sketch.offset", json!({"curves": ["top"], "distance": -3, "chain": false}));
+    assert_eq!(ids(&alone["curves"]).len(), 1);
+    let radial = tl.normalized().unwrap() * (big + 3.0);
+    let (_, _, _, _, open_end) = arc_ends(&sketch(&s), &ids(&alone["curves"])[0]);
+    assert!(open_end.dist(radial) < 1e-4, "untrimmed end {open_end:?}, radial {radial:?}");
+    run(&mut s, "edit.undo", json!({}));
+
+    let out = run(&mut s, "sketch.offset", json!({"curves": ["top"], "distance": -3}));
+    assert_eq!(ids(&out["curves"]).len(), 4, "{out}");
+    assert_eq!(out["sides"].as_array().unwrap().len(), 1);
+    let sk = sketch(&s);
+    assert_eq!(sk.offsets.len(), 1);
+    let rec = &sk.offsets[0];
+    assert!(rec.closed);
+    assert_eq!(
+        rec.sources.iter().map(|(id, forward)| (id.as_str(), *forward)).collect::<Vec<_>>(),
+        vec![("top", true), ("left", true), ("bottom", true), ("right", true)]
+    );
+    let (meet_tl, meet_bl, meet_tr, meet_br) = lobe_corners(big + 3.0, small + 3.0, apart);
+    let mut prev_end = arc_ends(&sk, rec.outputs.last().unwrap()).1;
+    for (id, radius, center) in [
+        ("top", big + 3.0, Vec2::ZERO),
+        ("left", small + 3.0, Vec2::new(-apart, 0.0)),
+        ("bottom", big + 3.0, Vec2::ZERO),
+        ("right", small + 3.0, Vec2::new(apart, 0.0)),
+    ] {
+        let i = rec.sources.iter().position(|(source, _)| source == id).unwrap();
+        let (a, b, c, start, _) = arc_ends(&sk, &rec.outputs[i]);
+        assert_eq!(prev_end, a, "{id} starts where the previous arc ends");
+        assert!((c.dist(start) - radius).abs() < 1e-4 && c.dist(center) < 1e-6, "{id} at {c:?} radius {}", c.dist(start));
+        prev_end = b;
+    }
+    let (_, _, _, _, trimmed) = arc_ends(&sk, &rec.outputs[0]);
+    assert!(trimmed.dist(meet_tl) < 1e-4, "top-left corner {trimmed:?}, intersection {meet_tl:?}");
+    assert!(trimmed.dist(radial) > 1.0, "trimmed back from the untrimmed end {radial:?} to {trimmed:?}");
+    let (_, _, c, a, b) = arc_ends(&sk, &rec.outputs[0]);
+    let mid = ccw_mid(c, a, b);
+    assert!(mid.dist(Vec2::new(0.0, big + 3.0)) < 1e-3, "the top arc stays the short one, mid {mid:?}");
+    let left_i = rec.sources.iter().position(|(source, _)| source == "left").unwrap();
+    let (_, _, c, a, b) = arc_ends(&sk, &rec.outputs[left_i]);
+    let mid = ccw_mid(c, a, b);
+    assert!(mid.dist(Vec2::new(-apart - (small + 3.0), 0.0)) < 1e-3, "the left arc stays the outer one, mid {mid:?}");
+    // The other three crossings, so a closed chain joins the last corner as well.
+    let corners: Vec<Vec2> = rec
+        .outputs
+        .iter()
+        .map(|id| {
+            let (_, _, _, _, end) = arc_ends(&sk, id);
+            end
+        })
+        .collect();
+    for want in [meet_tl, meet_bl, meet_tr, meet_br] {
+        assert!(corners.iter().any(|q| q.dist(want) < 1e-4), "missing {want:?} in {corners:?}");
+    }
+
+    // Editing the distance keeps the corners on the new intersection.
+    let param = out["param"].as_str().unwrap();
+    run(&mut s, "parameters.change", json!({"name": param, "expression": "4 mm"}));
+    let sk = sketch(&s);
+    assert!((sk.offsets[0].distance + 4.0).abs() < 1e-6, "distance {}", sk.offsets[0].distance);
+    let (grown, _, _, _) = lobe_corners(big + 4.0, small + 4.0, apart);
+    let top_i = sk.offsets[0].sources.iter().position(|(source, _)| source == "top").unwrap();
+    let top_out = sk.offsets[0].outputs[top_i].clone();
+    let (_, _, _, _, trimmed) = arc_ends(&sk, &top_out);
+    assert!(trimmed.dist(grown) < 1e-4, "after the edit {trimmed:?}, intersection {grown:?}");
+
+    // An L of two lines. Negative (outward) stops short of the corner and must be extended.
+    // Positive runs past it and must be trimmed back. The ends only share a position.
+    let corner_of = |distance: f64| -> Vec2 {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.line", json!({"points": [[0.0, 0.0], [20.0, 0.0]], "connect": false, "infer": false}));
+        run(&mut s, "sketch.line", json!({"points": [[20.0, 0.0], [20.0, 20.0]], "connect": false, "infer": false}));
+        let sk = sketch(&s);
+        assert_ne!(sk.resolve_point("l1.end").unwrap(), sk.resolve_point("l2.start").unwrap());
+        let out = run(&mut s, "sketch.offset", json!({"curves": ["l1"], "distance": distance}));
+        assert_eq!(ids(&out["curves"]).len(), 2, "distance {distance}: {out}");
+        let sk = sketch(&s);
+        let (first, second) = (&sk.offsets[0].outputs[0], &sk.offsets[0].outputs[1]);
+        let (_, _, end_i, end) = line_ends(&sk, first);
+        let (start_i, start, _, _) = line_ends(&sk, second);
+        assert_eq!(end_i, start_i, "one corner point");
+        assert!(end.dist(start) < 1e-9);
+        end
+    };
+    let extended = corner_of(-3.0);
+    assert!(extended.dist(Vec2::new(23.0, -3.0)) < 1e-6, "extended to {extended:?}");
+    let trimmed = corner_of(3.0);
+    assert!(trimmed.dist(Vec2::new(17.0, 3.0)) < 1e-6, "trimmed to {trimmed:?}");
+
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0.0, 0.0], [20.0, 0.0]], "connect": false, "infer": false}));
+    run(&mut s, "sketch.line", json!({"points": [[20.0, 0.0], [20.0, 20.0]], "connect": false, "infer": false}));
+    let alone = run(&mut s, "sketch.offset", json!({"curves": ["l1"], "distance": -3, "chain": false}));
+    assert_eq!(ids(&alone["curves"]).len(), 1);
+    let (_, _, _, end) = line_ends(&sketch(&s), &ids(&alone["curves"])[0]);
+    assert!(end.dist(Vec2::new(20.0, -3.0)) < 1e-6, "chain off leaves the gap, end {end:?}");
+
+    // The same L, joined only by a coincident constraint across a gap the tolerance would not.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0.0, 0.0], [20.0, 0.0]], "connect": false, "infer": false}));
+    run(&mut s, "sketch.line", json!({"points": [[20.5, 0.5], [20.5, 20.0]], "connect": false, "infer": false}));
+    let gap = {
+        let sk = sketch(&s);
+        sk.point(sk.resolve_point("l1.end").unwrap()).unwrap().dist(sk.point(sk.resolve_point("l2.start").unwrap()).unwrap())
+    };
+    assert!(gap > 0.4, "the ends start {gap} mm apart");
+    run(&mut s, "sketch.constraint.fix", json!({"entity": "l1.start"}));
+    run(&mut s, "sketch.constraint.fix", json!({"entity": "l2.end"}));
+    run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "l1", "mode": "horizontal"}));
+    run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "l2", "mode": "vertical"}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "l1.end", "b": "l2.start"}));
+    let out = run(&mut s, "sketch.offset", json!({"curves": ["l1"], "distance": -3}));
+    assert_eq!(ids(&out["curves"]).len(), 2, "{out}");
+    let sk = sketch(&s);
+    let (_, _, _, end) = line_ends(&sk, &sk.offsets[0].outputs[0]);
+    assert!(end.dist(Vec2::new(23.5, -3.0)) < 1e-4, "coincident corner extended to {end:?}");
 }

@@ -4510,6 +4510,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if let Some((hit, Some(sel))) = cand {
                     dialog_pick(app, &hit, sel);
                 } else if let Some(mut dialog) = app.dialog.take() {
+                    // A sketch clicked for a pattern's or Mirror's objects: say why it is not taken (#10057).
+                    let sketch = hits.iter().find_map(|h| match h {
+                        Hit::SketchCurve { sketch, .. } | Hit::SketchPoint { sketch, .. } | Hit::Profile { sketch, .. } => Some(*sketch),
+                        _ => None,
+                    });
+                    if let Some(sketch) = sketch {
+                        dialog.refuse_sketch(&app.session, sketch);
+                    }
                     let state = crate::open_meshing::shown_world(app);
                     if let Some(sketch) = app.session.active_sketch.and_then(|id| state.sketch(id)) {
                         let (origin, direction) = proj.ray(p);

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "dialog.pattern_sketch_not_object": "Pick bodies or features: a sketch is neither. Repeat its curves with the sketch's own Pattern or Mirror, or extrude it first.",
+    "ui.pattern_object_type_tip": "Bodies: solid shapes, picked in the view or the Browser; each is copied whole.\nFeatures: steps of the History, such as an extrude or a hole, picked in the History or on a face they made; the step is repeated.\nA sketch is neither: repeat its curves with the sketch's own Pattern or Mirror, or extrude it first."
+  },
+  "ar": {
+    "dialog.pattern_sketch_not_object": "اختر أجسامًا أو ميزات: الرسم ليس أيًّا منهما. كرّر منحنياته بأداة النمط أو المرآة داخل الرسم، أو ابثقه أولًا.",
+    "ui.pattern_object_type_tip": "الأجسام: أشكال مصمتة تُختار في العرض أو في المستعرض؛ يُنسخ كل منها كاملًا.\nالميزات: خطوات في السجل، مثل بثق أو ثقب، تُختار في السجل أو على وجه صنعته؛ تتكرر الخطوة.\nالرسم ليس أيًّا منهما: كرّر منحنياته بأداة النمط أو المرآة داخل الرسم، أو ابثقه أولًا."
+  },
+  "de": {
+    "dialog.pattern_sketch_not_object": "Körper oder Funktionen wählen: Eine Skizze ist keines von beiden. Ihre Kurven mit Muster oder Spiegeln in der Skizze wiederholen oder sie zuerst extrudieren.",
+    "ui.pattern_object_type_tip": "Körper: feste Formen, in der Ansicht oder im Browser gewählt; jeder wird ganz kopiert.\nFunktionen: Schritte im Verlauf, etwa eine Extrusion oder eine Bohrung, im Verlauf oder auf einer von ihnen erzeugten Fläche gewählt; der Schritt wird wiederholt.\nEine Skizze ist keines von beiden: Ihre Kurven mit Muster oder Spiegeln in der Skizze wiederholen oder sie zuerst extrudieren."
+  },
+  "fr": {
+    "dialog.pattern_sketch_not_object": "Choisissez des corps ou des fonctions : une esquisse n'est ni l'un ni l'autre. Répétez ses courbes avec la Répétition ou la Symétrie de l'esquisse, ou extrudez-la d'abord.",
+    "ui.pattern_object_type_tip": "Corps : formes pleines, choisies dans la vue ou le Navigateur ; chacun est copié en entier.\nFonctions : étapes de l'Historique, comme une extrusion ou un perçage, choisies dans l'Historique ou sur une face qu'elles ont créée ; l'étape est répétée.\nUne esquisse n'est ni l'un ni l'autre : répétez ses courbes avec la Répétition ou la Symétrie de l'esquisse, ou extrudez-la d'abord."
+  },
+  "he": {
+    "dialog.pattern_sketch_not_object": "בחרו גופים או פיצ'רים: סקיצה אינה אף אחד מהם. חזרו על העקומות שלה בעזרת המערך או השיקוף של הסקיצה עצמה, או בצעו לה שליפה קודם.",
+    "ui.pattern_object_type_tip": "גופים: צורות מלאות, נבחרות בתצוגה או בעץ התכן; כל אחד מועתק בשלמותו.\nפיצ'רים: שלבים בציר הזמן, כמו שליפה או חור, נבחרים בציר הזמן או על פאה שהם יצרו; השלב חוזר על עצמו.\nסקיצה אינה אף אחד מהם: חזרו על העקומות שלה בעזרת המערך או השיקוף של הסקיצה עצמה, או בצעו לה שליפה קודם."
+  },
+  "ja": {
+    "dialog.pattern_sketch_not_object": "ボディかフィーチャーを選んでください。スケッチはどちらでもありません。曲線はスケッチ内のパターンかミラーで繰り返すか、先に押し出してください。",
+    "ui.pattern_object_type_tip": "ボディ: ビューまたはブラウザで選ぶ立体形状。それぞれがまるごとコピーされます。\nフィーチャー: 押し出しや穴など履歴のステップ。履歴で、またはそれが作った面で選びます。そのステップが繰り返されます。\nスケッチはどちらでもありません: 曲線はスケッチ内のパターンかミラーで繰り返すか、先に押し出してください。"
+  },
+  "ko": {
+    "dialog.pattern_sketch_not_object": "바디나 피처를 선택하세요. 스케치는 둘 다 아닙니다. 곡선은 스케치 안의 패턴이나 대칭 복사로 반복하거나, 먼저 돌출하세요.",
+    "ui.pattern_object_type_tip": "바디: 뷰나 브라우저에서 선택하는 솔리드 형상이며, 각각 통째로 복사됩니다.\n피처: 돌출이나 구멍 같은 기록의 단계이며, 기록에서 또는 그 단계가 만든 면에서 선택합니다. 그 단계가 반복됩니다.\n스케치는 둘 다 아닙니다. 곡선은 스케치 안의 패턴이나 대칭 복사로 반복하거나, 먼저 돌출하세요."
+  },
+  "vi": {
+    "dialog.pattern_sketch_not_object": "Hãy chọn thân khối hoặc tính năng: bản phác thảo không phải là cả hai. Lặp lại các đường cong của nó bằng Mảng hoặc Lấy đối xứng trong chính bản phác thảo, hoặc đùn khối nó trước.",
+    "ui.pattern_object_type_tip": "Thân khối: các hình đặc, chọn trong khung nhìn hoặc Trình duyệt; mỗi thân được sao chép nguyên vẹn.\nTính năng: các bước trong Lịch sử, như một lần đùn khối hay một lỗ, chọn trong Lịch sử hoặc trên một mặt do chúng tạo ra; bước đó được lặp lại.\nBản phác thảo không phải là cả hai: lặp lại các đường cong của nó bằng Mảng hoặc Lấy đối xứng trong chính bản phác thảo, hoặc đùn khối nó trước."
+  },
+  "zh": {
+    "dialog.pattern_sketch_not_object": "请选择实体或特征：草图两者都不是。请用草图自身的阵列或镜像重复其曲线，或先将其拉伸。",
+    "ui.pattern_object_type_tip": "实体：在视图或浏览器中选取的实心形状，每个都会被整体复制。\n特征：历史中的步骤，例如拉伸或孔，在历史中或在其生成的面上选取；该步骤会被重复。\n草图两者都不是：请用草图自身的阵列或镜像重复其曲线，或先将其拉伸。"
+  }
+}

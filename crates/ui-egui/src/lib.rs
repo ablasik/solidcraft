@@ -990,6 +990,7 @@ impl SolveApp {
             "dark": self.ui.dark,
             "grid": self.ui.show_grid,
             "navigation_bar": self.ui.show_navigation_bar,
+            "tool_cursor": self.ui.tool_cursor,
             "perspective": self.ui.perspective,
             "auto_ortho_faces": self.ui.auto_ortho_faces,
             "pick_bodies": self.ui.pick_bodies,
@@ -1040,6 +1041,9 @@ impl SolveApp {
         }
         if let Some(visible) = flag("navigation_bar") {
             self.ui.show_navigation_bar = visible;
+        }
+        if let Some(visible) = flag("tool_cursor") {
+            self.ui.tool_cursor = visible;
         }
         if let Some(p) = flag("perspective") {
             self.ui.perspective = p;

@@ -1094,6 +1094,10 @@ preference_settings! {
     /// Keep the SKETCH tab in the ribbon, right after MODEL, while no sketch is open; its drawing
     /// tools then start a sketch first (#7904).
     sketch_tab_always: bool = false, PAGE_INTERFACE => check_id("prefs.sketch_tab_always");
+    /// Each design tab keeps its open dialog or tool, and its toolbar tab, while another design is
+    /// shown, and has them back when it is shown again (#9360). Off by default: a switch cancels
+    /// them and shows the MODEL tab.
+    keep_work_on_tab_switch: bool = false, PAGE_INTERFACE => check_id("prefs.keep_work_on_tab_switch");
     /// Hovering a result in Search commands shows the command's place in the ribbon: its tab,
     /// its button or its row in a section's drop-down (#7287). A command started from the search
     /// blinks there, and a running command that sits in a drop-down marks its section label. Off
@@ -1707,6 +1711,7 @@ pub(crate) fn held_overlay(app: &SolveApp) -> Option<serde_json::Map<String, ser
         ("dark", serde_json::json!(s.dark)),
         ("grid", serde_json::json!(s.grid)),
         ("navigation_bar", serde_json::json!(s.navigation_bar)),
+        ("tool_cursor", serde_json::json!(s.tool_cursor)),
         ("perspective", serde_json::json!(s.perspective)),
         ("pick_bodies", serde_json::json!(s.pick_bodies)),
         ("auto_project", serde_json::json!(s.auto_project)),
@@ -5479,6 +5484,7 @@ mod tests {
             ("viewport_status_details", json!(false), PAGE_INTERFACE),
             ("viewport_status_summary", json!(false), PAGE_INTERFACE),
             ("sketch_tab_always", json!(true), PAGE_INTERFACE),
+            ("keep_work_on_tab_switch", json!(true), PAGE_INTERFACE),
             ("ribbon_reveal", json!(true), PAGE_INTERFACE),
             ("dialog_buttons", json!("top"), PAGE_INTERFACE),
             ("toast_place", json!("centre"), PAGE_INTERFACE),
