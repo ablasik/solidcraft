@@ -212,6 +212,7 @@ mod print_face_ui;
 pub(crate) mod quick_measure;
 #[cfg(test)]
 mod quick_measure_tests;
+pub(crate) mod recent_colors;
 pub mod recovery_ui;
 pub mod ref_images;
 mod render_ui;
@@ -370,6 +371,8 @@ pub struct UiState {
     /// The running tool's icon rides beside the pointer in the viewport (View settings; off by
     /// default).
     pub tool_cursor: bool,
+    /// The colours picked last in any colour picker, newest first (#9234); kept between runs.
+    pub recent_colors: Vec<[u8; 3]>,
 }
 
 impl UiState {
@@ -407,6 +410,7 @@ impl Default for UiState {
             up_axis: Default::default(),
             agent_cursor: Default::default(),
             tool_cursor: false,
+            recent_colors: Vec::new(),
         }
     }
 }
@@ -1008,6 +1012,7 @@ impl SolveApp {
             "autosave_minutes": self.autosave_minutes,
             "ground_shadow": self.ui.ground_shadow,
             "agent_cursor": self.ui.agent_cursor,
+            "recent_colors": self.ui.recent_colors,
             "preferences": self.preferences,
             "gpu_path_setup_seconds": self.render_workspace.setup_seconds,
         });
@@ -1112,6 +1117,12 @@ impl SolveApp {
         if let Some(a) = v.get("agent_cursor").and_then(|a| serde_json::from_value(a.clone()).ok()) {
             self.ui.agent_cursor = a;
         }
+        // Colours that do not read (not three bytes) are left out; the list is capped.
+        self.ui.recent_colors = v
+            .get("recent_colors")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|c| serde_json::from_value::<[u8; 3]>(c.clone()).ok()).take(recent_colors::MAX_RECENT_COLORS).collect())
+            .unwrap_or_default();
     }
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
@@ -2766,6 +2777,7 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         value_step::set_enabled(ui.ctx(), self.preferences.step_values);
         canvas::set_boxes_shown(ui.ctx(), self.preferences.value_boxes_in_view);
+        recent_colors::share(ui.ctx(), &mut self.ui.recent_colors);
         let t0 = now_ms();
         // The first frames draw with the bundled faces while the system's CJK, Hangul and Thai
         // faces are read on a thread; the fonts are installed again once they are there.
