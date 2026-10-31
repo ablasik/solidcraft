@@ -15,7 +15,7 @@ use crate::ui_kit::{Container, Surface};
 use egui::{Color32, Pos2, Rect, Sense, Vec2, pos2, vec2};
 use serde::Serialize;
 use serde_json::{Value, json};
-use solidcraft_engine::Sel;
+use solidcraft_engine::{Sel, doc::FeatureKind};
 
 use crate::SolveApp;
 
@@ -65,6 +65,8 @@ pub enum Target {
     Units,
     /// Insert › Insert Design: the designs open in other tabs, and Browse… (#8570).
     InsertDesign,
+    /// Model › Edit Sketch: choose an existing sketch when none is uniquely selected.
+    EditSketch,
     /// View › Visual style: the four styles, the current one marked (#8868).
     VisualStyle,
     /// View › Navigation tool: Orbit, Pan, Zoom; the latched one marked (#8868).
@@ -435,6 +437,17 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
             .collect(),
         Target::NamedView { name } => crate::browser::view_items(app, name),
         Target::InsertDesign => insert_design_items(app),
+        Target::EditSketch => {
+            let items: Vec<Item> = app
+                .session
+                .doc
+                .features
+                .iter()
+                .filter(|f| matches!(f.kind, FeatureKind::Sketch { .. }))
+                .map(|f| act("ui.editSketch", &f.name, "sketch").with(json!({"sketch": f.id})))
+                .collect();
+            if items.is_empty() { vec![act("ui.editSketch", app.tr("ui.edit_sketch_empty"), "sketch").on(false)] } else { items }
+        }
         Target::VisualStyle => crate::navigation_bar::VISUAL_STYLES
             .iter()
             .enumerate()

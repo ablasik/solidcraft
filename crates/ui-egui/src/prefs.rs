@@ -1211,6 +1211,12 @@ preference_settings! {
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
     /// switches the extent to To Object (off: picks only add profiles, as before).
     extrude_auto_to_object: bool = false, PAGE_DESIGN => check("Extrude to a picked target", "In Extrude, with a profile picked, picking a face, vertex or parallel plane off its plane switches the extent to To Object");
+    /// Extrude turns the view to isometric each time it opens, so the depth can be seen (#9176).
+    /// Off (the default): the view stays as it is.
+    extrude_view_isometric: bool = false, PAGE_DESIGN => check_id("prefs.extrude_view_isometric");
+    /// With `extrude_view_isometric`: when Extrude closes (OK or Cancel) the view goes back to
+    /// where it was before it turned (#9176). Off (the default): it stays isometric.
+    extrude_view_return: bool = false, PAGE_DESIGN => check_id("prefs.extrude_view_return");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_DESIGN => check_id("prefs.auto_operation");

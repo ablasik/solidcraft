@@ -1,0 +1,10 @@
+{
+  "ar": { "ui.edit_sketch_empty": "لا توجد رسومات لتعديلها" },
+  "de": { "ui.edit_sketch_empty": "Keine Skizzen zum Bearbeiten" },
+  "en": { "ui.edit_sketch_empty": "No sketches to edit" },
+  "he": { "ui.edit_sketch_empty": "אין סקיצות לעריכה" },
+  "ja": { "ui.edit_sketch_empty": "編集できるスケッチはありません" },
+  "ko": { "ui.edit_sketch_empty": "편집할 스케치가 없습니다" },
+  "vi": { "ui.edit_sketch_empty": "Không có phác thảo để chỉnh sửa" },
+  "zh": { "ui.edit_sketch_empty": "没有可编辑的草图" }
+}

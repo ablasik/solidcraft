@@ -1,0 +1,9 @@
+{
+  "en": { "prefs.extrude_view_isometric": "Turn the view to isometric when Extrude opens", "prefs.extrude_view_return": "Go back to the earlier view when Extrude closes" },
+  "de": { "prefs.extrude_view_isometric": "Beim Öffnen von Extrudieren isometrisch ausrichten", "prefs.extrude_view_return": "Beim Schließen von Extrudieren zur vorigen Ansicht zurück" },
+  "ar": { "prefs.extrude_view_isometric": "تدوير العرض إلى المتساوي القياس عند فتح البثق", "prefs.extrude_view_return": "العودة إلى العرض السابق عند إغلاق البثق" },
+  "he": { "prefs.extrude_view_isometric": "סיבוב התצוגה לאיזומטרית בפתיחת שליפה", "prefs.extrude_view_return": "חזרה לתצוגה הקודמת בסגירת שליפה" },
+  "ja": { "prefs.extrude_view_isometric": "押し出しを開いたときに等角ビューにする", "prefs.extrude_view_return": "押し出しを閉じたときに元のビューに戻す" },
+  "vi": { "prefs.extrude_view_isometric": "Xoay sang góc nhìn trục đo khi mở Đùn khối", "prefs.extrude_view_return": "Trở lại góc nhìn trước khi đóng Đùn khối" },
+  "zh": { "prefs.extrude_view_isometric": "打开拉伸时转到等轴测视图", "prefs.extrude_view_return": "关闭拉伸时回到之前的视图" }
+}

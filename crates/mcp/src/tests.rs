@@ -954,6 +954,213 @@ fn a_failed_batch_with_file_new_restores_the_original_design() {
     assert_eq!(d["name"], name, "{d}");
 }
 
+/// `expect` on a batch: the volume, body count and bounding box the agent computed beforehand
+/// are measured and compared by the server once the batch went through, so no separate
+/// `measure` call and no comparison by hand follow every stage.
+#[test]
+fn a_batch_with_a_matching_expect_reports_the_expectation_met() {
+    let mut s = server();
+    let r = tool(
+        &mut s,
+        "batch",
+        json!({
+            "commands": [
+                {"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]}},
+                {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "corner": [15, 10, 5], "operation": "cut"}},
+            ],
+            "expect": {"volume_mm3": 23000, "bodies": 1, "bbox": {"min": [0, 0, 0], "max": [40, 30, 20]}},
+        }),
+    );
+    assert_eq!(r["completed"], 2, "{r}");
+    let e = &r["expectation"];
+    assert_eq!(e["ok"], true, "{r}");
+    assert_eq!(e["mismatch"], json!([]), "{r}");
+    assert_eq!(e["measured"]["bodies"], 1, "{r}");
+    assert!(rel(e["measured"]["volume_mm3"].as_f64().unwrap(), 23000.0) < 1e-6, "{r}");
+    assert!(rel(e["measured"]["bbox"]["max"][0].as_f64().unwrap(), 40.0) < 1e-6, "{r}");
+    assert_eq!(
+        e["expected"],
+        json!({"volume_mm3": 23000.0, "tol": 0.002, "bodies": 1, "bbox": {"min": [0.0, 0.0, 0.0], "max": [40.0, 30.0, 20.0]}}),
+        "{r}"
+    );
+    // Without `expect` the reply is as before.
+    tool(&mut s, "new_design", json!({}));
+    let box40 = json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]}});
+    let r = tool(&mut s, "batch", json!({"commands": [box40]}));
+    assert!(r.get("expectation").is_none(), "{r}");
+    // `expect` is the tool's argument, not a step key: a step carrying one runs as any step with
+    // a stray key does, and nothing is checked.
+    let sphere = json!({"command": "solid.sphere", "params": {"radius": 5, "center": [100, 0, 0]}, "expect": {"bodies": 7}});
+    let r = tool(&mut s, "batch", json!({"commands": [sphere]}));
+    assert_eq!(r["completed"], 1, "{r}");
+    assert!(r.get("expectation").is_none() && r["results"][0].get("expectation").is_none(), "{r}");
+}
+
+/// A volume the design does not match flags the reply as an error that names the mismatch
+/// first, and keeps the design as built: the agent decides what to do with it.
+#[test]
+fn a_batch_with_a_wrong_expected_volume_is_flagged_and_the_design_kept() {
+    let mut s = server();
+    let box40 = json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]}});
+    let r = raw_tool(&mut s, "batch", json!({"commands": [box40], "expect": {"volume_mm3": 20000}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let content = r["result"]["content"].as_array().unwrap();
+    let first = content[0]["text"].as_str().unwrap();
+    assert!(first.starts_with("expectation not met: volume: measured 24000, expected 20000 (+20.00 %)."), "{first}");
+    assert!(first.contains("kept as built"), "{first}");
+    let body: Value = serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["ok"], true, "the batch itself went through: {body}");
+    assert_eq!(body["completed"], 1, "{body}");
+    assert_eq!(body["results"][0]["created_bodies"], json!(["Body1"]), "{body}");
+    assert_eq!(body["expectation"]["ok"], false, "{body}");
+    assert_eq!(body["expectation"]["mismatch"], json!(["volume: measured 24000, expected 20000 (+20.00 %)"]), "{body}");
+    assert_eq!(body["expectation"]["expected"], json!({"volume_mm3": 20000.0, "tol": 0.002}), "{body}");
+    // The design is kept as built, undoably.
+    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 1);
+    assert!(rel(volume(&mut s), 24000.0) < 1e-9);
+    assert_eq!(tool(&mut s, "inspect_design", json!({"measure": false}))["undo"], 1);
+    // `tol` is relative to the expected volume: 0.5 % off passes at 1 %, not at the default 0.2 %.
+    let cube = json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "corner": [100, 0, 0]}});
+    let r = tool(&mut s, "batch", json!({"commands": [cube], "expect": {"volume_mm3": 25000.0 * 1.005, "tol": 0.01}}));
+    assert_eq!(r["expectation"]["ok"], true, "{r}");
+    let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "undo"}], "expect": {"volume_mm3": 24000.0 * 1.005}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("volume: measured 24000, expected 24120 (-0.50 %)"), "{r}");
+}
+
+/// A wrong body count and a wrong bounding box are each named, with the coordinates that are
+/// off; a bounding box within 0.05 mm matches.
+#[test]
+fn expect_names_body_count_and_bounding_box_mismatches() {
+    let mut s = server();
+    let box40 = json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]}});
+    let cube = json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "corner": [100, -5, -5]}});
+    let r = raw_tool(
+        &mut s,
+        "batch",
+        json!({"commands": [box40, cube], "expect": {"volume_mm3": 25000, "bodies": 1, "bbox": {"min": [0, 0, 0], "max": [40, 30, 20]}}}),
+    );
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let body: Value = serde_json::from_str(r["result"]["content"][1]["text"].as_str().unwrap()).unwrap();
+    let mismatch = body["expectation"]["mismatch"].as_array().unwrap();
+    assert_eq!(mismatch.len(), 2, "the volume matches and is not named: {body}");
+    assert_eq!(mismatch[0], "bodies: measured 2, expected 1", "{body}");
+    let bbox = mismatch[1].as_str().unwrap();
+    assert!(bbox.starts_with("bbox: measured min [0, -5, -5] max [110, 30, 20], expected min [0, 0, 0] max [40, 30, 20] ("), "{bbox}");
+    assert!(bbox.contains("min y off by -5 mm") && bbox.contains("min z off by -5 mm") && bbox.contains("max x off by 70 mm"), "{bbox}");
+    assert!(!bbox.contains("max y") && !bbox.contains("max z") && !bbox.contains("min x"), "{bbox}");
+    assert_eq!(body["expectation"]["measured"]["bodies"], 2, "{body}");
+    assert!(rel(body["expectation"]["measured"]["bbox"]["max"][0].as_f64().unwrap(), 110.0) < 1e-6, "{body}");
+    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 2, "the design is kept");
+    // Within 0.05 mm the box matches; past it the coordinate is named.
+    tool(&mut s, "undo", json!({}));
+    let r = tool(&mut s, "batch", json!({"commands": [{"command": "redo"}], "expect": {"bbox": {"min": [0, -5, -5.04], "max": [110.04, 30, 20]}}}));
+    assert_eq!(r["expectation"]["ok"], true, "{r}");
+    let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "undo"}], "expect": {"bbox": {"min": [0, 0, 0], "max": [40.1, 30, 20]}}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("(max x off by -0.1 mm)"), "{r}");
+    // No body at all: the box can't be measured, and the count says so.
+    tool(&mut s, "new_design", json!({}));
+    let r = raw_tool(
+        &mut s,
+        "batch",
+        json!({"commands": [{"command": "parameters.add", "params": {"name": "w", "expression": "1 mm"}}], "expect": {"bodies": 1, "bbox": {"min": [0, 0, 0], "max": [1, 1, 1]}}}),
+    );
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let body: Value = serde_json::from_str(r["result"]["content"][1]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        body["expectation"]["mismatch"],
+        json!(["bodies: measured 0, expected 1", "bbox: no body to measure, expected min [0, 0, 0] max [1, 1, 1]"]),
+        "{body}"
+    );
+    assert!(body["expectation"]["measured"]["bbox"].is_null(), "{body}");
+}
+
+/// An `expect` that is not what the schema says is refused before anything runs: a typo never
+/// builds a design that then goes unchecked.
+#[test]
+fn a_malformed_expect_is_refused_before_anything_runs() {
+    let mut s = server();
+    let step = json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}});
+    for name in ["execute", "batch"] {
+        let args = |expect: Value| {
+            let mut a = if name == "batch" { json!({"commands": [step]}) } else { step.clone() };
+            a["expect"] = expect;
+            a
+        };
+        // Not an object: the argument check, as for every tool argument.
+        for bad in [json!(5), json!("24000"), json!([24000]), json!(true)] {
+            let r = raw_tool(&mut s, name, args(bad.clone()));
+            assert_eq!(r["error"]["code"], -32602, "{name} {bad}: {r}");
+            assert!(r["error"]["message"].as_str().unwrap().contains("`expect` must be of type"), "{r}");
+        }
+        // An object the tool can't use: a tool error naming the key, and nothing was run.
+        for (bad, says) in [
+            (json!({}), "nothing to check"),
+            (json!({"volume": 24000}), "unknown key `volume`"),
+            (json!({"volume_mm3": "24000"}), "`volume_mm3` must be a number"),
+            (json!({"volume_mm3": -1}), "`volume_mm3` must not be negative"),
+            (json!({"volume_mm3": 1, "tol": -0.1}), "`tol` must not be negative"),
+            (json!({"bodies": 1.5}), "`bodies` must be a whole number"),
+            (json!({"bodies": -1}), "`bodies` must be a whole number"),
+            (json!({"bbox": [0, 0, 0]}), "`bbox` must be"),
+            (json!({"bbox": {"min": [0, 0], "max": [1, 1, 1]}}), "`bbox.min` must be [x, y, z]"),
+            (json!({"bbox": {"min": [0, 0, 0], "max": [1, "1", 1]}}), "`bbox.max` must be [x, y, z]"),
+            (json!({"bbox": {"min": [2, 0, 0], "max": [1, 1, 1]}}), "`bbox.min` must not exceed"),
+            (json!({"bbox": {"min": [0, 0, 0], "max": [1, 1, 1], "mid": [0, 0, 0]}}), "unknown key `bbox.mid`"),
+        ] {
+            let r = raw_tool(&mut s, name, args(bad.clone()));
+            assert_eq!(r["result"]["isError"], true, "{name} {bad}: {r}");
+            let text = r["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.starts_with("expect: ") && text.contains(says), "{name} {bad}: {text}");
+        }
+        assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 0, "{name}: nothing ran");
+        assert_eq!(tool(&mut s, "inspect_design", json!({"measure": false}))["undo"], 0, "{name}: nothing ran");
+    }
+}
+
+/// `execute` takes `expect` as `batch` does: met, the reply carries the expectation; not met,
+/// the reply is an error naming it, and the command's result stays, as the design does. A
+/// command that fails is the error it always was, with nothing measured.
+#[test]
+fn execute_checks_its_expect_like_batch() {
+    let mut s = server();
+    let r = tool(
+        &mut s,
+        "execute",
+        json!({
+            "command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]},
+            "expect": {"volume_mm3": 24000, "bodies": 1, "bbox": {"min": [0, 0, 0], "max": [40, 30, 20]}},
+        }),
+    );
+    assert_eq!(r["created_bodies"], json!(["Body1"]), "{r}");
+    assert_eq!(r["expectation"]["ok"], true, "{r}");
+    assert_eq!(r["expectation"]["mismatch"], json!([]), "{r}");
+    let r = raw_tool(
+        &mut s,
+        "execute",
+        json!({
+            "command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "corner": [15, 10, 5], "operation": "cut"},
+            "verbose": false,
+            "expect": {"volume_mm3": 24000, "bodies": 2},
+        }),
+    );
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let content = r["result"]["content"].as_array().unwrap();
+    let first = content[0]["text"].as_str().unwrap();
+    assert!(first.starts_with("expectation not met: volume: measured 23000, expected 24000 (-4.17 %); bodies: measured 1, expected 2."), "{first}");
+    let body: Value = serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["changed_bodies"], json!(["Body1"]), "the command's result stays: {body}");
+    assert!(body.get("bodies").is_none(), "compact, as asked: {body}");
+    assert_eq!(body["expectation"]["measured"]["bodies"], 1, "{body}");
+    assert!(rel(volume(&mut s), 23000.0) < 1e-9, "the cut is kept");
+    let r = raw_tool(&mut s, "execute", json!({"command": "solid.extrude", "params": {"distance": 10}, "expect": {"bodies": 1}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert_eq!(r["result"]["content"].as_array().map(Vec::len), Some(1), "{r}");
+    assert!(!r["result"]["content"][0]["text"].as_str().unwrap().contains("expectation"), "{r}");
+    assert!(rel(volume(&mut s), 23000.0) < 1e-9);
+}
+
 #[test]
 fn helper_sketches_can_be_hidden() {
     let mut s = server();
@@ -2143,6 +2350,28 @@ fn batch_reports_a_failed_engine_batch_like_before() {
         body,
         json!({"ok": false, "completed": 1, "failed": {"index": 1, "command": "a.two", "error": "boom"}, "rolled_back": true, "undone": 1, "applied": [], "not_run": [], "results": [{"x": 1}]})
     );
+}
+
+/// Bridged, `expect` measures the app's design with one `inspect.measure` after the one
+/// `engine.batch` request, and a batch that failed is not measured.
+#[test]
+fn a_bridged_batch_measures_its_expect_after_the_one_batch_call() {
+    let steps = json!([{"command": "a.one"}]);
+    let reply = json!({"completed": 1, "results": [{"x": 1}], "undone": 0});
+    let mut b = Recorder { calls: Vec::new(), batch: Ok(reply.clone()) };
+    let r = crate::tools::call_tool(&mut b, "batch", &json!({"commands": steps, "expect": {"bodies": 1}}));
+    assert_eq!(methods(&b), ["engine.batch", "engine.execute"]);
+    assert_eq!(b.calls[1].1, json!({"command": "inspect.measure", "params": {}}));
+    // The recorder's measure reply has no bodies: the mismatch comes first, the batch's reply after it.
+    assert_eq!(r["isError"], json!(true), "{r}");
+    assert!(r["content"][0]["text"].as_str().unwrap().starts_with("expectation not met: bodies: measured 0, expected 1."), "{r}");
+    let body: Value = serde_json::from_str(r["content"][1]["text"].as_str().unwrap()).unwrap();
+    assert_eq!((body["ok"].clone(), body["completed"].clone(), body["expectation"]["ok"].clone()), (json!(true), json!(1), json!(false)), "{body}");
+    let failed = json!({"completed": 0, "results": [], "failed": {"index": 0, "command": "a.one", "error": "boom"}, "undone": 0});
+    let (b, body, is_error) = recorded_batch(Ok(failed), json!({"commands": steps, "expect": {"bodies": 1}}));
+    assert!(is_error);
+    assert_eq!(methods(&b), ["engine.batch"], "a failed batch is not measured");
+    assert!(body.get("expectation").is_none(), "{body}");
 }
 
 /// `rolled_back` tells whether the design went back, not whether a rollback was asked for

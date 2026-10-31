@@ -13,6 +13,10 @@ use crate::backend::{Backend, STILL_RUNNING};
 const MAX_BATCH: usize = 10_000;
 /// Largest image returned by `screenshot`.
 const MAX_IMAGE_BYTES: usize = 32 << 20;
+/// Relative tolerance on an expected volume (`expect.tol`) when the call gives none.
+const EXPECT_VOLUME_TOL: f64 = 0.002;
+/// Absolute tolerance on each expected bounding-box coordinate, mm.
+const EXPECT_BBOX_TOL_MM: f64 = 0.05;
 
 const VIEWS: &[&str] = &["iso", "home", "front", "back", "top", "bottom", "left", "right", "fit"];
 /// What `check_parameters` can report.
@@ -60,6 +64,34 @@ fn string(desc: &str) -> Value {
     json!({"type": "string", "description": desc})
 }
 
+/// The `expect` argument of `execute` and `batch`: what the design should measure once the
+/// call has gone through.
+fn expect_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Check the design after the call against the numbers you computed: {volume_mm3?, tol? (relative, default 0.002), \
+                        bodies?, bbox?: {min: [x,y,z], max: [x,y,z]} (each coordinate within 0.05 mm)}. The reply gains `expectation`: \
+                        {ok, measured: {volume_mm3, bodies, bbox}, expected, mismatch: [\"volume: measured X, expected Y (+Z %)\", ...]}. \
+                        A mismatch is a tool error that names it first; the design is kept as built, so inspect it and fix it or carry on",
+        "properties": {
+            "volume_mm3": {"type": "number", "description": "Total volume of the closed bodies, mm³"},
+            "tol": {"type": "number", "description": "Relative tolerance on the volume (default 0.002)"},
+            "bodies": {"type": "integer", "description": "Number of bodies"},
+            "bbox": {
+                "type": "object",
+                "description": "Bounding box of all bodies together, mm, each coordinate within 0.05 mm",
+                "properties": {
+                    "min": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                    "max": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                },
+                "required": ["min", "max"],
+                "additionalProperties": false,
+            },
+        },
+        "additionalProperties": false,
+    })
+}
+
 /// Every tool, with its JSON schema. The same list serves the headless and the bridged backend.
 pub fn tool_definitions() -> Vec<Value> {
     vec![
@@ -95,12 +127,14 @@ pub fn tool_definitions() -> Vec<Value> {
              after a delete (undo rewinds the counters with the design), usable right away \
              in sketch.dimension, sketch.constraint.* and sketch.delete. Feature commands return the feature's id \
              and name, every body (bodies) and the bodies the feature created, changed and removed (created_bodies, changed_bodies, removed_bodies). \
-             view.pick {pixels: [[x,y]…]} answers the body, face, exact world point, normal and depth under pixels of a screenshot (read-only; docs/control-protocol.md).",
+             view.pick {pixels: [[x,y]…]} answers the body, face, exact world point, normal and depth under pixels of a screenshot (read-only; docs/control-protocol.md). \
+             `expect` {volume_mm3, tol, bodies, bbox} checks the design after the command (as `batch` does) and flags a mismatch.",
             obj(
                 json!({
                     "command": string("Command id (see list_commands)"),
                     "params": {"type": "object", "description": "The command's parameters"},
                     "verbose": {"type": "boolean", "description": "false: omit the full feature body list and sketch ids repeated outside `created`; keep created_bodies, changed_bodies and removed_bodies (default true)"},
+                    "expect": expect_schema(),
                 }),
                 &["command"],
             ),
@@ -119,7 +153,9 @@ pub fn tool_definitions() -> Vec<Value> {
              rollback: false), so the batch is all-or-nothing; the reply names the failing step (index from 0), its error, \
              every result before it, whether the design really went back (rolled_back), the steps whose changes are in the \
              design (applied) and those never sent (not_run). The usual way to build a part: sketch, draw, dimension, \
-             finish, extrude, fillet… in one call.",
+             finish, extrude, fillet… in one call. Give `expect` {volume_mm3, tol, bodies, bbox} with the numbers you computed \
+             beforehand: after the last step the design is measured and compared, so no separate measure call is needed; a \
+             mismatch is flagged as an error naming it, and the design is kept as built.",
             obj(
                 json!({
                     "commands": {
@@ -132,6 +168,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "timings": {"type": "boolean", "description": "Add `timings`: [{index, command, ms}] for every step run (the failing one included) and `total_ms` (default false)"},
                     "profile": {"type": "boolean", "description": "Like timings, and each step's `profile`: {boolean_ms, tessellate_ms, other_ms}, its time in kernel booleans, in tessellation and the rest (default false)"},
                     "verbose": {"type": "boolean", "description": "false: a compact reply. Feature steps leave out the full body list (created_bodies, changed_bodies and removed_bodies stay), sketch steps the ids they repeat outside `created` (default true)"},
+                    "expect": expect_schema(),
                 }),
                 &["commands"],
             ),
@@ -461,12 +498,220 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Value {
         "screenshot" => return screenshot(b, a),
         "batch" => return batch(b, a),
         "check_parameters" => return check_parameters(b, a),
+        "execute" => return execute(b, a),
         _ => dispatch(b, name, a),
     };
     match r {
         Ok(v) => text_result(&v, false),
         Err(e) => text_result(&Value::String(e), true),
     }
+}
+
+/// `execute`: one command, then its `expect` checked against the design.
+fn execute(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
+    let expect = match Expect::parse(a) {
+        Ok(e) => e,
+        Err(e) => return text_result(&Value::String(e), true),
+    };
+    match dispatch(b, "execute", a) {
+        Ok(v) => with_expectation(b, v, expect),
+        Err(e) => text_result(&Value::String(e), true),
+    }
+}
+
+/// What `execute` or `batch` was told the design would measure once the call went through
+/// (`expect`): the numbers an agent computes before building, compared by the server instead
+/// of by hand after a separate `measure` call. Volume and body count hold whatever kernel
+/// builds the design.
+struct Expect {
+    volume_mm3: Option<f64>,
+    tol: f64,
+    bodies: Option<u64>,
+    bbox: Option<([f64; 3], [f64; 3])>,
+}
+
+impl Expect {
+    /// The tool's `expect` argument: `None` when it was not given. A malformed one is refused
+    /// before the call runs, so a typo never builds a design that then goes unchecked.
+    fn parse(a: &Map<String, Value>) -> Result<Option<Expect>, String> {
+        let Some(v) = a.get("expect").filter(|v| !v.is_null()) else { return Ok(None) };
+        let Some(o) = v.as_object() else { return Err("expect: must be an object {volume_mm3?, tol?, bodies?, bbox?}".into()) };
+        if let Some(k) = o.keys().find(|k| !["volume_mm3", "tol", "bodies", "bbox"].contains(&k.as_str())) {
+            let k: String = k.chars().take(64).collect();
+            return Err(format!("expect: unknown key `{k}`; its keys are: volume_mm3, tol, bodies, bbox"));
+        }
+        let number = |k: &str| -> Result<Option<f64>, String> {
+            match o.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| format!("expect: `{k}` must be a number")),
+            }
+        };
+        let volume_mm3 = number("volume_mm3")?;
+        if volume_mm3.is_some_and(|v| v < 0.0) {
+            return Err("expect: `volume_mm3` must not be negative".into());
+        }
+        let tol = number("tol")?.unwrap_or(EXPECT_VOLUME_TOL);
+        if tol < 0.0 {
+            return Err("expect: `tol` must not be negative".into());
+        }
+        let bodies = match o.get("bodies") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().ok_or("expect: `bodies` must be a whole number, 0 or more")?),
+        };
+        let bbox = match o.get("bbox") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(Self::parse_bbox(v)?),
+        };
+        if volume_mm3.is_none() && bodies.is_none() && bbox.is_none() {
+            return Err("expect: nothing to check; give volume_mm3, bodies or bbox".into());
+        }
+        Ok(Some(Expect { volume_mm3, tol, bodies, bbox }))
+    }
+
+    fn parse_bbox(v: &Value) -> Result<([f64; 3], [f64; 3]), String> {
+        let Some(o) = v.as_object() else { return Err("expect: `bbox` must be {min: [x,y,z], max: [x,y,z]} in mm".into()) };
+        if let Some(k) = o.keys().find(|k| !["min", "max"].contains(&k.as_str())) {
+            let k: String = k.chars().take(64).collect();
+            return Err(format!("expect: unknown key `bbox.{k}`; its keys are: min, max"));
+        }
+        let corner = |k: &str| -> Result<[f64; 3], String> {
+            let err = || format!("expect: `bbox.{k}` must be [x, y, z] in mm");
+            let xyz = o.get(k).and_then(Value::as_array).filter(|a| a.len() == 3).ok_or_else(err)?;
+            let mut c = [0.0; 3];
+            for (slot, x) in c.iter_mut().zip(xyz) {
+                *slot = x.as_f64().filter(|x| x.is_finite()).ok_or_else(err)?;
+            }
+            Ok(c)
+        };
+        let (min, max) = (corner("min")?, corner("max")?);
+        if min.iter().zip(&max).any(|(lo, hi)| lo > hi) {
+            return Err("expect: `bbox.min` must not exceed `bbox.max`".into());
+        }
+        Ok((min, max))
+    }
+
+    /// What was expected, for the reply.
+    fn expected(&self) -> Value {
+        let mut e = Map::new();
+        if let Some(v) = self.volume_mm3 {
+            e.insert("volume_mm3".into(), json!(v));
+            e.insert("tol".into(), json!(self.tol));
+        }
+        if let Some(n) = self.bodies {
+            e.insert("bodies".into(), json!(n));
+        }
+        if let Some((min, max)) = self.bbox {
+            e.insert("bbox".into(), json!({"min": min, "max": max}));
+        }
+        Value::Object(e)
+    }
+
+    /// Measure the design (as the `measure` tool does) and compare: the reply's `expectation`
+    /// (`ok`, `measured`, `expected`, `mismatch`).
+    fn check(&self, b: &mut dyn Backend) -> Result<Value, String> {
+        let m = exec(b, "inspect.measure", json!({}))?;
+        let bodies = m["body_count"].as_u64().unwrap_or(0);
+        let volume = m["total"]["volume_mm3"].as_f64();
+        let bbox = m["bodies"].as_array().into_iter().flatten().filter_map(|body| corners(&body["bbox"])).reduce(|(lo, hi), (min, max)| {
+            ([lo[0].min(min[0]), lo[1].min(min[1]), lo[2].min(min[2])], [hi[0].max(max[0]), hi[1].max(max[1]), hi[2].max(max[2])])
+        });
+        let mut mismatch: Vec<String> = Vec::new();
+        if let Some(e) = self.volume_mm3 {
+            match volume {
+                Some(v) if (v - e).abs() <= self.tol * e.abs() => {}
+                Some(v) => {
+                    let pct = if e != 0.0 { format!(" ({:+.2} %)", (v - e) / e * 100.0) } else { String::new() };
+                    mismatch.push(format!("volume: measured {}, expected {}{pct}", num(v), num(e)));
+                }
+                None => mismatch.push(format!("volume: not measured (no closed body), expected {}", num(e))),
+            }
+        }
+        if let Some(e) = self.bodies
+            && bodies != e
+        {
+            mismatch.push(format!("bodies: measured {bodies}, expected {e}"));
+        }
+        if let Some((emin, emax)) = self.bbox {
+            let expected = format!("min {} max {}", xyz_text(emin), xyz_text(emax));
+            match bbox {
+                Some((min, max)) => {
+                    let off: Vec<String> = [("min", min, emin), ("max", max, emax)]
+                        .into_iter()
+                        .flat_map(|(side, m, e)| {
+                            ["x", "y", "z"]
+                                .into_iter()
+                                .zip(m)
+                                .zip(e)
+                                .filter(|&((_, m), e)| (m - e).abs() > EXPECT_BBOX_TOL_MM)
+                                .map(move |((axis, m), e)| format!("{side} {axis} off by {} mm", num(m - e)))
+                        })
+                        .collect();
+                    if !off.is_empty() {
+                        mismatch.push(format!(
+                            "bbox: measured min {} max {}, expected {expected} ({})",
+                            xyz_text(min),
+                            xyz_text(max),
+                            off.join(", ")
+                        ));
+                    }
+                }
+                None => mismatch.push(format!("bbox: no body to measure, expected {expected}")),
+            }
+        }
+        Ok(json!({
+            "ok": mismatch.is_empty(),
+            "measured": {"volume_mm3": volume, "bodies": bodies, "bbox": bbox.map(|(min, max)| json!({"min": min, "max": max}))},
+            "expected": self.expected(),
+            "mismatch": mismatch,
+        }))
+    }
+}
+
+/// `{min: [x,y,z], max: [x,y,z]}` as two corners.
+fn corners(v: &Value) -> Option<([f64; 3], [f64; 3])> {
+    let xyz = |k: &str| -> Option<[f64; 3]> {
+        let a = v.get(k)?.as_array()?;
+        Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?])
+    };
+    Some((xyz("min")?, xyz("max")?))
+}
+
+/// A number in a mismatch message: at most four decimals, no trailing zeros.
+fn num(x: f64) -> String {
+    let r = (x * 1e4).round() / 1e4;
+    // `-0` for a coordinate a hair under zero would read as a sign error.
+    format!("{}", if r == 0.0 { 0.0 } else { r })
+}
+
+fn xyz_text(c: [f64; 3]) -> String {
+    format!("[{}, {}, {}]", num(c[0]), num(c[1]), num(c[2]))
+}
+
+/// A reply that went through, with its `expectation` when `expect` was given. A mismatch is a
+/// tool error that names it first; the design stays as built (the agent decides what to do).
+fn with_expectation(b: &mut dyn Backend, mut reply: Value, expect: Option<Expect>) -> Value {
+    let Some(expect) = expect else { return text_result(&reply, false) };
+    let expectation = match expect.check(b) {
+        Ok(e) => e,
+        Err(e) => json!({"ok": false, "expected": expect.expected(), "mismatch": [format!("the design could not be measured: {e}")]}),
+    };
+    let mismatch: Vec<&str> = expectation["mismatch"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let note = (expectation["ok"] != true).then(|| {
+        format!(
+            "expectation not met: {}. The design is kept as built: inspect it, then fix it (timeline.edit, undo) or carry on.",
+            mismatch.join("; ")
+        )
+    });
+    if !reply.is_object() {
+        reply = json!({"result": reply});
+    }
+    reply["expectation"] = expectation;
+    let Some(note) = note else { return text_result(&reply, false) };
+    let mut r = text_result(&reply, true);
+    if let Some(content) = r["content"].as_array_mut() {
+        content.insert(0, json!({"type": "text", "text": note}));
+    }
+    r
 }
 
 fn exec(b: &mut dyn Backend, command: &str, params: Value) -> Result<Value, String> {
@@ -818,13 +1063,26 @@ impl Undo {
 }
 
 /// `batch`: run steps in order, stop at the first failure and (by default) go back to the
-/// design as it was before the batch.
+/// design as it was before the batch. A batch that went through is then checked against its
+/// `expect`.
 fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
+    let expect = match Expect::parse(a) {
+        Ok(e) => e,
+        Err(e) => return text_result(&Value::String(e), true),
+    };
+    match batch_run(b, a) {
+        (reply, true) => text_result(&reply, true),
+        (reply, false) => with_expectation(b, reply, expect),
+    }
+}
+
+/// The batch itself: its reply and whether it failed.
+fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
     let Some(steps) = a.get("commands").and_then(Value::as_array) else {
-        return text_result(&json!("`commands` must be an array of {command, params}"), true);
+        return (json!("`commands` must be an array of {command, params}"), true);
     };
     if steps.len() > MAX_BATCH {
-        return text_result(&json!(format!("batch too long ({} steps, at most {MAX_BATCH})", steps.len())), true);
+        return (json!(format!("batch too long ({} steps, at most {MAX_BATCH})", steps.len())), true);
     }
     let rollback = a.get("rollback").and_then(Value::as_bool).unwrap_or(true);
     let verbose = a.get("verbose").and_then(Value::as_bool).unwrap_or(true);
@@ -869,7 +1127,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
                     "results": [],
                     "note": "nothing was run",
                 });
-                return text_result(&reply, true);
+                return (reply, true);
             }
         }
     }
@@ -888,7 +1146,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
         if let (Some(command), Some(failed)) = (refusal.command.as_deref(), reply.get_mut("failed").and_then(Value::as_object_mut)) {
             failed.insert("error".into(), Value::String(command_error(command, refusal.error.clone())));
         }
-        return text_result(&reply, true);
+        return (reply, true);
     }
     // A tool step's result as the tool would reply it: a `list_commands` step's catalog filtered,
     // a `measure {summary: true}` step's reply summarised.
@@ -926,12 +1184,12 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
             // Never sent: no app to send it to. Or sent and still running (it was not cancelled):
             // the `pending` tool gets its result.
             Err(e) if e.starts_with(crate::backend::NOT_RUNNING) || e.starts_with(STILL_RUNNING) => {
-                return text_result(&Value::String(e), true);
+                return (Value::String(e), true);
             }
             // The app may have run it: sending the steps again would apply them twice.
             Err(e) => {
                 let msg = format!("the app did not answer engine.batch ({e}); it may have run: inspect the design before sending it again");
-                return text_result(&Value::String(msg), true);
+                return (Value::String(msg), true);
             }
         }
     }
@@ -1001,14 +1259,14 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
                         "not_run": (i + 1..steps.len()).collect::<Vec<_>>(),
                         "results": results,
                     });
-                    return text_result(&with_timings(reply, timed, rows, clock.ms()), true);
+                    return (with_timings(reply, timed, rows, clock.ms()), true);
                 }
             }
         }
     }
     start.finish(b);
     let reply = json!({"ok": true, "completed": results.len(), "results": results});
-    text_result(&with_timings(reply, timed, rows, clock.ms()), false)
+    (with_timings(reply, timed, rows, clock.ms()), false)
 }
 
 /// `reply` with `timings` and `total_ms` when they were asked for.
@@ -1021,7 +1279,7 @@ fn with_timings(mut reply: Value, timed: bool, rows: Vec<Value>, total_ms: f64) 
 }
 
 /// The `batch` reply from the app's `engine.batch` answer, shaped as the per-step path shapes it.
-fn batch_reply(r: &Value, len: usize, rollback: bool, verbose: bool, narrow: &dyn Fn(usize, Value) -> Value) -> Value {
+fn batch_reply(r: &Value, len: usize, rollback: bool, verbose: bool, narrow: &dyn Fn(usize, Value) -> Value) -> (Value, bool) {
     let results: Vec<Value> = r["results"]
         .as_array()
         .cloned()
@@ -1065,7 +1323,7 @@ fn batch_reply(r: &Value, len: usize, rollback: bool, verbose: bool, narrow: &dy
             }
         }
     }
-    text_result(&reply, error)
+    (reply, error)
 }
 
 /// `measure {summary: true}`: an `inspect.measure` reply cut down to what checks a stage against
