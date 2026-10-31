@@ -26,7 +26,7 @@ What the prototype uses:
 | Direction | Message | Use |
 |---|---|---|
 | → agent | `initialize {protocolVersion: 1, clientCapabilities, clientInfo}` | We declare no file system and no terminal (`fs.readTextFile/writeTextFile: false`, `terminal: false`), and terminal login (`auth.terminal: true`, plus the older `_meta["terminal-auth"]`). The reply carries `agentInfo` and `authMethods`. |
-| → agent | `session/new {cwd, mcpServers}` | `mcpServers` holds one stdio server: `solidcraft-cli mcp --connect 127.0.0.1:PORT`. `cwd` is the open design's folder (else SolidCraft's own `agent` folder). |
+| → agent | `session/new {cwd, mcpServers}` | `mcpServers` holds one stdio server: `solidcraft-cli mcp --connect 127.0.0.1:PORT`. `cwd` is the open design's folder (else SolidCraft's own `agent` folder). The system note goes in the standard `systemPrompt` field when the agent offers `sessionCapabilities.systemPrompt`, in `_meta.antigravity.systemPrompt.append` when Antigravity offers that, and always in `_meta.systemPrompt.append` for the Claude adapter. An agent with none of these doesn't get it. |
 | → agent | `session/set_config_option {sessionId, configId, value}` | Set an advertised select option, including a model, reasoning effort or mode. The complete returned `configOptions` snapshot confirms the state; rejection leaves the previous confirmed snapshot intact. |
 | → agent | `session/prompt {sessionId, prompt: [content]}` | One text block. The reply comes at the end of the turn with `stopReason` (`end_turn`, `cancelled`, `refusal`, …). |
 | → agent | `session/cancel {sessionId}` (notification) | Cancel button. Open permission prompts are answered `cancelled` first, as the spec asks. |

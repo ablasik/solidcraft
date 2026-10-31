@@ -3027,20 +3027,33 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
         smart.start = start;
         smart.latch = None;
     }
+    // Showing or hiding a body changes what the extrude meets: the latch was decided among the
+    // bodies shown before (#9919).
+    let shown = solidcraft_engine::shown_scope(&app.session);
+    if let Kind::Extrude { smart, .. } = &mut d.kind
+        && smart.shown != shown
+    {
+        smart.shown = shown.clone();
+        smart.latch = None;
+    }
     // To an object, the extrude goes to it on whichever side it is: that is the side (#1633).
     if params.get("to").is_some()
         && let Some(reach) = solidcraft_engine::extrude_reach(&app.session, &params)
     {
         side = crate::smart_extrude::side(reach, 0);
     }
-    // Hidden bodies are out of its scope (#6901).
+    // Hidden bodies are out of its scope (#6901). With none shown there is nothing to join or
+    // cut: an empty `participants` would read as every body, hidden ones too (#9919).
     let mut params = params;
-    if let Some(shown) = solidcraft_engine::shown_scope(&app.session)
+    let mut nothing_shown = false;
+    if let Some(shown) = shown
         && params.get("participants").is_none()
     {
+        nothing_shown = shown.is_empty();
         params["participants"] = json!(shown);
     }
-    let Some(fresh) = solidcraft_engine::auto_operation(&app.session, &params).and_then(|op| OPS.iter().position(|o| *o == op)) else {
+    let fresh = if nothing_shown { Some("new") } else { solidcraft_engine::auto_operation(&app.session, &params) };
+    let Some(fresh) = fresh.and_then(|op| OPS.iter().position(|o| *o == op)) else {
         return;
     };
     if let Kind::Extrude { operation, smart, .. } = &mut d.kind {
