@@ -3289,6 +3289,7 @@
   "ui.edit_in_place_saved_elsewhere": "부품이 다른 파일에 저장되었습니다. 어셈블리는 여전히 {name}에 연결되어 있습니다",
   "ui.edit_in_place_wait": "디자인에서 실행 중인 작업이 끝날 때까지 기다리세요",
   "ui.edit_section_analysis": "단면 분석 편집",
+  "ui.edit_sketch_empty": "편집할 스케치가 없습니다",
   "ui.ellipse": "타원",
   "ui.emboss_wrap_note": "지원되는 원통에 접하는 직교 선 프로파일은 자동으로 감깁니다. 대상을 고르려면 벽을 선택하세요.",
   "ui.end_radius": "끝 반지름",
