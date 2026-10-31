@@ -4815,6 +4815,7 @@
   "ui.properties.inertia_y": "Iyx, Iyy, Iyz",
   "ui.properties.inertia_z": "Izx, Izy, Izz",
   "ui.properties.measuring": "正在測量…",
+  "ui.properties.measuring_bodies": "正在測量… 第 {done} 個，共 {total} 個實體",
   "ui.properties.measuring_failed": "測量在完成前已停止。",
   "ui.properties.principal_axis": "主軸 {number}",
   "ui.properties.principal_moments": "主慣性矩",

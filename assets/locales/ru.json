@@ -4707,6 +4707,7 @@
   "ui.properties.inertia_y": "Iyx, Iyy, Iyz",
   "ui.properties.inertia_z": "Izx, Izy, Izz",
   "ui.properties.measuring": "Измерение…",
+  "ui.properties.measuring_bodies": "Измерение… {done} из {total} тел",
   "ui.properties.measuring_failed": "Измерение остановлено, не закончив работу.",
   "ui.properties.principal_axis": "Главная ось {number}",
   "ui.properties.principal_moments": "Главные моменты",

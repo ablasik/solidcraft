@@ -4814,6 +4814,7 @@
   "ui.properties.inertia_y": "Iyx, Iyy, Iyz",
   "ui.properties.inertia_z": "Izx, Izy, Izz",
   "ui.properties.measuring": "Mjerenje…",
+  "ui.properties.measuring_bodies": "Mjerenje… {done} od {total} tijela",
   "ui.properties.measuring_failed": "Mjerenje je zaustavljeno prije završetka.",
   "ui.properties.principal_axis": "Glavna osa {number}",
   "ui.properties.principal_moments": "Glavni momenti",
