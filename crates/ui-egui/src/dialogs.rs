@@ -274,6 +274,8 @@ crate::dialog_descriptor::dialog_descriptors! {
             Align {
                 flip: bool,
                 components: bool,
+                /// Point-to-point: which of the world X, Y and Z axes take the offset.
+                axes: [bool; 3],
             },
             /// Remove bodies from here on in the timeline.
             Remove,
@@ -878,7 +880,7 @@ impl Dialog {
             "solid.align" => {
                 let components = s.selection.iter().any(|x| matches!(x, Sel::Occurrence { .. }));
                 Dialog::new(
-                    Kind::Align { flip: false, components },
+                    Kind::Align { flip: false, components, axes: [true; 3] },
                     vec![
                         SelInput::new(if components { "Components" } else { "Bodies" }, BODIES, true),
                         SelInput::new("From", FACES | EDGES | selection::VERTICES | PLANES | selection::ORIGIN, false),
@@ -3074,10 +3076,28 @@ fn picked_side(app: &SolveApp, d: &Dialog, first: &Sel) -> Option<usize> {
     Some(crate::smart_extrude::picked_direction(crate::smart_extrude::view_ray(&app.cam, at), normal, false))
 }
 
-/// Show the sketch of the Extrude, Revolve, sheet metal base or contour flange, or Hole at sketch
+/// Discard an editor whose target was removed, before its preview can draw again. Show the sketch
+/// of the Extrude, Revolve, sheet metal base or contour flange, or Hole at sketch
 /// points the open dialog edits, and only while it is open: whichever way the dialog closed (OK,
 /// Cancel, another tool, another design), the sketch returns to its own visibility.
-pub(crate) fn sync_feature_edit_sketch(app: &mut SolveApp) {
+pub(crate) fn sync_feature_edit(app: &mut SolveApp) {
+    if app.dialog.as_ref().and_then(|d| d.editing).is_some_and(|(id, _)| app.session.doc.feature(id).is_none()) {
+        // Undo or deletion already chose the current document and history. Cancel's rollback
+        // would try to restore the obsolete editing session; just discard its work instead.
+        app.dialog = None;
+        app.applying = None;
+        if let Some(state) = app.editing_state.take() {
+            // Undo can save the editor's temporary rollback in Redo (deletion saves it in
+            // Undo). Those exact snapshots belong to the complete design, with its old marker.
+            for snapshot in app.session.undo.iter_mut().chain(&mut app.session.redo) {
+                if std::sync::Arc::ptr_eq(&snapshot.doc, &state.source.doc) {
+                    snapshot.doc = state.original.doc.clone();
+                }
+            }
+        }
+        app.preview.reset();
+        app.op_check.abandon();
+    }
     app.session.feature_edit_sketch = app.dialog.as_ref().and_then(|d| d.editing).and_then(|(id, _)| match &app.session.doc.feature(id)?.kind {
         FeatureKind::Extrude { sketch, .. }
         | FeatureKind::Revolve { sketch, .. }
@@ -3133,7 +3153,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // A click in the view's corner is for the dialog open this frame, or for none.
     let corner = app.viewport.corner.take();
     app.viewport.corner_ok = false;
-    sync_feature_edit_sketch(app);
+    sync_feature_edit(app);
     app.op_check.poll();
     if app.tree.redefine.is_none() {
         app.viewport.dialog_rect = None;
@@ -4659,7 +4679,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "faces")?;
             ("face.delete", json!({"faces": face_points(0)}))
         }
-        Kind::Align { flip, components } => {
+        Kind::Align { flip, components, axes } => {
             need(0, if *components { "components" } else { "bodies" })?;
             need(1, "what to move from")?;
             need(2, "where to move it to")?;
@@ -4670,7 +4690,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 }
                 json!({"paths": paths, "flip": flip})
             } else {
-                json!({"bodies": sels(d, 0).body_names(), "flip": flip})
+                let mut p = json!({"bodies": sels(d, 0).body_names(), "flip": flip});
+                if *axes != [true; 3] {
+                    p["axes"] = json!(axes);
+                }
+                p
             };
             for (i, key) in [(1, "from"), (2, "to")] {
                 let snap = d.extra.get(&format!("{key}_snap")).and_then(Value::as_str).unwrap_or("picked");
