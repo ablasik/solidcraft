@@ -1379,6 +1379,10 @@ preference_settings! {
     /// release and end there (#7247); clicks still draw a chain. Off (the default): a drag is a
     /// click that moved on the way, placing a point where it is let go (#2448).
     line_drag_draws_one: bool = false, PAGE_SKETCH => check_id("prefs.line_drag_draws_one");
+    /// In the Line tool, leaving the chain's last point and resting back on it switches to a
+    /// tangent arc, and the same again back to lines (#9489). Off (the default): resting there
+    /// does nothing, and tangent arcs are the Arc tool's.
+    line_hover_tangent_arc: bool = false, PAGE_SKETCH => check_id("prefs.line_hover_tangent_arc");
     /// Include hidden geometry and a small pointer neighbourhood in Select Other.
     select_other_hidden: bool = true, PAGE_SKETCH => check_id("prefs.select_other_hidden");
     /// When true: Shift+click adds without removing; Primary toggles.
@@ -5504,6 +5508,7 @@ mod tests {
             ("sketch_tracking_points", json!(false), PAGE_SKETCH),
             ("sketch_align_points", json!(true), PAGE_SKETCH),
             ("sketch_recent_snap", json!(true), PAGE_SKETCH),
+            ("line_hover_tangent_arc", json!(true), PAGE_SKETCH),
             ("msaa", json!(8), PAGE_GRAPHICS),
             ("single_surface_analysis", json!(false), PAGE_GRAPHICS),
         ];

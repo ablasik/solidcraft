@@ -3503,3 +3503,45 @@ fn corner_tools_refuse_all_spatial_curves_with_an_unsupported_message() {
         }
     }
 }
+
+/// `sketch.arc.tangent` ends on an existing point when `end` names it, so a chain can close, and
+/// makes a new point for coordinates as before (#9489). The preview is the arc the command draws.
+#[test]
+fn a_tangent_arc_can_end_on_an_existing_point() {
+    let mut s = new_sketch();
+    let far = ids(&run(&mut s, "sketch.line", json!({"points": [[20, 20], [40, 20]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let line = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let start = format!("{line}.end");
+    let target = format!("{far}.start");
+    let sk = sketch(&s);
+    let preview = crate::cmd::tangent_arc_preview(&sk, &line, &start, Vec2::new(20.0, 20.0)).expect("an arc");
+    assert_eq!(preview.curves.len(), 1);
+    assert!(preview.center(0).unwrap().dist(Vec2::new(10.0, 12.5)) < 1e-9, "{:?}", preview.center(0));
+    assert!(crate::cmd::tangent_arc_preview(&sk, &line, &start, Vec2::new(30.0, 0.0)).is_none(), "straight ahead there is no arc");
+
+    let points = sk.points.len();
+    let r = run(&mut s, "sketch.arc.tangent", json!({"start": start, "curve": line, "end": target}));
+    let arc = ids(&r["curves"])[0].clone();
+    let sk = sketch(&s);
+    assert_eq!(sk.resolve_point(&format!("{arc}.end")), sk.resolve_point(&format!("{far}.start")), "the arc ends on that point");
+    assert_eq!(sk.resolve_point(&format!("{arc}.start")), sk.resolve_point(&format!("{line}.end")));
+    assert_eq!(sk.points.len(), points + 1, "only the arc's centre is new");
+    let ai = sk.curve_index(&arc).unwrap();
+    assert!(sk.center(ai).unwrap().dist(Vec2::new(10.0, 12.5)) < 1e-6, "{:?}", sk.center(ai));
+    assert!(close(sk.radius(ai).unwrap(), 12.5));
+
+    // Clockwise: the arc is stored the other way round, and its end is still the named point.
+    let down = ids(&run(&mut s, "sketch.line", json!({"points": [[0, -50], [10, -50]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let mark = ids(&run(&mut s, "sketch.line", json!({"points": [[20, -70], [40, -70]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let r = run(&mut s, "sketch.arc.tangent", json!({"start": format!("{down}.end"), "curve": down, "end": format!("{mark}.start")}));
+    let arc = ids(&r["curves"])[0].clone();
+    let sk = sketch(&s);
+    assert_eq!(sk.resolve_point(&format!("{arc}.end")), sk.resolve_point(&format!("{mark}.start")));
+    assert_eq!(sk.resolve_point(&format!("{arc}.start")), sk.resolve_point(&format!("{down}.end")));
+
+    // A name that is no point, and the arc's own start, are refused and change nothing.
+    let before = s.doc.to_json();
+    assert!(s.execute("sketch.arc.tangent", &json!({"start": format!("{down}.end"), "curve": down, "end": "nowhere"})).is_err());
+    assert!(s.execute("sketch.arc.tangent", &json!({"start": format!("{down}.end"), "curve": down, "end": format!("{down}.end")})).is_err());
+    assert_eq!(s.doc.to_json(), before);
+}

@@ -1,0 +1,42 @@
+{
+  "en": {
+    "prefs.line_hover_tangent_arc": "Rest on a line's last point to switch to a tangent arc",
+    "prefs.line_hover_tangent_arc_note": "In the Line tool, once a segment is drawn, move away from the chain's last point, come back and hold the pointer still on it: the next click ends a tangent arc, and the same gesture goes back to lines. Off: resting there does nothing.",
+    "ui.line_arc_hint": "Tangent arc: click the arc's end. Rest on the last point again for lines; right-click or Esc to finish"
+  },
+  "ja": {
+    "prefs.line_hover_tangent_arc": "線の最後の点で止めると接線円弧に切り替える",
+    "prefs.line_hover_tangent_arc_note": "線ツールで線分を描いたあと、連続線の最後の点から一度離れて戻り、その点の上でポインターを止めると、次のクリックで接線円弧の終点を指定します。同じ操作で線に戻ります。オフ: 止めても何も起こりません。",
+    "ui.line_arc_hint": "接線円弧: 円弧の終点をクリックします。線に戻るには最後の点で再び止めます。右クリックまたは Esc で終了します"
+  },
+  "zh": {
+    "prefs.line_hover_tangent_arc": "停留在直线的最后一点上以切换到相切圆弧",
+    "prefs.line_hover_tangent_arc_note": "在直线工具中，画好一段后，先离开连续线的最后一点，再回到该点并让指针保持不动：下一次单击将确定相切圆弧的终点，同样的操作可切回直线。关闭：停留在该点不起作用。",
+    "ui.line_arc_hint": "相切圆弧：单击圆弧的终点。再次停留在最后一点可切回直线；右键单击或按 Esc 结束"
+  },
+  "de": {
+    "prefs.line_hover_tangent_arc": "Auf dem letzten Linienpunkt verweilen, um zum Tangentialbogen zu wechseln",
+    "prefs.line_hover_tangent_arc_note": "Im Linienwerkzeug: Nach einem Segment vom letzten Punkt der Kette wegbewegen, zurückkehren und den Zeiger still darauf halten. Der nächste Klick beendet dann einen Tangentialbogen, und dieselbe Geste wechselt zurück zu Linien. Aus: Das Verweilen bewirkt nichts.",
+    "ui.line_arc_hint": "Tangentialbogen: Ende des Bogens anklicken. Für Linien erneut auf dem letzten Punkt verweilen; Rechtsklick oder Esc beendet"
+  },
+  "ko": {
+    "prefs.line_hover_tangent_arc": "선의 마지막 점에 머무르면 접선 호로 전환",
+    "prefs.line_hover_tangent_arc_note": "선 도구에서 선분을 그린 뒤 체인의 마지막 점에서 벗어났다가 돌아와 포인터를 그 위에 멈추면, 다음 클릭으로 접선 호의 끝점을 지정합니다. 같은 동작으로 선으로 돌아갑니다. 끔: 머물러도 아무 일도 일어나지 않습니다.",
+    "ui.line_arc_hint": "접선 호: 호의 끝점을 클릭합니다. 선으로 돌아가려면 마지막 점에 다시 머무르고, 끝내려면 오른쪽 클릭 또는 Esc를 누릅니다"
+  },
+  "ar": {
+    "prefs.line_hover_tangent_arc": "التوقف عند آخر نقطة في الخط للتبديل إلى قوس مماسي",
+    "prefs.line_hover_tangent_arc_note": "في أداة الخط، بعد رسم قطعة، ابتعد عن آخر نقطة في السلسلة ثم عد إليها وأبقِ المؤشر ثابتًا عليها: تحدد النقرة التالية نهاية قوس مماسي، والحركة نفسها تعيدك إلى الخطوط. عند الإيقاف: لا يحدث شيء عند التوقف هناك.",
+    "ui.line_arc_hint": "قوس مماسي: انقر نهاية القوس. توقف عند آخر نقطة مرة أخرى للعودة إلى الخطوط؛ انقر بالزر الأيمن أو اضغط Esc للإنهاء"
+  },
+  "he": {
+    "prefs.line_hover_tangent_arc": "השהיה על הנקודה האחרונה של קו עוברת לקשת משיקה",
+    "prefs.line_hover_tangent_arc_note": "בכלי הקו, אחרי ציור מקטע, התרחקו מהנקודה האחרונה של השרשרת, חזרו אליה והחזיקו את הסמן עליה ללא תנועה: הלחיצה הבאה תסיים קשת משיקה, ואותה מחווה מחזירה לקווים. כבוי: השהיה שם אינה עושה דבר.",
+    "ui.line_arc_hint": "קשת משיקה: לחצו על קצה הקשת. השהו שוב על הנקודה האחרונה כדי לחזור לקווים; לחיצה ימנית או Esc לסיום"
+  },
+  "vi": {
+    "prefs.line_hover_tangent_arc": "Dừng trên điểm cuối của đường để chuyển sang cung tiếp tuyến",
+    "prefs.line_hover_tangent_arc_note": "Trong công cụ Đường, sau khi vẽ một đoạn, hãy rời điểm cuối của chuỗi, quay lại và giữ yên con trỏ trên đó: lần nhấp tiếp theo sẽ kết thúc một cung tiếp tuyến, và cùng thao tác đó sẽ quay lại đường thẳng. Tắt: dừng ở đó không có tác dụng.",
+    "ui.line_arc_hint": "Cung tiếp tuyến: nhấp vào điểm cuối của cung. Dừng lại trên điểm cuối cùng để quay lại đường thẳng; nhấp chuột phải hoặc Esc để kết thúc"
+  }
+}

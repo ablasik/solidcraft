@@ -255,6 +255,7 @@ mod sketch_edit_tests;
 mod sketch_families;
 #[cfg(test)]
 mod sketch_guidance_ui_tests;
+pub(crate) mod sketch_line_arc;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;

@@ -68,6 +68,13 @@ ends the chain. To draw one separate line with a press, a drag and the release i
 where you let go, snapping and lining up as clicks do, and ends there; clicks still draw a
 chain, and a drag shorter than about 24 points is still a click.
 
+To round corners without changing tool, turn on **Preferences › Sketch › Rest on a line's last
+point to switch to a tangent arc**. With a segment drawn, move the pointer away from the chain's
+last point, bring it back and hold it still for about a third of a second: a label next to the
+pointer says Tangent Arc, and the next click ends an arc tangent to the last segment. The same
+gesture goes back to lines. Arcs and lines join into one chain, each click is one undo step, and a
+right-click or Esc ends the chain as usual.
+
 Tools with several variants (line and midpoint line; two-point, three-point, centre and rounded
 rectangle; the circle, arc, slot, polygon and spline variants) share one toolbar button with a
 drop-down. The button and the family's shortcut start the variant you picked last, so a

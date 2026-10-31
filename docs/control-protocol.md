@@ -447,6 +447,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `language` (`en`, `ar`, `ja`, `de`, `fr`, `he`, `ko`, `ms`, `ru`, `uk`, `zh`; see [localization](localization.md))
 - `length_decimals`
 - `line_drag_draws_one` (default false: in the Line tool, a press, a drag and the release draw one line from the press to the release and end there, snapping as clicks do; clicks still chain, and a drag under 24 points is a click; off, a drag places a point where it is let go, #7247)
+- `line_hover_tangent_arc` (default false: in the Line tool, after a segment, moving away from the chain's last point and resting back on it for about a third of a second makes the next click a tangent arc, and the same again goes back to lines; off, resting there does nothing, #9489)
 - `logo_accent` (bool, default false: the application bar's logo in shades of the theme's accent instead of the theme's logo colours)
 - `look_at_anim`
 - `look_at_speed`

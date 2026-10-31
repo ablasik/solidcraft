@@ -46,6 +46,7 @@ pub use join_pieces::{Addition, addition};
 pub use sketch::dimension_roles;
 pub(crate) use sketch::face::face_pick_form;
 pub use sketch_construction::{ConstructionLine, construction_line_choice, construction_line_mode, construction_line_solutions};
+pub use sketch_create::tangent_arc_preview;
 pub use sketch_import::drawing_import_command;
 pub use sketch_modify::{extend_arc_preview, extend_preview, trim_piece};
 pub use view_dxf::sketch::exportable as view_dxf_exportable;
