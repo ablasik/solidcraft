@@ -163,11 +163,14 @@ pub fn tool_definitions() -> Vec<Value> {
              bodies, with totals. With `items` (one or two selections, as `execute` takes them: faces, edges, vertices, \
              sketch curves, profiles): one item's length, area or position, a circle's, arc's or cylinder's `diameter` and \
              `radius` (with `circumference`, or an arc's `arc_length` and `angle_deg`), a slot's `slot` sizes; two items' \
-             `min` and `max` distance and, where one is round, `center_distance` (centre to centre, or from its axis).",
+             `min` and `max` distance and, where one is round, `center_distance` (centre to centre, or from its axis). \
+             `summary: true` keeps one short object per body (name, volume_mm3, bbox, faces, closed) and the total volume: \
+             enough to check a stage against the numbers you computed, at a fraction of the size.",
             obj(
                 json!({
                     "body": string("Body name (default: all bodies)"),
                     "items": {"type": "array", "items": {"type": "object"}, "description": "One or two selections to measure instead of bodies, e.g. {\"type\": \"face\", \"body\": \"Body1\", \"index\": 3, \"point\": [x,y,z]}"},
+                    "summary": {"type": "boolean", "description": "Per body only name, volume_mm3, bbox {min, max}, faces and closed, and total.volume_mm3 (default false: the full reply)"},
                 }),
                 &[],
             ),
@@ -178,8 +181,17 @@ pub fn tool_definitions() -> Vec<Value> {
             "List edges and faces",
             "The edges (index, midpoint, length, endpoints) and faces (index, name, area, centroid, plane normal, a `point` that lies \
              on the face, and for a cylindrical face its `cylinder`: origin, axis, radius) of a body. Use an edge midpoint as the \
-             [x,y,z] point that picks the edge for fillet and chamfer; a face's point or its name picks the face for the face commands.",
-            obj(json!({"body": string("Body name, e.g. \"Body1\"")}), &["body"]),
+             [x,y,z] point that picks the edge for fillet and chamfer; a face's point or its name picks the face for the face commands. \
+             `faces: \"cylinders\"` lists only the cylindrical faces, as `cylinders`, with the halves the kernel splits one cylinder \
+             into merged: {radius, origin, axis, extent, names}, `extent` the [min, max] distance along `axis` from `origin` that \
+             the cylinder spans, and no edges. That is enough to check where every hole and boss is, at a fraction of the size.",
+            obj(
+                json!({
+                    "body": string("Body name, e.g. \"Body1\""),
+                    "faces": {"type": "string", "enum": ["all", "cylinders"], "description": "\"all\" (default): every edge and face. \"cylinders\": only the cylindrical faces, merged, with their extent along the axis, and no edges"},
+                }),
+                &["body"],
+            ),
             Effect::ReadOnly,
         ),
         tool(
@@ -571,13 +583,17 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
                 Some(body) => json!({"bodies": [body]}),
                 None => json!({}),
             };
-            exec(b, "inspect.measure", p)
+            let m = exec(b, "inspect.measure", p)?;
+            Ok(if a.get("summary").and_then(Value::as_bool).unwrap_or(false) { measure_summary(m) } else { m })
         }
         "body_topology" => {
             let p = pick(a, &["body"]);
             let edges = exec(b, "model.edges", p.clone())?;
             let faces = exec(b, "model.faces", p)?;
-            Ok(json!({"body": a.get("body"), "edges": edges["edges"], "faces": faces["faces"]}))
+            Ok(match str_arg(a, "faces") {
+                Some("cylinders") => json!({"body": a.get("body"), "cylinders": topology_cylinders(&faces["faces"], &edges["edges"])}),
+                _ => json!({"body": a.get("body"), "edges": edges["edges"], "faces": faces["faces"]}),
+            })
         }
         "set_parameter" => {
             let mut p = pick(a, &["name", "unit", "comment"]);
@@ -634,18 +650,35 @@ fn pending(b: &mut dyn Backend) -> Result<Value, String> {
     Ok(json!({"pending": what, "done": false, "running_s": p.get("running_s"), "note": "still running: call pending again to keep waiting"}))
 }
 
+/// How a tool step's result is cut down to what the tool itself would reply.
+enum Narrow {
+    /// A `list_commands` step's catalog, filtered as the tool filters it.
+    Commands(String),
+    /// A `measure {summary: true}` step's reply, as `measure_summary` shapes it.
+    MeasureSummary,
+}
+
+impl Narrow {
+    fn apply(&self, v: Value) -> Value {
+        match self {
+            Narrow::Commands(f) => filter_commands(v, Some(f)),
+            Narrow::MeasureSummary => measure_summary(v),
+        }
+    }
+}
+
 /// A `batch` step as the engine command it runs: an engine command as it is, or one of these
 /// tools' names (an agent writes the tool it knows) with that tool's arguments as its params.
-/// `Ok((command, params, filter))`: `filter` narrows a `list_commands` step's catalog; an empty
+/// `Ok((command, params, narrow))`: `narrow` cuts the step's result down as the tool would; an empty
 /// `command` means the step is an engine command already.
-fn batch_step(step: &Value) -> Result<(String, Value, Option<String>), String> {
+fn batch_step(step: &Value) -> Result<(String, Value, Option<Narrow>), String> {
     let command = step.get("command").or_else(|| step.get("id")).and_then(Value::as_str).ok_or("missing `command`")?;
     let empty = Map::new();
     let params = step.get("params").cloned().filter(|p| !p.is_null()).unwrap_or(json!({}));
     let a = params.as_object().unwrap_or(&empty);
     let mapped = |c: &str, p: Value| Ok((c.to_string(), p, None));
     match command {
-        "list_commands" => Ok(("engine.commands".into(), json!({}), str_arg(a, "filter").map(str::to_string))),
+        "list_commands" => Ok(("engine.commands".into(), json!({}), str_arg(a, "filter").map(|f| Narrow::Commands(f.to_string())))),
         "set_parameter" => {
             let mut p = pick(a, &["name", "unit", "comment"]);
             p["expression"] = parameter_value(a)?;
@@ -661,7 +694,11 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<String>), String> {
         }
         "measure" => match a.get("items") {
             Some(items) => mapped("inspect.measure", json!({"items": items})),
-            None => mapped("inspect.measure", str_arg(a, "body").map_or(json!({}), |body| json!({"bodies": [body]}))),
+            None => {
+                let p = str_arg(a, "body").map_or(json!({}), |body| json!({"bodies": [body]}));
+                let summary = a.get("summary").and_then(Value::as_bool).unwrap_or(false);
+                Ok(("inspect.measure".into(), p, summary.then_some(Narrow::MeasureSummary)))
+            }
         },
         "inspect_design" => mapped("document.inspect", json!({"measure": a.get("measure").and_then(Value::as_bool).unwrap_or(true)})),
         "undo" => mapped("edit.undo", json!({})),
@@ -796,24 +833,24 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     // Steps that name a tool run the engine command it stands for. One that can't be a step
     // fails the batch before anything is sent.
     let mut mapped: Vec<Value> = Vec::with_capacity(steps.len());
-    let mut filters: Vec<(usize, String)> = Vec::new();
+    let mut narrows: Vec<(usize, Narrow)> = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         // The window goes to another design's tab for these, however the step names them: the
         // batch's later steps and its rollback would land in the wrong design.
-        let step_result = batch_step(step).and_then(|(command, params, filter)| {
+        let step_result = batch_step(step).and_then(|(command, params, narrow)| {
             let id = if command.is_empty() { step.get("command").or_else(|| step.get("id")).and_then(Value::as_str).unwrap_or("") } else { &command };
             match solidcraft_engine::find_command(id).map(|spec| spec.id) {
                 Some(c @ ("component.edit_in_place" | "component.finish_edit")) => {
                     Err(format!("`{c}` goes to another design's tab: send it on its own, not in a batch"))
                 }
-                _ => Ok((command, params, filter)),
+                _ => Ok((command, params, narrow)),
             }
         });
         match step_result {
             Ok((command, _, _)) if command.is_empty() => mapped.push(step.clone()),
-            Ok((command, params, filter)) => {
-                if let Some(f) = filter {
-                    filters.push((i, f));
+            Ok((command, params, narrow)) => {
+                if let Some(n) = narrow {
+                    narrows.push((i, n));
                 }
                 mapped.push(json!({"command": command, "params": params}));
             }
@@ -853,9 +890,10 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
         }
         return text_result(&reply, true);
     }
-    // A `list_commands` step's catalog, filtered as the tool filters it.
-    let narrow = |i: usize, v: Value| match filters.iter().find(|(j, _)| *j == i) {
-        Some((_, f)) => filter_commands(v, Some(f)),
+    // A tool step's result as the tool would reply it: a `list_commands` step's catalog filtered,
+    // a `measure {summary: true}` step's reply summarised.
+    let narrow = |i: usize, v: Value| match narrows.iter().find(|(j, _)| *j == i) {
+        Some((_, n)) => n.apply(v),
         None => v,
     };
     // An app that runs batches itself answers the whole batch in one request, so one frame
@@ -1028,6 +1066,150 @@ fn batch_reply(r: &Value, len: usize, rollback: bool, verbose: bool, narrow: &dy
         }
     }
     text_result(&reply, error)
+}
+
+/// `measure {summary: true}`: an `inspect.measure` reply cut down to what checks a stage against
+/// computed numbers: per body `name`, `volume_mm3`, `bbox`, `faces` and `closed` (a body that
+/// could not be measured keeps its `error`), `body_count` and the total volume. An `items`
+/// reply is small already and goes through as it is.
+fn measure_summary(v: Value) -> Value {
+    let Some(o) = v.as_object() else { return v };
+    if !o.contains_key("bodies") {
+        return v;
+    }
+    let bodies: Vec<Value> = o
+        .get("bodies")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|b| {
+            let mut s = Map::new();
+            let keys: &[&str] = if b.get("error").is_some() { &["name", "error"] } else { &["name", "volume_mm3", "bbox", "faces", "closed"] };
+            for k in keys {
+                s.insert((*k).to_string(), b.get(*k).cloned().unwrap_or(Value::Null));
+            }
+            Value::Object(s)
+        })
+        .collect();
+    json!({
+        "body_count": o.get("body_count").cloned().unwrap_or_else(|| json!(bodies.len())),
+        "bodies": bodies,
+        "total": {"volume_mm3": o.get("total").and_then(|t| t.get("volume_mm3")).cloned().unwrap_or(Value::Null)},
+    })
+}
+
+/// A `[x, y, z]` JSON array as numbers.
+fn xyz(v: &Value) -> Option<[f64; 3]> {
+    let a = v.as_array()?;
+    if a.len() != 3 {
+        return None;
+    }
+    let p = [a[0].as_f64()?, a[1].as_f64()?, a[2].as_f64()?];
+    p.iter().all(|c| c.is_finite()).then_some(p)
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+/// One cylinder as `body_topology {faces: "cylinders"}` reports it: the faces that lie on it,
+/// merged by equal radius and the same axis line.
+struct TopoCylinder {
+    radius: f64,
+    origin: [f64; 3],
+    /// Unit length.
+    axis: [f64; 3],
+    /// Distances along `axis` from `origin` of the points found on the cylinder so far.
+    extent: Option<(f64, f64)>,
+    names: Vec<Value>,
+}
+
+/// How far a point lies from the cylinder's axis line, and how far along it from the origin.
+fn axial(c: &TopoCylinder, p: [f64; 3]) -> (f64, f64) {
+    let d = sub(p, c.origin);
+    let along = dot(d, c.axis);
+    let off = cross(d, c.axis);
+    (dot(off, off).sqrt(), along)
+}
+
+/// Does `p` lie on the cylinder's surface, within `tol`?
+fn on_cylinder(c: &TopoCylinder, p: [f64; 3], tol: f64) -> bool {
+    (axial(c, p).0 - c.radius).abs() <= tol
+}
+
+fn widen(c: &mut TopoCylinder, p: [f64; 3]) {
+    let t = axial(c, p).1;
+    c.extent = Some(match c.extent {
+        Some((lo, hi)) => (lo.min(t), hi.max(t)),
+        None => (t, t),
+    });
+}
+
+/// Positions and axes that agree within this are one cylinder (mm).
+const CYLINDER_TOL: f64 = 1e-3;
+
+/// `body_topology {faces: "cylinders"}`: the cylindrical faces of `model.faces`, the halves the
+/// kernel splits one cylinder into merged (equal radius, the same axis line: origin on the axis,
+/// direction up to sign), each with the extent along its axis that the body's own points on the
+/// cylinder span (the faces' `point`s and the ends and midpoints of the edges lying on it). Built
+/// from what `model.faces` and `model.edges` already reply, so it needs nothing of the kernel.
+fn topology_cylinders(faces: &Value, edges: &Value) -> Value {
+    let mut found: Vec<TopoCylinder> = Vec::new();
+    for f in faces.as_array().into_iter().flatten() {
+        let c = &f["cylinder"];
+        let (Some(radius), Some(origin), Some(axis)) = (c["radius"].as_f64(), xyz(&c["origin"]), xyz(&c["axis"])) else { continue };
+        let len = dot(axis, axis).sqrt();
+        if !radius.is_finite() || radius <= 0.0 || !len.is_finite() || len < 1e-9 {
+            continue;
+        }
+        let axis = [axis[0] / len, axis[1] / len, axis[2] / len];
+        // The same cylinder: the same radius and axis direction (either way round), and this
+        // face's origin on that axis line.
+        let same = |k: &TopoCylinder| {
+            let off = cross(sub(origin, k.origin), k.axis);
+            (k.radius - radius).abs() <= CYLINDER_TOL && dot(k.axis, axis).abs() >= 1.0 - 1e-6 && dot(off, off).sqrt() <= CYLINDER_TOL
+        };
+        let name = f.get("name").cloned().unwrap_or(Value::Null);
+        let at = match found.iter().position(same) {
+            Some(i) => i,
+            None => {
+                found.push(TopoCylinder { radius, origin, axis, extent: None, names: Vec::new() });
+                found.len() - 1
+            }
+        };
+        if let Some(k) = found.get_mut(at) {
+            k.names.push(name);
+            if let Some(p) = xyz(&f["point"]) {
+                widen(k, p);
+            }
+        }
+    }
+    // The ends of the cylinder: the vertices of the edges that lie on it (a circle's ends and
+    // midpoint are on it; an edge of another face at most touches it in two points).
+    for e in edges.as_array().into_iter().flatten() {
+        let (Some(start), Some(mid), Some(end)) = (xyz(&e["start"]), xyz(&e["mid"]), xyz(&e["end"])) else { continue };
+        for c in &mut found {
+            let tol = CYLINDER_TOL.max(c.radius * 1e-4);
+            if [start, mid, end].iter().all(|p| on_cylinder(c, *p, tol)) {
+                widen(c, start);
+                widen(c, end);
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|c| {
+            let mut v = json!({"radius": c.radius, "origin": c.origin, "axis": c.axis, "names": c.names});
+            if let (Some((lo, hi)), Some(o)) = (c.extent, v.as_object_mut()) {
+                o.insert("extent".into(), json!([lo, hi]));
+            }
+            v
+        })
+        .collect()
 }
 
 /// A command's result without what the design already had (`execute` or `batch` with `verbose: false`): a
