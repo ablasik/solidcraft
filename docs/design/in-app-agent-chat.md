@@ -187,8 +187,18 @@ parks that state alongside its `Session`; switching restores both together. Pane
 placement, agent discovery, the latest sign-in evidence per agent, endpoint model cache,
 settings dialogs and the desktop endpoint starter remain window state. A new tab gets a fresh conversation. Closing a tab drops its
 backend; closing the last tab or replacing its design (including programmatic New, Open and
-Recover commands or scripts) clears its conversation.
+Recover commands or scripts from external callers) clears its conversation.
 Conversation state is in memory only and does not change the design file format.
+
+An admitted request from the current chat carries its turn's validity flag through direct
+dispatch, cursor animation and asynchronous file loading. Only while that request applies,
+`with_tool_request` marks its document changes as agent-initiated. New/Recover replacements
+retain the chat and reset its undo boundary to the new design. Opening a new tab groups the
+old design's completed changes, moves the conversation and its endpoint into the new tab,
+and starts a new undo segment without resetting the turn's limits. A failed batch that
+restores its original design also restores its original turn boundary. Opening an already
+active file is unchanged; opening a file owned by another tab is refused, preserving both
+conversations. The marker is never taken from JSON and does not persist between requests.
 
 Leaving a tab cancels its running turn, declines outstanding approvals, and merges completed
 changes into that design's undo history before swapping sessions. Its backend conversation

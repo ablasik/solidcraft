@@ -712,6 +712,203 @@ fn a_late_sign_in_retry_or_permission_cannot_restart_a_departed_turn() {
     assert!(app.agent_chat.turn.is_none() && app.agent_chat.queued.is_none());
 }
 
+/// Exercise the chat endpoint's gate and the real dispatch paths, including the animated
+/// pointer and asynchronous file loads. The scripted backend never needs a model account.
+fn chat_tool(app: &mut SolveApp, tx: &Sender<ControlRequest>, ctx: &egui::Context, method: &str, params: Value) -> Value {
+    let reply = ask(tx, method, params);
+    pump_tools(app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        app.drain_control(ctx);
+        app.now += 1.0;
+        crate::agent_cursor::step(app, ctx);
+        crate::file_load::tick(app, ctx);
+        app.poll_control_jobs(ctx);
+        match reply.try_recv() {
+            Ok(response) => return response,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => panic!("the chat's tool reply was dropped"),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        assert!(std::time::Instant::now() < deadline, "the chat's tool did not finish");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn an_agents_new_design_keeps_its_conversation_and_continues() {
+    // #7526: the old reset disconnected the backend inside its own file.new request.
+    for (method, params, animate) in [
+        ("engine.execute", json!({"command": "file.new"}), false),
+        ("engine.execute", json!({"command": "FILE.NEW"}), false),
+        ("engine.execute", json!({"command": "file.new"}), true),
+        ("engine.batch", json!({"commands": [{"command": "file.new"}, boxed(0.0)]}), false),
+        ("engine.batch", json!({"commands": [{"command": "file.new"}, boxed(0.0)]}), true),
+    ] {
+        let (mut app, script, ctx) = app_with_script();
+        let (tx, rx) = channel();
+        app.agent_chat.tools_rx = Some(rx);
+        app.preferences.ai_permissions = agents::Mode::All;
+        app.run("solid.box", boxed(0.0)["params"].clone()).unwrap();
+        send(&mut app, &ctx, "create another design".into());
+        let active = app.agent_chat.turn.as_ref().unwrap().active.clone();
+        app.ui.agent_cursor.show = animate;
+        crate::scenario::publish_handle("toolbar:file.new", egui::pos2(80.0, 100.0));
+        crate::scenario::publish_handle("toolbar:solid.box", egui::pos2(100.0, 100.0));
+        let response = chat_tool(&mut app, &tx, &ctx, method, params);
+        assert_eq!(response["ok"], true, "{response}");
+        assert!(app.agent_chat.backend.is_some(), "the agent must receive its own replacement's reply");
+        assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(app.agent_chat.items.iter().any(|i| matches!(i, Item::User { text, .. } if text == "create another design")));
+        assert!(!script.calls().iter().any(|call| matches!(call.as_str(), "cancel" | "new_session")));
+        let response = chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(30.0));
+        assert_eq!(response["ok"], true, "the same agent continues: {response}");
+        assert_eq!(app.agent_chat.turn.as_ref().unwrap().changes, 2, "a replacement does not reset the turn's change budget");
+        let count = if method == "engine.batch" { 2 } else { 1 };
+        assert_eq!(app.session.doc.features.len(), count);
+        ended(&script, "");
+        poll(&mut app, &ctx);
+        assert_eq!(app.session.undo.len(), 1, "only the new design's edits form this turn's undo step");
+        app.run("edit.undo", json!({})).unwrap();
+        assert!(app.session.doc.features.is_empty(), "undo must not resurrect the previous design");
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_agents_opened_design_keeps_its_conversation_and_undo_ownership() {
+    for blank in [true, false] {
+        let dir = std::env::temp_dir().join(format!("solidcraft-chat-open-{}-{blank}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("next.solidcraft");
+        let mut next = solidcraft_engine::Session::default();
+        next.execute("solid.box", &boxed(100.0)["params"]).unwrap();
+        next.execute("file.save_as", &json!({"path": path})).unwrap();
+        let (mut app, script, ctx) = app_with_script();
+        let (tx, rx) = channel();
+        app.agent_chat.tools_rx = Some(rx);
+        app.preferences.ai_permissions = agents::Mode::All;
+        if !blank {
+            app.run("solid.box", boxed(0.0)["params"].clone()).unwrap();
+            app.run("file.save_as", json!({"path": dir.join("first.solidcraft")})).unwrap();
+        }
+        send(&mut app, &ctx, "open another design and add a box".into());
+        let active = app.agent_chat.turn.as_ref().unwrap().active.clone();
+        if !blank {
+            assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(20.0))["ok"], true);
+            assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(40.0))["ok"], true);
+        }
+        let response =
+            chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "doc.open", "params": {"path": path}, "allow_paths": [dir]}));
+        assert_eq!(response["ok"], true, "{response}");
+        assert!(app.agent_chat.backend.is_some(), "opening the file must carry the initiating chat");
+        assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(app.docs.count(), if blank { 1 } else { 2 });
+        if !blank {
+            let response = chat_tool(
+                &mut app,
+                &tx,
+                &ctx,
+                "engine.execute",
+                json!({
+                    "command": "doc.open", "params": {"path": dir.join("first.solidcraft")}, "allow_paths": [dir]
+                }),
+            );
+            assert_eq!(response["ok"], false, "another tab must keep its own conversation: {response}");
+            assert!(response["error"].as_str().unwrap().contains("already open in another tab"));
+            assert_eq!(app.docs.active, 1);
+        }
+        assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(130.0))["ok"], true);
+        assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(150.0))["ok"], true);
+        assert_eq!(app.session.doc.features.len(), 3);
+        ended(&script, "");
+        poll(&mut app, &ctx);
+        assert!(!script.calls().iter().any(|call| matches!(call.as_str(), "cancel" | "new_session")));
+        assert_eq!(app.session.undo.len(), 1);
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(app.session.doc.features.len(), 1, "the opened design's existing body survives undo");
+        if !blank {
+            crate::documents::switch(&mut app, 0);
+            assert_eq!(app.session.doc.features.len(), 3);
+            assert_eq!(app.session.undo.len(), 2, "the first design keeps its own grouped agent edits");
+            app.run("edit.undo", json!({})).unwrap();
+            assert_eq!(app.session.doc.features.len(), 1);
+            assert!(app.agent_chat.backend.is_none(), "the endpoint moved with the conversation");
+            crate::documents::switch(&mut app, 1);
+            assert!(app.agent_chat.backend.is_some());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn an_agents_failed_new_design_batch_restores_its_undo_boundary() {
+    let (mut app, script, ctx) = app_with_script();
+    let (tx, rx) = channel();
+    app.agent_chat.tools_rx = Some(rx);
+    app.preferences.ai_permissions = agents::Mode::All;
+    app.run("solid.box", boxed(0.0)["params"].clone()).unwrap();
+    send(&mut app, &ctx, "try another design".into());
+    assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(20.0))["ok"], true);
+    let before = app.session.doc.clone();
+    let response = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.batch",
+        json!({"commands": [
+            {"command": "file.new"},
+            {"command": "sketch.line", "params": {"points": [[0, 0], [10, 10]]}}
+        ]}),
+    );
+    assert_eq!(response["result"]["completed"], 1, "the new design ran before the failure: {response}");
+    assert_eq!(response["result"]["rolled_back"], true);
+    assert!(Arc::ptr_eq(&app.session.doc, &before));
+    assert!(app.agent_chat.backend.is_some());
+    assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", boxed(40.0))["ok"], true);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    assert_eq!(app.session.undo.len(), 2, "edits before and after the failed batch share one turn");
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.features.len(), 1);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_agents_cancelled_open_cannot_replace_the_design_later() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-chat-cancel-open-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("next.solidcraft");
+    solidcraft_engine::Session::default().execute("file.save_as", &json!({"path": path})).unwrap();
+    let (mut app, script, ctx) = app_with_script();
+    let (tx, rx) = channel();
+    app.agent_chat.tools_rx = Some(rx);
+    app.preferences.ai_permissions = agents::Mode::All;
+    app.run("solid.box", boxed(0.0)["params"].clone()).unwrap();
+    let original = app.session.doc.clone();
+    send(&mut app, &ctx, "open another design".into());
+    let (started_tx, started_rx) = channel();
+    let (release_tx, release_rx) = channel();
+    app.file_load.worker_gate = Some((started_tx, release_rx));
+    let reply = ask(&tx, "engine.execute", json!({"command": "doc.open", "params": {"path": path}, "allow_paths": [dir]}));
+    pump_tools(&mut app);
+    app.drain_control(&ctx);
+    started_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    cancel(&mut app);
+    ended(&script, "cancelled");
+    poll(&mut app, &ctx);
+    release_tx.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !app.file_load.idle() && std::time::Instant::now() < deadline {
+        crate::file_load::tick(&mut app, &ctx);
+        std::thread::yield_now();
+    }
+    assert!(app.file_load.idle());
+    assert_eq!(reply.try_recv().unwrap()["ok"], false, "a stopped turn cannot finish its pending open");
+    assert!(Arc::ptr_eq(&app.session.doc, &original));
+    assert_eq!(app.docs.count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn programmatic_replacement_clears_the_conversation_and_invalidates_its_requests() {
     for command in ["file.new", "FILE.NEW"] {

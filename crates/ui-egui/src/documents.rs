@@ -315,6 +315,9 @@ pub(crate) fn reuse_path(app: &mut SolveApp, path: &str) -> Result<bool, String>
         app.docs.slots.iter().position(|s| s.as_ref().is_some_and(|s| matches(&s.session)))
     };
     let Some(index) = index else { return Ok(false) };
+    if app.agent_chat.following_document && index != app.docs.active {
+        return Err("the design is already open in another tab; select that tab to continue in its own conversation".into());
+    }
     if app.file_picker_busy() {
         return Err("finish choosing a file before switching designs".into());
     }
@@ -354,7 +357,7 @@ pub fn open_tab(app: &mut SolveApp, session: Session) -> Result<(), String> {
     }
     let at = app.docs.active + 1;
     app.docs.slots.insert(at, Some(DocSlot::new(session)));
-    switch(app, at);
+    crate::agent_chat::follow_new_tab(app, |app| switch(app, at));
     app.fit_view();
     Ok(())
 }
@@ -370,12 +373,12 @@ pub fn active_is_blank(app: &SolveApp) -> bool {
 pub fn adopt(app: &mut SolveApp, session: Session) {
     if active_is_blank(app) {
         let rev = app.session.revision;
-        reset_chat(app);
         crate::dialogs::cancel(app);
         app.tool = None;
         crate::design_properties::close_object(app);
         crate::sketch_attachment_ui::clear(app);
         app.session.replace_design(session);
+        reset_chat(app);
         // The blank design's record of its links goes with it; the new one's start now.
         app.docs.link_stamps.clear();
         crate::render_workspace::reset_document(app);
@@ -493,8 +496,12 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
     }
 }
 
-/// A replacement design starts a fresh conversation while retaining the window's chat services.
+/// A replacement starts a fresh conversation, unless the current chat itself requested it.
 pub(crate) fn reset_chat(app: &mut SolveApp) {
+    if app.agent_chat.following_document {
+        crate::agent_chat::continue_in_document(app);
+        return;
+    }
     // A chat not asked anything yet (an agent connected at start, say) holds nothing of the old
     // design: it starts over in place, and its agent stays connected.
     if !app.agent_chat.items.iter().any(|i| matches!(i, crate::agent_chat::Item::User { .. })) {
