@@ -406,12 +406,32 @@ impl SolveApp {
     /// is taken care of; `Some`: it runs here (no threads).
     fn answer_on_a_copy(&mut self, req: ControlRequest, id: &'static str, params: Value) -> Option<ControlRequest> {
         let Ok(scope) = crate::control::request_scope(self, &req.params) else { return Some(req) };
+        // The request's own level (#9184) checks it on the copy, and the reply says so, as
+        // `control::handle` does; a word that is no level is refused there.
+        let Ok(level) = crate::control::request_param_check(&req.method, &req.params) else { return Some(req) };
         let mut copy = self.session.scratch();
+        if let Some(level) = level {
+            copy.param_check = level;
+        }
+        // The copy has no history and no file (#9624): an inspection reports the design's own.
+        let s = &self.session;
+        let own = (id == "document.inspect").then(|| (s.undo.len(), s.redo.len(), s.path.clone()));
         let rx = spawn(scope, move || {
-            Some(match copy.execute(id, &params) {
-                Ok(v) => json!({"ok": true, "result": v}),
+            let mut reply = match copy.execute(id, &params) {
+                Ok(mut v) => {
+                    if let (Some((undo, redo, path)), Some(o)) = (own, v.as_object_mut()) {
+                        o.insert("undo".into(), json!(undo));
+                        o.insert("redo".into(), json!(redo));
+                        o.insert("path".into(), json!(path));
+                    }
+                    json!({"ok": true, "result": v})
+                }
                 Err(e) => json!({"ok": false, "error": e.to_string()}),
-            })
+            };
+            if let Some(level) = level {
+                reply["param_check"] = json!(level.name());
+            }
+            Some(reply)
         });
         let Some(rx) = rx else { return Some(req) };
         let job = ControlJob { label: label(self, id), req, work: Work::Answer, done: rx, started: crate::now_ms(), steps: None };

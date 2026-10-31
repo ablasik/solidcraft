@@ -828,7 +828,7 @@ pub fn sketch_shown(s: &Session, id: u64) -> bool {
     if s.active_sketch == Some(id) || s.feature_edit_sketch == Some(id) {
         return true;
     }
-    if !sketch_component_visible(s, id) || s.feature_folder_hidden(id, "sketches") {
+    if !s.feature_placement_visible(id) || s.feature_folder_hidden(id, "sketches") {
         return false;
     }
     if s.doc
@@ -845,31 +845,18 @@ pub fn sketch_shown(s: &Session, id: u64) -> bool {
     v.shown_sketches.contains(&id) || !sketch_consumed(s, id)
 }
 
-/// Is the placement a sketch is drawn at shown (the active one while its component is being
-/// edited, else the component's first)?
-fn sketch_component_visible(s: &Session, id: u64) -> bool {
-    if s.visibility.hidden_occurrences.is_empty() {
-        return true;
-    }
-    let component = s.doc.feature(id).map_or(0, |f| f.component);
-    if component == 0 {
-        return true;
-    }
-    let path = match &s.active_occurrence_path {
-        Some(p) if s.active_component == component => p.clone(),
-        _ => s.doc.first_path(component),
-    };
-    s.occurrence_visible(&path)
-}
-
 /// Is a sketch used by a later feature? A sheet metal base or contour flange uses its sketch as
 /// an Extrude does: shown, its lines lie on the sheet's edges and take the clicks meant for
-/// them (#6804).
+/// them (#6804). So does a Hole at sketch points: shown, its points are drawn in the holes
+/// (#9082). A Single hole snapped to one point (#2110) does not: it was placed on a face, not
+/// built from the sketch, and hiding the sketch would take its other points from the next
+/// Single hole's snap.
 pub fn sketch_consumed(s: &Session, id: u64) -> bool {
-    use solidcraft_doc::FeatureKind;
+    use solidcraft_doc::{FeatureKind, SketchPoints};
     s.doc.features.iter().any(|f| {
         matches!(f.kind, FeatureKind::Extrude { sketch, .. } | FeatureKind::Revolve { sketch, .. }
-            | FeatureKind::SheetBase { sketch, .. } | FeatureKind::SheetContour { sketch, .. } if sketch == id)
+            | FeatureKind::SheetBase { sketch, .. } | FeatureKind::SheetContour { sketch, .. }
+            | FeatureKind::Hole { points: Some(SketchPoints { sketch, single: false, .. }), .. } if sketch == id)
     })
 }
 

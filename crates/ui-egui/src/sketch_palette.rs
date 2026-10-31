@@ -106,6 +106,9 @@ pub fn toggle_construction(app: &mut SolveApp) {
 
 /// Curves a drawing command just made take the drawing line type.
 pub fn apply_mode(app: &mut SolveApp, id: &str, result: &Value) {
+    if solidcraft_engine::cmd::construction_line_mode(id).is_some() {
+        return;
+    }
     let m = mode(app);
     if m == 0 || !solidcraft_engine::find_command(id).is_some_and(|c| c.tab == "SKETCH" && c.panel == "CREATE") {
         return;
@@ -695,6 +698,33 @@ mod tests {
             h.settle();
             assert!(h.app.session.active_sketch.is_none(), "Finish Sketch must work at scale{scale} height{height}");
             assert_eq!(h.app.session.doc.to_json(), baseline);
+        }
+    }
+
+    /// The pane is placed from the viewport's right edge. At a fractional display scale (Windows
+    /// at 125 %) it hopped a physical pixel back and forth on every repaint the pointer caused,
+    /// most visibly docked against the window's edge (#9457).
+    #[test]
+    fn pane_stays_still_while_the_pointer_moves_at_fractional_scale() {
+        for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            for (scale, width, height) in [(1.0, 1600.0, 1000.0), (1.25, 1536.0, 921.6), (1.25, 1522.4, 904.8), (1.5, 1280.0, 800.0)] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.ui.layout = layout;
+                h.call("ui.resize", json!({"width":width,"height":height}));
+                h.call("ui.prefs", json!({"ui_scale":scale}));
+                h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+                h.app.run("sketch.line", json!({"points":[[0,0],[30,0],[30,20]],"closed":false})).unwrap();
+                h.app.start("sketch.line");
+                h.settle();
+                let mut seen = Vec::new();
+                for i in 0..8 {
+                    h.app.synthetic.push(egui::Event::PointerMoved(egui::pos2(400.0 + i as f32 * 7.3, 400.0 + i as f32 * 3.1)));
+                    h.frame();
+                    let pane = h.app.viewport.palette_rect.expect("the pane is shown while sketching");
+                    seen.push((pane, crate::scenario::rect_of("sketch_palette:finish")));
+                }
+                assert!(seen.windows(2).all(|w| w[0] == w[1]), "{layout:?} at scale {scale}, {width}x{height}: the pane moved: {seen:?}");
+            }
         }
     }
 

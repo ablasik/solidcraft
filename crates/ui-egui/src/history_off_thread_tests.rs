@@ -682,6 +682,79 @@ fn a_measure_reads_a_copy_off_the_window_thread_preference_or_not() {
     assert_eq!(h.app.session.log.len(), log, "a reading leaves no echo: {:?}", h.app.session.log);
 }
 
+/// #9624: an inspection read on a copy reports the design's undo and redo counts and its file,
+/// as one run here does; the copy has no history and no file, and it said undo 0, redo 0, path
+/// none, so an agent could not tell how far to roll back a failed batch.
+#[test]
+fn an_inspection_on_a_copy_reports_the_history_and_the_file() {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    h.app.apply_off_thread = Some(Duration::ZERO);
+    let (tx, rx) = std::sync::mpsc::channel();
+    h.app.control_rx = Some(rx);
+    let inspect = |h: &mut Harness| {
+        let reply = ask(&tx, "document.inspect", json!({}));
+        h.frames(1);
+        assert_eq!(h.app.control_answering.len(), 1, "read a copy");
+        let r = reply_to(h, &reply);
+        assert_eq!(r["ok"], true, "{r}");
+        let here = h.app.run("document.inspect", json!({})).unwrap();
+        for key in ["undo", "redo", "path"] {
+            assert_eq!(r["result"][key], here[key], "{key}: {r}");
+        }
+        (r["result"]["undo"].clone(), r["result"]["redo"].clone(), r["result"]["path"].clone())
+    };
+    for corner in [[0, 0, 0], [20, 0, 0]] {
+        h.app.run("solid.box", json!({"corner": corner, "length": 10, "width": 10, "height": 10})).unwrap();
+    }
+    assert_eq!(inspect(&mut h), (json!(2), json!(0), json!(null)));
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(inspect(&mut h), (json!(1), json!(1), json!(null)));
+    let path = h.dir.join("boxes.solidcraft");
+    h.app.run("file.save_as", json!({"path": path})).unwrap();
+    let (undo, redo, saved) = inspect(&mut h);
+    assert_eq!((undo, redo), (json!(1), json!(1)));
+    assert_eq!(saved, json!(h.app.session.path), "the file it was saved to");
+    assert!(saved.as_str().is_some_and(|p| p.ends_with("boxes.solidcraft")), "{saved}");
+}
+
+/// A reading on a copy keeps the request's own `param_check` (#9184), as one run here does: its
+/// reply says the level, and a word that is no level is refused.
+#[test]
+fn a_reading_on_a_copy_keeps_the_requests_param_check() {
+    let (mut h, tx) = agent_harness();
+    let measure = ask(&tx, "engine.execute", json!({"command": "inspect.measure", "params": {}, "param_check": "strict"}));
+    h.frames(1);
+    assert_eq!(h.app.control_answering.len(), 1, "read a copy");
+    let r = reply_to(&mut h, &measure);
+    assert_eq!((&r["ok"], &r["param_check"]), (&json!(true), &json!("strict")), "{r}");
+    let loud = ask(&tx, "engine.execute", json!({"command": "inspect.measure", "params": {}, "param_check": "loud"}));
+    let r = reply_to(&mut h, &loud);
+    assert!(r["ok"] == false && r["error"].as_str().is_some_and(|e| e.contains("`param_check` must be off, warn or strict")), "{r}");
+    // A design change computed ahead off the window thread runs here at the request's level.
+    let features = h.app.session.doc.features.len();
+    let misspelt = |level: &str| {
+        let mut call = second_hole();
+        call["params"]["operaton"] = json!("cut");
+        call["param_check"] = json!(level);
+        call
+    };
+    let strict = ask(&tx, "engine.execute", misspelt("strict"));
+    h.frames(1);
+    assert!(h.app.agent_computing().is_some(), "computed ahead off the window thread");
+    let r = reply_to(&mut h, &strict);
+    assert_eq!((&r["ok"], &r["param_check"]), (&json!(false), &json!("strict")), "{r}");
+    assert_eq!(h.app.session.doc.features.len(), features, "refused unrun");
+    let warn = ask(&tx, "engine.execute", misspelt("warn"));
+    let r = reply_to(&mut h, &warn);
+    assert_eq!(
+        (&r["param_check"], &r["result"]["param_warnings"]),
+        (&json!("warn"), &json!(["unknown key `operaton`; did you mean `operation`?"])),
+        "{r}"
+    );
+    assert_eq!(h.app.session.param_check, solidcraft_engine::schema::ParamCheck::Off, "the app's own level again");
+}
+
 /// A clearance or interference check of every pair of bodies reads a copy off the window thread
 /// too: on an assembly of 150 bodies it computed for minutes with the window not responding. The
 /// answers are the ones running it here gives.

@@ -41,13 +41,12 @@ pub struct DocSlot {
 #[derive(Clone, Debug, Default)]
 struct DocView {
     render: crate::render_workspace::ViewState,
-    /// Bodies and components copied or cut in this design: their names and paths mean nothing
+    /// Bodies, components and features copied or cut in this design: their names and paths mean nothing
     /// in another one (copied features stay with the session the same way). Another design
     /// pastes them from `SolveApp::foreign_copy`.
     copied_bodies: Vec<String>,
     copied_placements: Vec<Vec<u64>>,
-    cut_bodies: Vec<String>,
-    cut_placements: Vec<Vec<u64>>,
+    cut: crate::edit_clipboard::CutSet,
     /// `SolveApp::own_clipboard_stamp`.
     own_clipboard_stamp: u64,
 }
@@ -117,8 +116,7 @@ fn take_view(app: &mut SolveApp) -> DocView {
         render: std::mem::take(&mut app.render_workspace.view),
         copied_bodies: std::mem::take(&mut app.copied_bodies),
         copied_placements: std::mem::take(&mut app.copied_placements),
-        cut_bodies: std::mem::take(&mut app.cut_bodies),
-        cut_placements: std::mem::take(&mut app.cut_placements),
+        cut: std::mem::take(&mut app.cut),
         own_clipboard_stamp: app.own_clipboard_stamp,
     }
 }
@@ -130,8 +128,7 @@ fn put_view(app: &mut SolveApp, v: DocView) {
     crate::render_workspace::sync_backend(app);
     app.copied_bodies = v.copied_bodies;
     app.copied_placements = v.copied_placements;
-    app.cut_bodies = v.cut_bodies;
-    app.cut_placements = v.cut_placements;
+    app.cut = v.cut;
     app.own_clipboard_stamp = v.own_clipboard_stamp;
     crate::edit_clipboard::drop_stale(app);
 }
@@ -381,11 +378,13 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.session.replace_design(session);
         // The blank design's record of its links goes with it; the new one's start now.
         app.docs.link_stamps.clear();
-        crate::linked_source::note_unread(app);
         crate::render_workspace::reset_document(app);
         app.session.invalidate_view(rev);
         app.cam = Camera::default();
         app.fit_view();
+        // The linked designs that changed while it was closed are read again (#9739): last, as a
+        // read is taken up only by the design revision it started from.
+        crate::linked_source::update_changed(app);
     } else if let Err(e) = open_tab(app, session) {
         app.set_status(e, true);
     }

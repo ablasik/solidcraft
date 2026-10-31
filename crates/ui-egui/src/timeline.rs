@@ -406,17 +406,37 @@ pub(crate) fn status_text(name: &str, ty: &str, error: Option<&str>, warning: Op
 /// it isn't built then.
 pub(crate) fn feature_status(app: &SolveApp, id: u64) -> Option<Status> {
     let index = app.session.doc.feature_index(id)?;
+    status_at(app, index, || app.session.model.result(id))
+}
+
+/// The mark of the feature at `index` in the history, given how to find its result.
+fn status_at<'a>(app: &SolveApp, index: usize, result: impl FnOnce() -> Option<&'a solidcraft_engine::doc::FeatureResult>) -> Option<Status> {
     let feature = app.session.doc.features.get(index)?;
     if feature.suppressed || app.session.doc.marker.is_some_and(|marker| index >= marker) {
         return None;
     }
-    let result = app.session.model.result(id)?;
+    let result = result()?;
     if result.error.is_some() { Some(Status::Error) } else { result.warning.as_ref().map(|_| Status::Warning) }
 }
 
 /// The worst mark among `ids`, with the message of the first feature that has it.
 pub(crate) fn worst_status(app: &SolveApp, ids: &[u64]) -> (Option<Status>, Option<String>) {
-    let worst = ids.iter().filter_map(|id| feature_status(app, *id).map(|status| (status, *id))).reduce(|a, b| if b.0 > a.0 { b } else { a });
+    let mark = |status: Option<Status>, id: &u64| status.map(|status| (status, *id));
+    // A long folder finds each feature's place and result in tables built once: a search per
+    // feature made a folded long history cost the square of its length every frame. A short
+    // one searches, which costs less than building the tables.
+    let marks: Vec<(Status, u64)> = if ids.len() < 16 {
+        ids.iter().filter_map(|id| mark(feature_status(app, *id), id)).collect()
+    } else {
+        let places: std::collections::HashMap<u64, usize> = app.session.doc.features.iter().enumerate().rev().map(|(i, f)| (f.id, i)).collect();
+        let results = result_index(&app.session.model.results);
+        let status = |id: &u64| {
+            let index = *places.get(id)?;
+            status_at(app, index, || results.get(id).and_then(|k| app.session.model.results.get(*k)))
+        };
+        ids.iter().filter_map(|id| mark(status(id), id)).collect()
+    };
+    let worst = marks.into_iter().reduce(|a, b| if b.0 > a.0 { b } else { a });
     match worst {
         Some((status, id)) => (Some(status), feature_message(app, id)),
         None => (None, None),
@@ -910,7 +930,19 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     ui.scroll_to_rect(br, Some(egui::Align::Center));
                 }
                 crate::scenario::publish_handle(&format!("timeline:{name}"), br.center());
-                let resp = ui.interact(br, ui.id().with(("feat", *id)), Sense::click_and_drag());
+                // A chip scrolled out of the strip is neither drawn nor interactive: a long
+                // history drew every chip each frame. Its slot above still places the marker and drops.
+                // One being dragged or focused, or under an open menu, stays alive until that ends.
+                let chip_id = ui.id().with(("feat", *id));
+                if !ui.clip_rect().intersects(br)
+                    && drag != Some(Drag::Feature(*id))
+                    && !ui.memory(|m| m.has_focus(chip_id))
+                    && !egui::Popup::is_any_open(ui.ctx())
+                {
+                    x += 32.0;
+                    continue;
+                }
+                let resp = ui.interact(br, chip_id, Sense::click_and_drag());
                 // A feature without a result has none; an index that no longer holds this id (a
                 // command run from an earlier chip evaluated again) is searched for.
                 let res =
@@ -967,6 +999,8 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                         select_range(app, &order, *id, modifiers.command || modifiers.ctrl);
                     } else if modifiers.command || modifiers.ctrl {
                         toggle_feature(app, *id);
+                    } else if !modifiers.any() && crate::browser::pick_sketch_into_dialog(app, *id) {
+                        // Extrude, Revolve or Emboss took every profile of the sketch (#6106).
                     } else {
                         select_one(app, *id);
                     }
@@ -1624,6 +1658,50 @@ mod tests {
         assert_eq!(moved.y, first.y);
     }
 
+    /// A long timeline paints only the chips in view, and those past the window still keep their
+    /// places: scrolled into view, the last one is drawn where its handle says.
+    #[test]
+    fn a_long_timeline_paints_only_the_chips_in_view() {
+        let mut h = Harness::new();
+        for i in 0..200 {
+            h.app.run("sketch.create", json!({"plane": "XY", "name": format!("S{i}")})).unwrap();
+            h.app.run("sketch.finish", json!({})).unwrap();
+        }
+        h.frames(4);
+        let width = h.app.shell.history.unwrap().right();
+        // Past the window, only the history marker at the end of the strip.
+        let past = |h: &Harness| {
+            let marker = crate::scenario::rect_of("history:marker").unwrap().expand(2.0);
+            let drawn = h.shapes.iter().map(|s| s.shape.visual_bounding_rect()).filter(|r| r.is_finite());
+            drawn.filter(|r| r.left() > width && !marker.contains_rect(*r)).count()
+        };
+        assert!(crate::scenario::handle_at("timeline:S199").unwrap().x > width, "the last chip starts past the window");
+        assert_eq!(past(&h), 0, "nothing is painted past the window");
+        let found = h.app.session.doc.find_feature("S199").unwrap().id;
+        h.app.tree.timeline_reveal = Some(found);
+        h.frames(30);
+        let last = crate::scenario::handle_at("timeline:S199").unwrap();
+        assert!(h.app.shell.history.unwrap().contains(last), "the last chip scrolled into view: {last:?}");
+        h.step(&json!({"click": {"handle": "timeline:S199"}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.session.selection, [solidcraft_engine::Sel::Feature { id: found }], "the drawn chip is the one clicked");
+
+        // Scrolled to the end, the chips out of view on the left still hold their slots.
+        let target = crate::scenario::handle_at("timeline:S180").unwrap();
+        let marker = crate::scenario::rect_of("history:marker").unwrap().center();
+        h.step(&json!({"drag": [[marker.x, marker.y], [target.x - 12.0, target.y]]})).unwrap();
+        h.settle();
+        assert_eq!(h.app.session.doc.marker, Some(180), "the marker dropped before S180");
+        h.app.run("timeline.roll_to", json!({})).unwrap();
+        h.settle();
+
+        // A range picked across chips out of view takes every feature between its ends.
+        h.app.tree.timeline_reveal = h.app.session.doc.find_feature("S0").map(|f| f.id);
+        h.frames(30);
+        h.step(&json!({"click": {"handle": "timeline:S0"}, "shift": true})).unwrap();
+        assert_eq!(super::selected_feature_ids(&h.app).len(), 200);
+    }
+
     /// Find in Timeline on the last body of a history longer than the timeline scrolls its
     /// feature into view, in the bottom strip and in the history on the left (#5850).
     #[test]
@@ -1815,6 +1893,58 @@ mod tests {
         twice.push(copy);
         let index = super::result_index(&twice);
         assert_eq!(index.get(&twice[first].id), Some(&first), "the first result of an id wins, as in Model::result");
+    }
+
+    /// A folder's mark is the worst of its features' own, searched for a short folder and found
+    /// in tables for a long one: an error over warnings, the message of the first feature with
+    /// the worst, none for a feature suppressed or rolled back, and a feature listed twice in the
+    /// history found at its first place.
+    #[test]
+    fn a_folders_mark_is_the_worst_of_its_features_own() {
+        use crate::ui_kit::Status;
+        let mut h = two_boxes(false);
+        let third =
+            json!({"length": 10, "width": 10, "height": 10, "corner": [40, 0, 0], "operation": "new_body", "name": "Third", "body_name": "Three"});
+        h.app.run("solid.box", third).unwrap();
+        h.frames(2);
+        let ids: Vec<u64> = h.app.session.doc.features.iter().map(|f| f.id).collect();
+        assert_eq!(ids.len(), 3);
+        let (a, b, c) = (ids[0], ids[1], ids[2]);
+        for (id, error, warning) in [(a, None, Some("a")), (b, Some("b"), None), (c, None, Some("c"))] {
+            let result = h.app.session.model.results.iter_mut().find(|r| r.id == id).unwrap();
+            result.error = error.map(str::to_string);
+            result.warning = warning.map(str::to_string);
+        }
+        let own = |h: &Harness, ids: &[u64]| {
+            let worst = ids.iter().filter_map(|id| super::feature_status(&h.app, *id).map(|s| (s, *id))).reduce(|a, b| if b.0 > a.0 { b } else { a });
+            (worst.map(|w| w.0), worst.and_then(|w| super::feature_message(&h.app, w.1)))
+        };
+        // Every folder short enough to be searched, then the same repeated past the length that
+        // builds the tables.
+        let check = |h: &Harness, folder: &[u64], status: Option<Status>, of: Option<u64>, why: &str| {
+            for ids in [folder.to_vec(), folder.repeat(16)] {
+                let found = super::worst_status(&h.app, &ids);
+                assert_eq!(found, (status, of.and_then(|id| super::feature_message(&h.app, id))), "{why}, {} ids", ids.len());
+                assert_eq!(found, own(h, &ids), "{why}, {} ids", ids.len());
+            }
+        };
+        check(&h, &ids, Some(Status::Error), Some(b), "the error outweighs the warnings");
+        check(&h, &[a, c], Some(Status::Warning), Some(a), "the first warned feature's message");
+        check(&h, &[c, a], Some(Status::Warning), Some(c), "the first in the folder, not in the history");
+        check(&h, &[], None, None, "an empty folder");
+        check(&h, &[u64::MAX], None, None, "an id outside the history");
+
+        let mut twice = h.app.session.doc.features[0].clone();
+        twice.suppressed = true;
+        std::sync::Arc::make_mut(&mut h.app.session.doc).features.push(twice);
+        check(&h, &[a], Some(Status::Warning), Some(a), "a feature listed twice is found at its first place");
+        std::sync::Arc::make_mut(&mut h.app.session.doc).features.pop();
+
+        std::sync::Arc::make_mut(&mut h.app.session.doc).marker = Some(1);
+        check(&h, &ids, Some(Status::Warning), Some(a), "the features after the marker have no mark");
+        std::sync::Arc::make_mut(&mut h.app.session.doc).marker = None;
+        std::sync::Arc::make_mut(&mut h.app.session.doc).features[1].suppressed = true;
+        check(&h, &ids, Some(Status::Warning), Some(a), "a suppressed feature has none");
     }
 
     #[test]

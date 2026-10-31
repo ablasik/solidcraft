@@ -1006,6 +1006,22 @@ fn pattern_count_units_explain_how_to_use_a_parameter() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// #9015: in an inch design, pattern spacing `baseLength - 1` subtracts one inch, not one mm.
+#[test]
+fn pattern_spacing_bare_offsets_follow_design_units() {
+    let mut s = Session::default();
+    run(&mut s, "document.units", json!({"units": "in"}));
+    run(&mut s, "parameters.add", json!({"name": "baseLength", "expression": "4"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Seed"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["Seed"], "dir1": [1, 0, 0], "count1": 2, "spacing1": "baseLength - 1"}));
+    assert_eq!(s.model.state().bodies.len(), 2);
+    // Spacing is 3 in = 76.2 mm (not 3 mm): the seed is 10 in, so the copy starts at x = 76.2.
+    let m = run(&mut s, "inspect.measure", json!({}));
+    let bodies = m["bodies"].as_array().expect("bodies");
+    let xmin = |b: &Value| b["bbox"]["min"][0].as_f64().unwrap_or(0.0);
+    assert!(bodies.iter().any(|b| (xmin(b) - 76.2).abs() < 1e-6), "expected a copy spaced 3 in apart, got {m}");
+}
+
 #[test]
 fn pattern_count_fractions_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     let mut s = Session::default();
