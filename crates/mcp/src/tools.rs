@@ -15,6 +15,8 @@ const MAX_BATCH: usize = 10_000;
 const MAX_IMAGE_BYTES: usize = 32 << 20;
 
 const VIEWS: &[&str] = &["iso", "home", "front", "back", "top", "bottom", "left", "right", "fit"];
+/// What `check_parameters` can report.
+const REPORTS: &[&str] = &["measure", "cylinders", "errors"];
 
 fn obj(props: Value, required: &[&str]) -> Value {
     let mut o = json!({"type": "object", "properties": props, "additionalProperties": false});
@@ -197,6 +199,34 @@ pub fn tool_definitions() -> Vec<Value> {
                     "comment": string("Comment shown in the parameters table"),
                 }),
                 &["name"],
+            ),
+            Effect::Edits,
+        ),
+        tool(
+            "check_parameters",
+            "Try parameter values",
+            "Try parameter values without keeping them: set every parameter in `set` with one rebuild, report what `report` \
+             asks for, and put the design back exactly as it was (undo history included). `measure`: volume, bbox, bodies and \
+             faces per body as the measure tool reports them; `errors`: the features that fail or warn and the parameters that \
+             don't evaluate; `cylinders`: every cylindrical face as {body, radius, origin, axis, faces, name}, the halves the \
+             kernel splits one cylinder into merged (origin is the axis point closest to the world origin). The reply ends with \
+             `restored: true`; if the design could not be put back the call is an error with `restored: false` and the values \
+             still applied. An unknown parameter name is an error and nothing changes. Replaces the loop set_parameter, \
+             measure, body_topology, set_parameter back.",
+            obj(
+                json!({
+                    "set": {
+                        "type": "object",
+                        "description": "Values to try, by parameter name: a number (mm) or an expression (\"140 mm\", \"wall * 2\"), as set_parameter's `value`",
+                        "additionalProperties": {"type": ["number", "string"]},
+                    },
+                    "report": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": REPORTS},
+                        "description": "What to report: measure, cylinders, errors (default all three)",
+                    },
+                }),
+                &["set"],
             ),
             Effect::Edits,
         ),
@@ -418,6 +448,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Value {
     let r = match name {
         "screenshot" => return screenshot(b, a),
         "batch" => return batch(b, a),
+        "check_parameters" => return check_parameters(b, a),
         _ => dispatch(b, name, a),
     };
     match r {
@@ -646,6 +677,7 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<String>), String> {
         "body_topology" => Err("`body_topology` is a tool, not a command: in a batch use model.edges {body} and model.faces {body}".into()),
         "screenshot" => Err("`screenshot` is a tool, not a command: call it after the batch".into()),
         "batch" => Err("batches don't nest: put the steps in this batch".into()),
+        "check_parameters" => Err("`check_parameters` is a tool, not a command: call it on its own (it puts the design back itself)".into()),
         "pending" => Err("`pending` is a tool, not a command: call it on its own".into()),
         "running" => Err("`running` is a tool, not a command: call it on its own".into()),
         "skill_reference" => Err("`skill_reference` is a tool, not a command: call it on its own".into()),
@@ -658,6 +690,7 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<String>), String> {
 const TOOL_STEPS: &[&str] = &[
     "batch",
     "body_topology",
+    "check_parameters",
     "crash_reports",
     "describe_command",
     "execute",
@@ -1013,6 +1046,235 @@ fn compact(mut v: Value) -> Value {
         }
     }
     v
+}
+
+/// `check_parameters`: try parameter values and put the design back (#3380). The checkpoint is
+/// taken before anything changes; whatever happens after it, the design is restored, and a
+/// restore that fails is an error saying the values are still in. Every agent session that
+/// changed a parameter to see its effect spent three to five calls on this loop, and one saved
+/// the design with the test values still in it.
+fn check_parameters(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
+    let (changes, reports) = match check_parameters_args(a) {
+        Ok(x) => x,
+        Err(e) => return text_result(&Value::String(e), true),
+    };
+    // A name the design has no parameter of is refused before the checkpoint, so nothing
+    // changes: `parameters.change` would make one.
+    if let Err(e) = known_parameters(b, &changes) {
+        return text_result(&Value::String(e), true);
+    }
+    let Some(id) = exec(b, "edit.checkpoint", json!({})).ok().and_then(|v| v["checkpoint"].as_u64()) else {
+        let e = "check_parameters: this app has no edit.checkpoint to put the design back with; use set_parameter and measure, and set the values back yourself";
+        return text_result(&json!(e), true);
+    };
+    let outcome = try_parameters(b, &changes, &reports);
+    let restore = exec(b, "edit.restore_checkpoint", json!({"checkpoint": id}));
+    match (outcome, restore) {
+        (Ok(mut reply), Ok(_)) => {
+            reply["restored"] = json!(true);
+            text_result(&reply, false)
+        }
+        (Err(e), Ok(_)) => text_result(&json!({"error": e, "restored": true, "note": "the design is back as it was"}), true),
+        (outcome, Err(restore_error)) => {
+            let mut reply = match outcome {
+                Ok(r) => r,
+                Err(e) => json!({"error": e}),
+            };
+            reply["restored"] = json!(false);
+            reply["restore_error"] = json!(restore_error);
+            reply["note"] = json!(
+                "THE DESIGN STILL HOLDS THE TRIED VALUES: the checkpoint could not be restored. Set them back with set_parameter (or undo) before saving"
+            );
+            text_result(&reply, true)
+        }
+    }
+}
+
+/// `check_parameters`'s arguments, checked before anything is sent: the values to try (a
+/// number or an expression each, as `set_parameter` takes its `value`) and what to report.
+fn check_parameters_args(a: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<&'static str>), String> {
+    let set = a.get("set").and_then(Value::as_object).ok_or("check_parameters: `set` must be an object of parameter name: value")?;
+    if set.is_empty() {
+        return Err("check_parameters: `set` is empty; give at least one parameter name: value".into());
+    }
+    let mut changes = Map::new();
+    for (name, v) in set {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("check_parameters: a parameter name in `set` is empty".into());
+        }
+        if !matches!(v, Value::Number(_) | Value::String(_)) {
+            let shown: String = name.chars().take(64).collect();
+            return Err(format!("check_parameters: `set.{shown}` must be a number (mm) or an expression, as set_parameter's `value`"));
+        }
+        changes.insert(name.to_string(), v.clone());
+    }
+    let reports = match a.get("report").filter(|r| !r.is_null()) {
+        None => REPORTS.to_vec(),
+        Some(r) => {
+            let items = r.as_array().ok_or("check_parameters: `report` must be an array of measure, cylinders, errors")?;
+            let mut out: Vec<&'static str> = Vec::new();
+            for item in items {
+                let Some(known) = item.as_str().and_then(|s| REPORTS.iter().copied().find(|r| *r == s)) else {
+                    return Err(format!("check_parameters: `report` items must be one of {}", REPORTS.join(", ")));
+                };
+                if !out.contains(&known) {
+                    out.push(known);
+                }
+            }
+            out
+        }
+    };
+    Ok((changes, reports))
+}
+
+/// Refuse a name the design has no parameter of, before anything changes. An app without
+/// `parameters.list` is not asked; the change itself then tells.
+fn known_parameters(b: &mut dyn Backend, changes: &Map<String, Value>) -> Result<(), String> {
+    let Ok(list) = exec(b, "parameters.list", json!({})) else { return Ok(()) };
+    let Some(rows) = list["parameters"].as_array() else { return Ok(()) };
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    let shown = |n: &str| format!("`{}`", n.chars().take(64).collect::<String>());
+    let unknown: Vec<String> = changes.keys().filter(|n| !names.contains(&n.as_str())).map(|n| shown(n)).collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    let user: Vec<String> = rows.iter().filter(|r| r["source"] == "user").filter_map(|r| r["name"].as_str()).take(40).map(shown).collect();
+    let have = if user.is_empty() { "no user parameters".to_string() } else { format!("user parameters {}", user.join(", ")) };
+    Err(format!("check_parameters: no parameter {}; the design has {have} (parameters.list shows every parameter)", unknown.join(", ")))
+}
+
+/// Apply the values and read back what was asked for: what each parameter is now, the
+/// features rebuilt, and the reports.
+fn try_parameters(b: &mut dyn Backend, changes: &Map<String, Value>, reports: &[&str]) -> Result<Value, String> {
+    let (values, recomputed) = apply_parameters(b, changes)?;
+    let mut reply = json!({"set": changes, "values": values, "recomputed": recomputed});
+    // The bodies and each feature's state: one cheap read serves `errors` and `cylinders`.
+    let design = if reports.iter().any(|r| *r != "measure") { Some(b.call("document.inspect", json!({"measure": false}))?) } else { None };
+    for r in reports {
+        match *r {
+            "measure" => reply["measure"] = exec(b, "inspect.measure", json!({}))?,
+            "errors" => {
+                if let Some(d) = &design {
+                    let pick = |key: &str| -> Value {
+                        let rows = d["timeline"].as_array().into_iter().flatten().filter(|f| !f[key].is_null());
+                        Value::Array(rows.map(|f| json!({"feature": f["id"], "name": f["name"], key: f[key]})).collect())
+                    };
+                    reply["errors"] = pick("error");
+                    reply["warnings"] = pick("warning");
+                    let params = d["params"].as_array().into_iter().flatten().filter(|p| !p["error"].is_null());
+                    reply["parameter_errors"] = Value::Array(params.map(|p| json!({"name": p["name"], "error": p["error"]})).collect());
+                }
+            }
+            "cylinders" => {
+                if let Some(d) = &design {
+                    let bodies: Vec<String> =
+                        d["bodies"].as_array().into_iter().flatten().filter_map(|body| body["name"].as_str()).map(str::to_string).collect();
+                    reply["cylinders"] = Value::Array(cylinders(b, &bodies));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(reply)
+}
+
+/// Set the values with one `parameters.change {changes}`, so the design rebuilds once. An app
+/// without `changes` (it asks for `name`, or refuses the key) gets one `parameters.change` per
+/// name instead; any other refusal (an expression that does not evaluate) is the error. Returns
+/// each parameter's value now and the features rebuilt.
+fn apply_parameters(b: &mut dyn Backend, changes: &Map<String, Value>) -> Result<(Map<String, Value>, Value), String> {
+    let combined = solidcraft_engine::batch_params::combined_params(changes);
+    match exec(b, "parameters.change", combined) {
+        Ok(v) => Ok((v["changed"].as_object().cloned().unwrap_or_default(), v["recomputed"].clone())),
+        Err(e) if e.contains("`name`") || e.contains("`changes`") => {
+            let mut values = Map::new();
+            let mut recomputed = 0u64;
+            for (name, expression) in changes {
+                let v = exec(b, "parameters.change", json!({"name": name, "expression": expression}))?;
+                values.insert(name.clone(), v["value"].clone());
+                recomputed += v["recomputed"].as_u64().unwrap_or(0);
+            }
+            Ok((values, json!(recomputed)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Every cylindrical face of these bodies (`model.faces`), the halves one cylinder is split
+/// into merged.
+fn cylinders(b: &mut dyn Backend, bodies: &[String]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for body in bodies {
+        match exec(b, "model.faces", json!({"body": body})) {
+            Ok(f) => out.extend(merge_cylinders(body, f["faces"].as_array().map(Vec::as_slice).unwrap_or(&[]))),
+            Err(e) => out.push(json!({"body": body, "error": e})),
+        }
+    }
+    out
+}
+
+/// One cylinder of a body: the faces on it (one, or the halves a kernel splits it into).
+struct Cylinder {
+    radius: f64,
+    origin: [f64; 3],
+    axis: [f64; 3],
+    faces: Vec<Value>,
+    name: Value,
+    area: f64,
+}
+
+fn vec3(v: &Value) -> Option<[f64; 3]> {
+    let a = v.as_array()?;
+    match (a.first()?.as_f64(), a.get(1)?.as_f64(), a.get(2)?.as_f64()) {
+        (Some(x), Some(y), Some(z)) if x.is_finite() && y.is_finite() && z.is_finite() => Some([x, y, z]),
+        _ => None,
+    }
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The cylindrical faces of one body as cylinders: faces with the same radius on the same
+/// axis line are one cylinder, whatever point on the axis and whichever direction each half
+/// reports. The origin is the axis point closest to the world origin and the axis points so
+/// that its first non-zero component is positive, so the same cylinder reads the same whichever
+/// kernel built it.
+fn merge_cylinders(body: &str, faces: &[Value]) -> Vec<Value> {
+    let mut found: Vec<Cylinder> = Vec::new();
+    for f in faces {
+        let c = &f["cylinder"];
+        let (Some(radius), Some(origin), Some(axis)) = (c["radius"].as_f64(), vec3(&c["origin"]), vec3(&c["axis"])) else { continue };
+        let len = dot(axis, axis).sqrt();
+        if !(radius > 0.0) || !radius.is_finite() || !(len > 0.0) {
+            continue;
+        }
+        let mut axis = axis.map(|x| x / len);
+        if axis.iter().find(|x| x.abs() > 1e-9).is_some_and(|x| *x < 0.0) {
+            // A zero component stays 0.0, not -0.0.
+            axis = axis.map(|x| if x.abs() > 1e-9 { -x } else { 0.0 });
+        }
+        let t = dot(origin, axis);
+        let origin = [origin[0] - t * axis[0], origin[1] - t * axis[1], origin[2] - t * axis[2]];
+        let tol = 1e-4 * radius.max(1.0);
+        let area = f["area"].as_f64().unwrap_or(0.0);
+        let same = |k: &Cylinder| {
+            let d = [k.origin[0] - origin[0], k.origin[1] - origin[1], k.origin[2] - origin[2]];
+            (k.radius - radius).abs() <= tol && dot(k.axis, axis) >= 1.0 - 1e-8 && dot(d, d).sqrt() <= tol
+        };
+        match found.iter_mut().find(|k| same(k)) {
+            Some(k) => {
+                k.faces.push(f["index"].clone());
+                k.area += area;
+            }
+            None => found.push(Cylinder { radius, origin, axis, faces: vec![f["index"].clone()], name: f["name"].clone(), area }),
+        }
+    }
+    found
+        .into_iter()
+        .map(|k| json!({"body": body, "radius": k.radius, "origin": k.origin, "axis": k.axis, "faces": k.faces, "name": k.name, "area": k.area}))
+        .collect()
 }
 
 static SHOT: AtomicU64 = AtomicU64::new(0);

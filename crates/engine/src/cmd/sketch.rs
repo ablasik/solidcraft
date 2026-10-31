@@ -94,7 +94,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SKETCH", "CREATE")
         .icon("circle3")
         .enabled(in_sketch)
-        .params(concat!("p0, p1, p2; construction?: bool", connect_doc!(), created_doc!())),
+        .params(concat!("p0, p1, p2: [x,y] or point ref (a referenced point stays on the circle); construction?: bool", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.arc.three_point", "3-Point Arc", arc_three).at("SKETCH", "CREATE").icon("arc3").enabled(in_sketch).params(concat!("start, end, through: [x,y] or point ref (a referenced through point stays on the arc); construction?: bool", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.arc.center_point", "Center Point Arc", arc_center)
         .at("SKETCH", "CREATE")
@@ -1409,12 +1409,21 @@ pub(super) fn circumcircle(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f64)> {
 
 fn circle_three(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.circle.three_point";
-    let (a, b, c) = (req_vec2(cmd, p, "p0")?, req_vec2(cmd, p, "p1")?, req_vec2(cmd, p, "p2")?);
-    let (o, r) = circumcircle(a, b, c).ok_or_else(|| bad(cmd, "the points are collinear"))?;
-    let (out, info) = draw(s, p, cmd, |sk, _| {
+    let p = &super::sketch_project::snap_points(s, p, cmd)?;
+    let (out, info) = draw(s, p, cmd, |sk, doc| {
+        let (a, b, c) = (req_parg(sk, doc, p, "p0", cmd)?, req_parg(sk, doc, p, "p1", cmd)?, req_parg(sk, doc, p, "p2", cmd)?);
+        let (o, r) = circumcircle(a.pos(), b.pos(), c.pos()).ok_or_else(|| bad(cmd, "the points are collinear"))?;
         let ci = sk.add_circle(o, r, None, None)?;
         mark_construction(sk, &[ci], p);
-        Ok((ids_of(sk, &[ci]), Vec::new()))
+        // A click snapped to a point keeps the circle on it (#9858), as the centre circle's
+        // `through` click does (#3099) and the 3-Point Arc's clicks do.
+        let mut cons = Vec::new();
+        for q in [a, b, c] {
+            if let Some(point) = q.idx() {
+                cons.push(add_c(sk, ConstraintKind::PointOnCurve { p: point, c: ci })?);
+            }
+        }
+        Ok((ids_of(sk, &[ci]), cons))
     })?;
     Ok(result(out, info))
 }

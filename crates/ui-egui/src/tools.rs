@@ -626,7 +626,9 @@ fn run_shape(app: &mut SolveApp, t: &Tool) -> Result<Vec<String>, String> {
             v
         }
         "sketch.circle.two_point" => json!({"p0": xy(&p[0]), "p1": xy(&p[1])}),
-        "sketch.circle.three_point" => json!({"p0": xy(&p[0]), "p1": xy(&p[1]), "p2": xy(&p[2])}),
+        // Each click goes as its snap, as the 3-Point Arc's do: a click snapped to a point or
+        // curve keeps the circle on it (#9858).
+        "sketch.circle.three_point" => json!({"p0": arg(&p[0]), "p1": arg(&p[1]), "p2": arg(&p[2])}),
         "sketch.arc.three_point" => json!({"start": arg(&p[0]), "end": arg(&p[1]), "through": arg(&p[2])}),
         "sketch.arc.center_point" => {
             // A centre snapped to an existing point goes as its place, where `connect` ties

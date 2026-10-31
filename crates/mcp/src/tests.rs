@@ -135,6 +135,7 @@ fn handshake_and_tools_list() {
         "measure",
         "body_topology",
         "set_parameter",
+        "check_parameters",
         "screenshot",
         "export",
         "undo",
@@ -449,6 +450,210 @@ fn set_parameter_takes_value_or_expression() {
         assert!(text.contains("`value`") && text.contains("`expression`"), "{args}: {text}");
     }
     assert!(rel(volume(&mut s), 6000.0) < 1e-9);
+}
+
+/// A box whose length is a parameter and a cylinder standing on it at `len / 2`, so a change
+/// of `len` moves the cylinder's axis.
+fn parametric_box_with_cylinder(s: &mut Server) {
+    tool(&mut *s, "set_parameter", json!({"name": "len", "value": "40 mm"}));
+    tool(
+        &mut *s,
+        "batch",
+        json!({"commands": [
+            {"command": "solid.box", "params": {"length": "len", "width": 30, "height": 20, "corner": [0, 0, 0]}},
+            {"command": "solid.cylinder", "params": {"radius": 5, "height": 10, "base": ["len / 2", 15, 20], "operation": "join"}},
+        ]}),
+    );
+}
+
+fn box_with_cylinder_volume(len: f64) -> f64 {
+    len * 30.0 * 20.0 + PI * 25.0 * 10.0
+}
+
+/// `check_parameters` applies the values with one rebuild, reports the new volume, the
+/// features' state and the moved cylinder axis (its two kernel halves as one cylinder), and
+/// puts the design back: the parameter, the volume and the undo history are as before.
+#[test]
+fn check_parameters_tries_values_and_puts_the_design_back() {
+    let mut s = server();
+    parametric_box_with_cylinder(&mut s);
+    assert!(rel(volume(&mut s), box_with_cylinder_volume(40.0)) < 5e-4);
+    let before = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    let r = tool(&mut s, "check_parameters", json!({"set": {"len": "60 mm"}}));
+    assert_eq!(r["restored"], true, "{r}");
+    assert_eq!(r["values"]["len"], 60.0, "{r}");
+    assert!(r["recomputed"].as_u64().unwrap() >= 1, "{r}");
+    let v = r["measure"]["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(v, box_with_cylinder_volume(60.0)) < 5e-4, "{v}");
+    assert_eq!(r["measure"]["body_count"], 1, "{r}");
+    assert!(r["measure"]["bodies"][0]["faces"].as_u64().unwrap() >= 8, "{r}");
+    assert_eq!((&r["errors"], &r["warnings"], &r["parameter_errors"]), (&json!([]), &json!([]), &json!([])), "{r}");
+    let cyl = r["cylinders"].as_array().unwrap();
+    assert_eq!(cyl.len(), 1, "one cylinder, halves merged: {r}");
+    assert_eq!(cyl[0]["body"], "Body1", "{r}");
+    assert!((cyl[0]["radius"].as_f64().unwrap() - 5.0).abs() < 1e-6, "{r}");
+    let origin: Vec<f64> = cyl[0]["origin"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    let axis: Vec<f64> = cyl[0]["axis"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    assert!((origin[0] - 30.0).abs() < 1e-6 && (origin[1] - 15.0).abs() < 1e-6 && origin[2].abs() < 1e-6, "axis moved to len / 2 = 30: {r}");
+    assert!(axis[0].abs() < 1e-9 && axis[1].abs() < 1e-9 && (axis[2] - 1.0).abs() < 1e-9, "{r}");
+    assert!(!cyl[0]["faces"].as_array().unwrap().is_empty(), "{r}");
+    // The halves' areas add up to the cylinder's (measured on its mesh).
+    assert!(rel(cyl[0]["area"].as_f64().unwrap(), 2.0 * PI * 5.0 * 10.0) < 1e-2, "{r}");
+    // Back as it was: the value, the volume and the undo history (a checkpoint restores it).
+    assert!(rel(volume(&mut s), box_with_cylinder_volume(40.0)) < 5e-4);
+    let after = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert!(after["params"].as_array().unwrap().iter().any(|p| p["name"] == "len" && p["value"] == 40.0 && p["expression"] == "40 mm"), "{after}");
+    assert_eq!(after["undo"], before["undo"], "undo depth: {after}");
+    assert_eq!(after["redo"], before["redo"], "{after}");
+    // Only what was asked for.
+    let r = tool(&mut s, "check_parameters", json!({"set": {"len": 50}, "report": ["measure"]}));
+    assert!(rel(r["measure"]["total"]["volume_mm3"].as_f64().unwrap(), box_with_cylinder_volume(50.0)) < 5e-4, "{r}");
+    assert!(r.get("cylinders").is_none() && r.get("errors").is_none(), "{r}");
+    assert_eq!(r["restored"], true, "{r}");
+    assert!(rel(volume(&mut s), box_with_cylinder_volume(40.0)) < 5e-4);
+    // A value that breaks a feature is reported, not kept.
+    let r = tool(&mut s, "check_parameters", json!({"set": {"len": 0}, "report": ["errors"]}));
+    assert!(!r["errors"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(r["restored"], true, "{r}");
+    assert!(rel(volume(&mut s), box_with_cylinder_volume(40.0)) < 5e-4);
+    let d = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert!(d["timeline"].as_array().unwrap().iter().all(|f| f["error"].is_null()), "{d}");
+}
+
+/// An unknown parameter name, a bad expression or a bad report list is an error that leaves the
+/// design untouched; `set` that is not an object is refused by argument checking; the tool is
+/// annotated as an edit (it changes the design and puts it back) and is not a batch step.
+#[test]
+fn check_parameters_refuses_bad_input_and_changes_nothing() {
+    let mut s = server();
+    parametric_box_with_cylinder(&mut s);
+    let before = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    let r = raw_tool(&mut s, "check_parameters", json!({"set": {"nope": 5}}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("`nope`") && text.contains("`len`"), "{text}");
+    let d = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert_eq!(d["undo"], before["undo"], "{d}");
+    assert!(d["params"].as_array().unwrap().iter().all(|p| p["name"] != "nope"), "{d}");
+    for args in [json!({"set": "len"}), json!({"set": [["len", 5]]}), json!({"set": 5}), json!({"set": {"len": 5}, "report": "measure"}), json!({})] {
+        let r = raw_tool(&mut s, "check_parameters", args.clone());
+        assert_eq!(r["error"]["code"], -32602, "{args}: {r}");
+    }
+    for (args, hint) in [
+        (json!({"set": {}}), "empty"),
+        (json!({"set": {"len": true}}), "`set.len`"),
+        (json!({"set": {"len": null}}), "`set.len`"),
+        (json!({"set": {"": 5}}), "empty"),
+        (json!({"set": {"len": 5}, "report": ["volume"]}), "measure, cylinders, errors"),
+        (json!({"set": {"len": "1 +"}}), "len"),
+        (json!({"set": {"len": "a = 5"}}), "len"),
+    ] {
+        let r = raw_tool(&mut s, "check_parameters", args.clone());
+        assert_eq!(r["result"]["isError"], json!(true), "{args}: {r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap_or_default();
+        assert!(text.contains(hint), "{args}: {text}");
+    }
+    assert!(rel(volume(&mut s), box_with_cylinder_volume(40.0)) < 5e-4);
+    // Untouched: the undo depth and the parameter (the engine's `revision` moves even for a
+    // refused change, so it is not what tells).
+    let d = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert_eq!(d["undo"], before["undo"], "{d}");
+    assert!(d["params"].as_array().unwrap().iter().any(|p| p["name"] == "len" && p["expression"] == "40 mm"), "{d}");
+    // Not a batch step: refused before anything runs.
+    let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "check_parameters", "params": {"set": {"len": 5}}}]}));
+    let body: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["completed"], 0, "{body}");
+    assert!(body["failed"]["error"].as_str().unwrap().contains("check_parameters"), "{body}");
+    let def = tool_definitions().into_iter().find(|d| d["name"] == "check_parameters").unwrap();
+    assert_eq!(def["inputSchema"]["required"], json!(["set"]), "{def}");
+    assert_eq!(def["annotations"]["readOnlyHint"], false, "{def}");
+    assert_eq!(def["annotations"]["destructiveHint"], false, "{def}");
+}
+
+/// A backend answering from a closure: what `check_parameters` sends, and what it does when an
+/// app has no `parameters.change {changes}` or cannot restore the checkpoint.
+struct Answers {
+    calls: Vec<(String, Value)>,
+    answer: Box<dyn Fn(&str, &Value) -> Result<Value, String>>,
+}
+
+impl crate::backend::Backend for Answers {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.push((method.to_string(), params.clone()));
+        (self.answer)(method, &params)
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "answers".into()
+    }
+}
+
+/// An app without `parameters.change {changes}` gets one change per name; one that cannot
+/// restore the checkpoint makes the call an error that says the values are still in.
+#[test]
+fn check_parameters_falls_back_per_name_and_says_when_the_restore_failed() {
+    let app = |restore_ok: bool| Answers {
+        calls: Vec::new(),
+        answer: Box::new(move |method, p| {
+            let command = p["command"].as_str().unwrap_or_default();
+            match (method, command) {
+                ("engine.execute", "parameters.list") => Err("unknown command `parameters.list`".into()),
+                ("engine.execute", "edit.checkpoint") => Ok(json!({"checkpoint": 3})),
+                ("engine.execute", "edit.restore_checkpoint") if restore_ok => Ok(json!({"checkpoint": 3, "restored": true})),
+                ("engine.execute", "edit.restore_checkpoint") => Err("busy: request 9 is still running".into()),
+                ("engine.execute", "parameters.change") if p["params"].get("changes").is_some() => {
+                    Err("parameters.change: `name` is required".into())
+                }
+                ("engine.execute", "parameters.change") => Ok(json!({"name": p["params"]["name"], "value": 7.0, "recomputed": 1})),
+                ("engine.execute", "inspect.measure") => Ok(json!({"body_count": 1, "bodies": [], "total": {"volume_mm3": 12.5}})),
+                ("document.inspect", _) => {
+                    Ok(json!({"timeline": [{"id": 1, "name": "Box", "error": null, "warning": "thin"}], "params": [], "bodies": [{"name": "B"}]}))
+                }
+                ("engine.execute", "model.faces") => Ok(json!({"faces": [
+                    {"index": 0, "name": "side", "area": 1.0, "cylinder": {"origin": [0, 0, 5], "axis": [0, 0, -1], "radius": 2}},
+                    {"index": 1, "name": "side", "area": 1.0, "cylinder": {"origin": [0, 0, -3], "axis": [0, 0, 1], "radius": 2}},
+                    {"index": 2, "name": "hole", "area": 1.0, "cylinder": {"origin": [9, 0, 0], "axis": [0, 0, 1], "radius": 2}},
+                    {"index": 3, "name": "top", "area": 4.0, "plane_normal": [0, 0, 1]},
+                ]})),
+                (m, c) => Err(format!("unknown method `{m}` ({c})")),
+            }
+        }),
+    };
+    let mut b = app(true);
+    let r = crate::tools::call_tool(&mut b, "check_parameters", &json!({"set": {"a": "1 mm", "b": 2}}));
+    assert_ne!(r["isError"], json!(true), "{r}");
+    let body: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["restored"], true, "{body}");
+    assert_eq!(body["values"], json!({"a": 7.0, "b": 7.0}), "{body}");
+    assert_eq!(body["recomputed"], 2, "{body}");
+    assert_eq!(body["measure"]["total"]["volume_mm3"], 12.5, "{body}");
+    assert_eq!(body["warnings"], json!([{"feature": 1, "name": "Box", "warning": "thin"}]), "{body}");
+    assert_eq!(body["errors"], json!([]), "{body}");
+    // Two halves on one axis, reported with opposite directions and different axis points, are
+    // one cylinder; the hole next to it is another.
+    let cyl = body["cylinders"].as_array().unwrap();
+    assert_eq!(cyl.len(), 2, "{body}");
+    assert_eq!((&cyl[0]["faces"], &cyl[0]["origin"], &cyl[0]["axis"]), (&json!([0, 1]), &json!([0.0, 0.0, 0.0]), &json!([0.0, 0.0, 1.0])), "{body}");
+    assert_eq!((&cyl[1]["faces"], &cyl[1]["origin"], &cyl[1]["name"]), (&json!([2]), &json!([9.0, 0.0, 0.0]), &json!("hole")), "{body}");
+    let changes: Vec<&Value> = b.calls.iter().filter(|(_, p)| p["command"] == "parameters.change").map(|(_, p)| &p["params"]).collect();
+    assert_eq!(changes.len(), 3, "one combined change, then one per name: {changes:?}");
+    assert_eq!(changes[0], &json!({"changes": {"a": "1 mm", "b": 2}}), "{changes:?}");
+    assert_eq!((changes[1]["name"].as_str(), changes[2]["name"].as_str()), (Some("a"), Some("b")), "{changes:?}");
+    let last = b.calls.last().unwrap();
+    assert_eq!(last.1["command"], "edit.restore_checkpoint", "the restore is the last call: {last:?}");
+    assert_eq!(last.1["params"]["checkpoint"], 3, "{last:?}");
+
+    // The restore fails: an error, loudly, with everything that was read.
+    let mut b = app(false);
+    let r = crate::tools::call_tool(&mut b, "check_parameters", &json!({"set": {"a": "1 mm"}, "report": ["measure"]}));
+    assert_eq!(r["isError"], json!(true), "{r}");
+    let body: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(body["restored"], false, "{body}");
+    assert!(body["restore_error"].as_str().unwrap().contains("still running"), "{body}");
+    assert!(body["note"].as_str().unwrap().contains("STILL HOLDS"), "{body}");
+    assert_eq!(body["measure"]["total"]["volume_mm3"], 12.5, "{body}");
 }
 
 /// Design properties (#1015) are set through `execute` and come back in `inspect_design`.
@@ -1912,7 +2117,7 @@ fn tool_annotations_tell_the_whole_truth() {
         assert_eq!(hints(name), (true, false, false), "{name}");
     }
     assert_eq!(hints("new_design"), (false, true, false));
-    for name in ["set_parameter", "undo", "redo"] {
+    for name in ["set_parameter", "check_parameters", "undo", "redo"] {
         assert_eq!(hints(name), (false, false, false), "{name}");
     }
     assert!(tools.iter().all(|t| t["annotations"]["readOnlyHint"].is_boolean()), "every tool is annotated");
