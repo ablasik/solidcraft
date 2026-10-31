@@ -574,6 +574,19 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         && resp.contains_pointer()
         && ui.rect_contains_pointer(rect)
         && hover.is_some_and(|p| !axes.contains(p) && !readout.is_some_and(|r| r.contains(p)));
+    // The wheel and trackpad gestures go on under a box anchored to the model (a value box such
+    // as Extrude's distance, a dimension's editor): it scrolls nothing, and a pan, orbit or zoom
+    // stopped as it crossed one (#10061). Its clicks stay its own. Not while the wheel steps the
+    // value under the pointer (Preferences › Design, value stepping).
+    let wheel_inside = inside
+        || (ui.is_enabled()
+            && !crate::value_step::enabled(ui.ctx())
+            && hover.is_some_and(|p| {
+                rect.contains(p)
+                    && !axes.contains(p)
+                    && !readout.is_some_and(|r| r.contains(p))
+                    && ui.ctx().layer_id_at(p).is_some_and(crate::ui_kit::container::is_canvas)
+            }));
     app.viewport.mouse = hover.filter(|_| inside);
     // Sketch snap suppression is set once in `viewport::show` from preferences.
     middle_double_click(app, ui, inside);
@@ -621,7 +634,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
     let pinch = ui.input(|i| pinch_factor(i, options, page_height, zoom_modifier));
     let h = rect.height().max(1.0) as f64;
-    if inside && pinch != 1.0 {
+    if wheel_inside && pinch != 1.0 {
         app.viewport.orbit_free = None;
         // Spread zooms in: the camera distance shrinks by the pinch factor.
         let f = f64::from(pinch).powf(-crate::prefs::zoom_sign(app));
@@ -637,7 +650,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             app.cam.zoom_at(f, anchor);
         }
     }
-    if inside && scroll.is_finite() && scroll != 0.0 {
+    if wheel_inside && scroll.is_finite() && scroll != 0.0 {
         app.viewport.orbit_free = None;
         let f = (-scroll as f64 * 0.0015 * f64::from(app.preferences.wheel_zoom_speed) * crate::prefs::zoom_sign(app)).exp();
         let anchor = zoom_anchor(app, rect, hover, caps.orbit);
@@ -653,7 +666,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         }
     }
     // Two-finger scroll pans the model with the fingers.
-    if inside && pan.is_finite() && pan != egui::Vec2::ZERO {
+    if wheel_inside && pan.is_finite() && pan != egui::Vec2::ZERO {
         app.viewport.orbit_free = None;
         if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
             camera_motion(app, rect, json!({"motion":"pan","delta":[pan.x,pan.y]}));
@@ -662,7 +675,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             app.cam.pan(f64::from(pan.x), f64::from(pan.y), h);
         }
     }
-    if inside && caps.orbit && trackpad_orbit && raw.shift_pan != egui::Vec2::ZERO {
+    if wheel_inside && caps.orbit && trackpad_orbit && raw.shift_pan != egui::Vec2::ZERO {
         app.cancel_view_animation();
         app.viewport.orbit_free = None;
         let sign = crate::prefs::orbit_sign(app);
