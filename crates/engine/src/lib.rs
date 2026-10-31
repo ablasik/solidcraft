@@ -188,6 +188,20 @@ impl Sel {
     }
 }
 
+/// Whether the document differs from the one its file holds, as last worked out for this pair
+/// of documents at this revision. The window asks every frame for every tab (the tab strip, the
+/// autosave), and a large design compared field by field cost more than the rest of an idle
+/// frame. Holding both documents keeps their contents fixed and their addresses unused by
+/// another document while the answer stands: shared, a document can't be edited in place (an
+/// edit copies it to a new address), and [`Session::doc_mut`] lets the answer go first so an
+/// edit stays in place.
+struct DirtyAnswer {
+    revision: u64,
+    doc: Arc<Document>,
+    saved: Arc<Document>,
+    differs: bool,
+}
+
 /// A body rename between two designs (see `Session::body_renames`).
 #[derive(Clone)]
 struct BodyRename {
@@ -481,6 +495,8 @@ pub struct Session {
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     occurrence_bodies_cache: std::sync::Mutex<Option<occurrences::OccurrenceBodiesCache>>,
     placement_index_cache: std::sync::Mutex<Option<occurrences::PlacementIndex>>,
+    /// The last answer of [`Session::is_dirty`] on the document (see [`DirtyAnswer`]).
+    dirty_cache: std::sync::Mutex<Option<DirtyAnswer>>,
     /// Pairs `inspect.clearance` measured, by the bodies' geometry where they stood (shared with
     /// scratch copies): a body that did not change or move is not measured again.
     clearance_cache: std::sync::Arc<std::sync::Mutex<cmd::clearance::PairCache>>,
@@ -687,6 +703,7 @@ impl Session {
             removed_later_cache: Default::default(),
             occurrence_bodies_cache: Default::default(),
             placement_index_cache: Default::default(),
+            dirty_cache: Default::default(),
             clearance_cache: Default::default(),
             body_renames: Vec::new(),
             contact_meshes: Default::default(),
@@ -752,9 +769,34 @@ impl Session {
 
     /// The design has changes not in its file: in the document, or in what is hidden.
     pub fn is_dirty(&self) -> bool {
-        (!Arc::ptr_eq(&self.doc, &self.saved) && *self.doc != *self.saved) || self.visibility != self.saved_visibility
+        self.document_differs() || self.visibility != self.saved_visibility
     }
+
+    /// The document is not the one its file holds: compared once per pair of documents and
+    /// revision ([`DirtyAnswer`]).
+    fn document_differs(&self) -> bool {
+        if Arc::ptr_eq(&self.doc, &self.saved) {
+            return false;
+        }
+        let Ok(mut answer) = self.dirty_cache.lock() else { return *self.doc != *self.saved };
+        let same = |a: &DirtyAnswer| a.revision == self.revision && Arc::ptr_eq(&a.doc, &self.doc) && Arc::ptr_eq(&a.saved, &self.saved);
+        if let Some(a) = answer.as_ref().filter(|a| same(a)) {
+            return a.differs;
+        }
+        let differs = *self.doc != *self.saved;
+        *answer = Some(DirtyAnswer { revision: self.revision, doc: self.doc.clone(), saved: self.saved.clone(), differs });
+        differs
+    }
+
+    /// Let the unsaved-changes answer go, with the documents it holds.
+    fn forget_dirty_answer(&self) {
+        if let Ok(mut answer) = self.dirty_cache.lock() {
+            *answer = None;
+        }
+    }
+
     pub fn mark_saved(&mut self) {
+        self.forget_dirty_answer();
         self.saved = self.doc.clone();
         self.saved_visibility = self.visibility.clone();
     }
@@ -860,6 +902,7 @@ impl Session {
         if let Ok(mut index) = self.placement_index_cache.lock() {
             *index = None;
         }
+        self.forget_dirty_answer();
         Arc::make_mut(&mut self.doc)
     }
 
@@ -1300,6 +1343,7 @@ impl Session {
             if let Ok(mut index) = self.placement_index_cache.lock() {
                 *index = None;
             }
+            self.forget_dirty_answer();
             self.model.adopt_solved_sketches(Arc::make_mut(&mut self.doc));
         }
         Ok(())
@@ -1593,6 +1637,7 @@ impl Session {
             removed_later_cache: Default::default(),
             occurrence_bodies_cache: Default::default(),
             placement_index_cache: Default::default(),
+            dirty_cache: Default::default(),
             clearance_cache: self.clearance_cache.clone(),
             body_renames: self.body_renames.clone(),
             contact_meshes: self.contact_meshes.clone(),
