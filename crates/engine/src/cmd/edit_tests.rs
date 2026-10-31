@@ -1108,6 +1108,57 @@ fn counted_body_names_stay_when_the_timeline_changes() {
     assert_eq!(bodies(&s), named(&[("Body2", "B"), ("Body3", "C"), ("Body4", "E")]));
 }
 
+/// Pinning reads each feature's bodies once and keeps them with the state it read them from;
+/// the names it pins and reserves, and the fingerprints it leaves, are those of reading every
+/// feature's bodies again: random boxes (named and counted), moves, suppressions, deletions,
+/// reorders, undo and redo, against a session that forgets what it read before every command and
+/// against fingerprinting the whole timeline again.
+#[test]
+fn pinning_with_the_bodies_it_read_before_pins_as_reading_them_again() {
+    let (mut kept, mut fresh) = (Session::default(), Session::default());
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = |n: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % n as u64) as usize
+    };
+    for step in 0..60 {
+        let features: Vec<String> = kept.doc.features.iter().map(|f| f.name.clone()).collect();
+        let counted: Vec<String> = kept.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        let pick = |names: &[String], k: usize| names.get(k % names.len().max(1)).cloned().unwrap_or_default();
+        let x = 15 * step;
+        let (id, params) = match next(9) {
+            _ if features.len() < 3 => ("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0]})),
+            0 | 1 => ("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0]})),
+            2 => ("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "body_name": format!("Named {step}")})),
+            3 => ("solid.move", json!({"bodies": [pick(&counted, next(64))], "translate": [0, 5, 0]})),
+            4 => ("timeline.suppress", json!({"feature": pick(&features, next(64)), "suppressed": next(2) == 0})),
+            5 => ("timeline.delete", json!({"feature": pick(&features, next(64))})),
+            6 => ("timeline.reorder", json!({"feature": pick(&features, next(64)), "position": next(features.len()), "active": true})),
+            7 => ("edit.undo", json!({})),
+            _ => ("edit.redo", json!({})),
+        };
+        fresh.made_bodies.clear();
+        let (a, b) = (kept.execute(id, &params), fresh.execute(id, &params));
+        assert_eq!(a.is_ok(), b.is_ok(), "step {step}: {id} {params}");
+        assert_eq!(kept.doc.to_json(), fresh.doc.to_json(), "step {step}: {id} {params}");
+        // The fingerprints match the design as fingerprinting the whole timeline again makes them
+        // match it: evaluating it again reuses the same results (all, as a rule; the others are
+        // computed or taken from the cache the copies share).
+        let again = |model: &solidcraft_doc::Model| {
+            let mut m = model.clone();
+            m.evaluate(&kept.doc);
+            m.last_recomputed + m.last_restored
+        };
+        let mut full = kept.model.clone();
+        full.refingerprint(&kept.doc);
+        assert_eq!(again(&kept.model), again(&full), "step {step}: {id} {params}");
+        assert_eq!(again(&kept.model), again(&fresh.model), "step {step}: {id} {params}");
+    }
+    assert!(kept.doc.features.len() > 5 && !kept.doc.reserved_body_names.is_empty());
+}
+
 /// The value at a dotted path of a definition.
 fn dotted<'a>(def: &'a Value, path: &str) -> &'a Value {
     path.split('.').fold(def, |v, k| &v[k])
