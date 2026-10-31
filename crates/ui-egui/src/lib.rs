@@ -715,7 +715,9 @@ pub struct SolveApp {
     shot_token: u64,
     styled: bool,
     fitted: bool,
-    pending_fit: Option<(Camera, solidcraft_engine::geom::Aabb3, bool)>,
+    /// A framing to settle once the viewport's layout is known: the camera to frame from, the
+    /// bounds, whether to glide there, and whether it is the navigators' shared-zoom framing.
+    pending_fit: Option<(Camera, solidcraft_engine::geom::Aabb3, bool, bool)>,
     /// Frames a pending fit has waited for a layout that can frame it (`resolve_fit`).
     fit_waits: u32,
     /// The sheet metal flat pattern's own pan and zoom.
@@ -1373,9 +1375,7 @@ impl SolveApp {
                     self.cancel_view_animation();
                     self.cam = to;
                 } else if v.get("fit").and_then(Value::as_bool).unwrap_or(false) {
-                    let bounds = solidcraft_engine::view::bounds(&self.session);
-                    self.animate_to(self.fitted(to));
-                    self.pending_fit = Some((to, bounds, true));
+                    self.animate_to_fitted(to);
                 } else {
                     self.animate_to(to);
                 }
@@ -2402,16 +2402,19 @@ impl SolveApp {
         self.cam_anim = None;
         self.viewport.orbit_free = None;
         let bounds = viewport::view_bounds(self);
-        self.pending_fit = Some((self.cam, bounds, false));
+        // Framed as the Home button frames: with the navigators' Fit on, that is their shared
+        // zoom and centre, so a design opens the way Home shows it (#10091).
+        let shared = self.preferences.navigator_fit;
+        self.pending_fit = Some((self.cam, bounds, false, shared));
         self.fit_waits = 0;
-        self.cam = self.fitted(self.cam);
+        self.cam = if shared { self.navigator_fitted(self.cam) } else { self.fitted(self.cam) };
     }
 
     /// Frame `bounds` at once, keeping the view direction (programmatic use).
     pub fn fit_bounds(&mut self, bounds: solidcraft_engine::geom::Aabb3) {
         self.cancel_view_animation();
         self.viewport.orbit_free = None;
-        self.pending_fit = Some((self.cam, bounds, false));
+        self.pending_fit = Some((self.cam, bounds, false, false));
         self.fit_waits = 0;
         self.cam = self.fitted_bounds(self.cam, &bounds);
     }
@@ -2436,7 +2439,36 @@ impl SolveApp {
         if render_workspace::active(self) {
             return viewport_layout::fit_product_bounds(cam, bounds, &render_workspace::picture_layout(self, layout));
         }
-        viewport_layout::fit_bounds(cam, bounds, layout, self.view_fov())
+        viewport_layout::fit_bounds_sized(cam, bounds, layout, self.view_fov(), f64::from(self.preferences.home_fit_size))
+    }
+
+    /// `cam` framing the whole model the navigators' way (#10091): looking at the middle of the
+    /// model from the distance that fits its bounding sphere in the free part of the view, at
+    /// the Fit size. The sphere looks the same from every side, so Home and every face,
+    /// corner, arrow or axis clicked after it keep one zoom and one centre; only the direction
+    /// changes.
+    fn navigator_fitted(&self, cam: Camera) -> Camera {
+        let bounds = viewport::view_bounds(self);
+        self.navigator_fitted_bounds(cam, &bounds).unwrap_or_else(|| self.fitted(cam))
+    }
+
+    /// [`Self::navigator_fitted`] for `bounds`, or `None` when the layout can't frame it yet.
+    fn navigator_fitted_bounds(&self, mut cam: Camera, bounds: &solidcraft_engine::geom::Aabb3) -> Option<Camera> {
+        if bounds.is_empty() || !bounds.min.is_finite() || !bounds.max.is_finite() {
+            return None;
+        }
+        let centre = bounds.center();
+        let radius = (bounds.diagonal() * 0.5).max(0.5);
+        // A cube around the sphere, seen square-on from any axis, projects to the sphere's own
+        // square, so the layout fit of that cube is the sphere's.
+        let offset = solidcraft_engine::geom::Vec3::new(radius, radius, radius);
+        let sphere = solidcraft_engine::geom::Aabb3 { min: centre - offset, max: centre + offset };
+        let mut probe = Camera::default();
+        probe.set_view(StandardView::Front);
+        let framed = self.try_fitted_bounds(probe, &sphere)?;
+        cam.target = centre;
+        cam.distance = framed.distance;
+        cam.is_valid().then_some(cam)
     }
 
     fn fitted_bounds(&self, mut cam: Camera, bounds: &solidcraft_engine::geom::Aabb3) -> Camera {
@@ -2454,11 +2486,17 @@ impl SolveApp {
     fn resolve_fit(&mut self, ctx: &egui::Context) {
         viewport::refresh_layout(self, ctx);
         if self.viewport.layout.is_some()
-            && let Some((cam, bounds, animate)) = self.pending_fit.take()
+            && let Some((cam, bounds, animate, shared)) = self.pending_fit.take()
         {
             // Nothing to frame: the camera goes to the empty design's own distance.
             let want = if bounds.is_empty() { viewport::view_bounds(self) } else { bounds };
-            let to = if want.is_empty() { Some(self.fitted(cam)) } else { self.try_fitted_bounds(cam, &want) };
+            let to = if want.is_empty() {
+                Some(self.fitted(cam))
+            } else if shared {
+                self.navigator_fitted_bounds(cam, &want)
+            } else {
+                self.try_fitted_bounds(cam, &want)
+            };
             let Some(to) = to else {
                 // The viewport hasn't been drawn since the fit was asked for (the Home screen was
                 // over it, as when a sample or a file is opened from it), so framing it now would
@@ -2467,7 +2505,7 @@ impl SolveApp {
                 // viewport is drawn; give up only if that never comes.
                 if self.fit_waits < Self::FIT_WAITS {
                     self.fit_waits += 1;
-                    self.pending_fit = Some((cam, bounds, animate));
+                    self.pending_fit = Some((cam, bounds, animate, shared));
                 } else {
                     self.fit_waits = 0;
                     self.cam = self.fitted_bounds(cam, &want);
@@ -2523,10 +2561,31 @@ impl SolveApp {
             return;
         }
         self.pending_fit = None;
-        let request = Some((self.cam, viewport::view_bounds(self), true));
+        let request = Some((self.cam, viewport::view_bounds(self), true, false));
         let to = self.fitted(self.cam);
         self.animate_to(to);
         self.pending_fit = request;
+    }
+
+    /// Move to `to` and frame the whole model from there at Home's zoom (animated): the
+    /// navigators' Home, faces, corners, arrows and axes (`navigator_fitted`).
+    pub fn animate_to_fitted(&mut self, to: Camera) {
+        let bounds = solidcraft_engine::view::bounds(&self.session);
+        let shared = self.preferences.navigator_fit;
+        let framed = if shared { self.navigator_fitted(to) } else { self.fitted(to) };
+        self.animate_to(framed);
+        self.pending_fit = Some((to, bounds, true, shared));
+    }
+
+    /// A view chosen on a navigator (a cube face, corner or arrow, an axis tip): the view turns
+    /// in place, or frames the whole model from the new direction when Preferences › Navigation
+    /// asks for it (`navigator_fit`, #10091).
+    pub fn animate_turn(&mut self, to: Camera) {
+        if self.preferences.navigator_fit {
+            self.animate_to_fitted(to);
+        } else {
+            self.animate_to(to);
+        }
     }
 
     /// Animated view changes for the axis view and navigation bar.
@@ -2563,17 +2622,20 @@ impl SolveApp {
         let mut to = self.cam;
         if home {
             to.set_view(StandardView::Iso);
-            self.pending_fit = Some((to, viewport::view_bounds(self), true));
-            to = self.fitted(to);
+            // With the navigators' Fit on, Home shares their zoom, so a face clicked after it
+            // keeps the zoom (#10091).
+            let shared = self.preferences.navigator_fit;
+            self.pending_fit = Some((to, viewport::view_bounds(self), true, shared));
+            to = if shared { self.navigator_fitted(to) } else { self.fitted(to) };
         } else {
             // With something selected, Fit frames the selection.
             match viewport::selection_bounds(self) {
                 Some(bounds) => {
-                    self.pending_fit = Some((to, bounds, true));
+                    self.pending_fit = Some((to, bounds, true, false));
                     to = self.fitted_bounds(to, &bounds);
                 }
                 None => {
-                    self.pending_fit = Some((to, viewport::view_bounds(self), true));
+                    self.pending_fit = Some((to, viewport::view_bounds(self), true, false));
                     to = self.fitted(to);
                 }
             }

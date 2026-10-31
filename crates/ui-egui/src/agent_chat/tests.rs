@@ -2236,6 +2236,35 @@ fn narrow_chat() -> crate::scenario::Harness {
     h
 }
 
+/// #10172: before a connection, what the panel draws under the agent switcher (the Agent row
+/// with Add agent and Refresh) keeps the panel's side margin, docked and floating: nothing starts
+/// at the panel's edge or is cut off at the other one.
+#[test]
+fn the_agent_list_keeps_the_panels_side_margin() {
+    use crate::shell::LayoutMode;
+    for layout in [LayoutMode::Docked, LayoutMode::Floating] {
+        let mut h = narrow_chat();
+        h.app.ui.layout = layout;
+        h.frames(3);
+        h.frame();
+        let panel = crate::scenario::rect_of("agent_chat:panel").expect("the panel");
+        let mut texts = Vec::new();
+        for clipped in &h.shapes {
+            crate::test_support::each_shape(&clipped.shape, &mut |s| {
+                if let egui::Shape::Text(t) = s {
+                    texts.push((t.galley.text().to_string(), egui::Rect::from_min_size(t.pos, t.galley.rect.size())));
+                }
+            });
+        }
+        let at = |label: &str| texts.iter().find(|(text, r)| text == label && panel.contains(r.center())).map(|(_, r)| *r);
+        let margin = crate::theme::Tokens::get().space_12 - 0.5;
+        let agent = at(tr("ui.agent_chat_pick")).expect("the Agent row");
+        assert!(agent.left() >= panel.left() + margin, "{layout:?}: Agent at {agent:?} in {panel:?}");
+        let refresh = at(tr("ui.agent_chat_refresh")).expect("Refresh");
+        assert!(refresh.right() <= panel.right() - margin, "{layout:?}: Refresh at {refresh:?} in {panel:?}");
+    }
+}
+
 /// Every chip and the text box sit inside the panel.
 fn assert_inside_the_panel(chips: usize) {
     use crate::scenario::rect_of;

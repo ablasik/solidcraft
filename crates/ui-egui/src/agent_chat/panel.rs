@@ -804,17 +804,19 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     let state = app.agent_chat.state();
     if app.agent_chat.confirm_new {
         ui_kit::scope(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui_kit::text(ui, tr("ui.agent_chat_new_confirm"), ui_kit::Text::Report("new_chat", false));
-            ui.horizontal(|ui| {
-                let yes = ui_kit::button(ui, tr("ui.agent_chat_new"), ui_kit::Button::Normal);
-                crate::scenario::publish_handle("agent_chat:new_confirm", yes.rect.center());
-                if yes.clicked() {
-                    new_chat(app);
-                }
-                if ui_kit::button(ui, tr("ui.agent_chat_cancel"), ui_kit::Button::Normal).clicked() {
-                    app.agent_chat.confirm_new = false;
-                }
+            inset(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui_kit::text(ui, tr("ui.agent_chat_new_confirm"), ui_kit::Text::Report("new_chat", false));
+                ui.horizontal(|ui| {
+                    let yes = ui_kit::button(ui, tr("ui.agent_chat_new"), ui_kit::Button::Normal);
+                    crate::scenario::publish_handle("agent_chat:new_confirm", yes.rect.center());
+                    if yes.clicked() {
+                        new_chat(app);
+                    }
+                    if ui_kit::button(ui, tr("ui.agent_chat_cancel"), ui_kit::Button::Normal).clicked() {
+                        app.agent_chat.confirm_new = false;
+                    }
+                });
             });
         });
     }
@@ -826,7 +828,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         .auto_shrink([false, true])
         .show(ui, |ui| picker(app, ui));
     if state == State::NeedsAuth {
-        auth_box(app, ui);
+        inset(ui, |ui| auth_box(app, ui));
     }
     // The input sits at the bottom of the panel and grows upwards: a long message makes its box
     // taller up to `edit_max`, then it scrolls, and the conversation takes what is left above. It
@@ -1444,6 +1446,13 @@ mod config_ui_tests {
     }
 }
 
+/// What is drawn under the agent switcher keeps the switcher's side margin (#10172): it starts
+/// where the switcher's fields start, not at the panel's edge.
+#[cfg(not(target_arch = "wasm32"))]
+fn inset<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(Tokens::get().space_12 as i8, 0)).show(ui, add).inner
+}
+
 /// Before the first connection: what's installed, how to install the rest, and Add agent.
 #[cfg(not(target_arch = "wasm32"))]
 fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -1451,6 +1460,12 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !open {
         return;
     }
+    inset(ui, |ui| agent_list(app, ui));
+}
+
+/// [`picker`]'s content: the agents found, Refresh and Add agent, and what isn't installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn agent_list(app: &mut SolveApp, ui: &mut egui::Ui) {
     let all = agents::entries(app);
     let current = agents::current(app);
     ui.horizontal(|ui| {

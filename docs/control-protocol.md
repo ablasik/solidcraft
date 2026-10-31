@@ -442,6 +442,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `history_sketches` (`in_order` (default), `under_feature`: the History at the left lists a sketch under the first feature built from it, #6489; the timeline at the bottom keeps the creation order)
 - `hole_moves` (default false: a placed Single hole has a drag handle (`hole:<n>`), and a pick on a face that has a hole moves it there)
 - `hole_snaps` (default false: a Single hole snaps to its face's middle and round edges' centres)
+- `home_fit_size` (0.1…1, default 1: how much of the view the model fills when Home, Fit, an opened design or a navigator view change frames it, with `navigator_fit` on or off; 1 fills the room between the panels, the compass and the navigation bar, as before; #10091)
 - `joint_rotation_coarse` (default 10°): coarse Assembly Move rotation step, in 0.001…180°.
 - `joint_rotation_fine` (default 0.1°): fine Assembly Move rotation step, in 0.001…180°.
 - `keep_work_on_tab_switch` (default false: each design tab keeps its open dialog or tool, with what was picked and typed in it, and its toolbar tab while another design is shown, and has them back when it is shown again; off, a switch cancels them and shows MODEL, #9360)
@@ -458,6 +459,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `msaa`
 - `nav` (`fusion`, `solidworks`, `inventor`, `alias`, `blender`, `tinkercad`, `openscad`, `touchpad`)
 - `nav_bridge_enabled` (default false) and `nav_bridge_port` (default 8765: a device's own app on this computer moves the view, [the navigation bridge](3d-mouse.md#device-apps-the-navigation-bridge))
+- `navigator_fit` (default false: a view chosen on the view cube or the axis gizmo also looks at the middle of the model from the one distance that fits its bounding sphere in the free part of the view, at `home_fit_size`; Home and an opened design use the same zoom and centre while it is on, so views chosen after them only turn; #10091)
 - `offer_stand_up`
 - `orbit_around` (`view_centre` (default: what Pan moves and Fit frames), `origin` (the world origin stays still on screen), `cursor` (the model point under the pointer when the drag began); the older `orbit_cursor` boolean still sets `cursor` when true)
 - `orbit_reverse` (default false: Shift with two-finger scrolling orbits the other way)
@@ -606,8 +608,12 @@ animated view changes is enabled (the default), at the configured animation spee
 
 The cube runs `view.navigate` through the command engine. Programmatic callers pass `camera`
 and either `direction: [x,y,z]` in the camera's up-axis frame or `action` (`left`, `right`, `up`,
-`down`, `clockwise`, `counterclockwise`, `home`, `fit`). The result contains `camera` and `fit`;
-UI callers apply the camera with their animation preference, without editing the design.
+`down`, `clockwise`, `counterclockwise`, `home`, `fit`). `fit: true` with a `direction` or a
+turn asks for the whole model to be framed from the new direction as well, as `home` does. The
+result contains `camera` and `fit`; UI callers apply the camera with their animation
+preference, without editing the design. The Navigation preference `navigator_fit` (off by
+default) makes every view chosen on the cube or on the axis gizmo frame the model this way:
+looking at its middle from the one distance that fits its bounding sphere, which Home then shares.
 
 Shift-orbit snapping includes 45-degree edge views and isometric corner views, with a
 lightly damped spring transition and a small boundary margin to prevent flicker.

@@ -164,6 +164,17 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         ui_kit::divider(ui, "navigation_view_controls");
         ui_kit::settings_form(ui, 150.0, |ui| {
             setting::wheel_zoom_speed(app, ui);
+            let (label, note) = (app.tr("prefs.home_fit_size").to_owned(), app.tr("prefs.home_fit_size_note").to_owned());
+            ui_kit::row(ui, &label, |ui| {
+                let response = ui_kit::slider(
+                    ui,
+                    &mut app.preferences.home_fit_size,
+                    0.1..=1.0,
+                    ui_kit::Slider { step: Some(0.05), format: |v| format!("{:.0} %", v * 100.0), ..Default::default() },
+                );
+                crate::scenario::publish_rect("prefs:home_fit_size", response.rect);
+                response.on_hover_text(&note)
+            });
             ui_kit::row(ui, app.tr_label("View navigator"), |ui| {
                 let mut selected = usize::from(app.preferences.navigator_style == NavigatorStyle::Cube);
                 if ui_kit::segmented(
@@ -186,6 +197,9 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 }
             });
+            let (label, note) = (app.tr("prefs.navigator_fit").to_owned(), app.tr("prefs.navigator_fit_note").to_owned());
+            let fit = ui_kit::checkbox(ui, &label, &mut app.preferences.navigator_fit).on_hover_text(note);
+            crate::scenario::publish_target("prefs:navigator_fit", fit.rect);
             ui_kit::row(ui, app.tr_label("Middle double-click"), |ui| {
                 let current = MiddleDoubleClick::of(app);
                 ui_kit::settings_control_width(ui, t.form_label_width * 2.0 + t.space_24 * 2.0 + t.space_12, |ui| {

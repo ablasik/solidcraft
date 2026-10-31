@@ -130,6 +130,10 @@ fn navigate(app: &mut SolveApp, action: Option<&str>, dir: Option<Vec3>) {
     if let Some(d) = dir {
         params["direction"] = json!([d.x, d.y, d.z]);
     }
+    // Preferences › Navigation: a view chosen on the cube also frames the whole model (#10091).
+    if app.preferences.navigator_fit {
+        params["fit"] = json!(true);
+    }
     let _ = app.run("view.navigate", params);
 }
 
@@ -510,6 +514,61 @@ mod tests {
         assert!(h.app.cam.back().dist(Vec3::Z) < 1e-6, "automatic model fitting must not cancel the navigation command");
         assert_eq!(h.app.cam.target, cam.target);
         assert_eq!(h.app.cam.distance, cam.distance);
+    }
+
+    /// #10091: with Preferences › Navigation "Fit the model after a navigator view change" on, a
+    /// cube face, corner or arrow frames the whole model from the new direction, as Home does;
+    /// off (the default) the view turns in place, keeping its target and zoom.
+    #[test]
+    fn cube_views_frame_the_model_when_the_navigation_preference_asks() {
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"navigator_style":"cube", "look_at_anim":false}));
+        assert!(!h.app.preferences.navigator_fit, "off by default");
+        h.app.run("solid.box", json!({"corner":[100,0,0],"length":20,"width":20,"height":20})).unwrap();
+        h.settle();
+        let undo = h.app.session.undo.len();
+        let away = |h: &mut crate::scenario::Harness| {
+            h.call("ui.view", json!({"view":"iso"}));
+            h.app.cam.pan(600.0, 400.0, 500.0);
+            h.app.cam.distance *= 4.0;
+            h.frames(2);
+            h.app.cam
+        };
+        let from = away(&mut h);
+        let p = crate::scenario::handle_at("navigation_cube:front").unwrap();
+        h.call("ui.click", json!({"x":p.x,"y":p.y}));
+        h.frames(2);
+        assert!(h.app.cam.back().dist(-Vec3::Y) < 1e-6);
+        assert_eq!(h.app.cam.target, from.target, "off: the target stays");
+        assert_eq!(h.app.cam.distance, from.distance, "off: the zoom stays");
+        h.call("ui.prefs", json!({"navigator_fit":true}));
+        for handle in ["navigation_cube:front", "navigation_cube:top_front_right", "navigation_cube:control:right"] {
+            let from = away(&mut h);
+            let p = crate::scenario::handle_at(handle).unwrap();
+            h.call("ui.click", json!({"x":p.x,"y":p.y}));
+            h.frames(2);
+            if handle == "navigation_cube:front" {
+                assert!(h.app.cam.back().dist(-Vec3::Y) < 1e-6);
+            }
+            assert!(h.app.cam.target.dist(Vec3::new(110.0, 10.0, 10.0)) < 1e-6, "{handle}: looks at the middle of the model, {:?}", h.app.cam.target);
+            assert!(h.app.cam.distance < from.distance / 2.0, "{handle}: {} vs {}", h.app.cam.distance, from.distance);
+        }
+        // Home, then a face, a corner or an arrow: the zoom and the centre stay; only the
+        // direction changes.
+        let click = |h: &mut crate::scenario::Harness, handle: &str| {
+            let p = crate::scenario::handle_at(handle).unwrap_or_else(|| panic!("{handle} is not on the cube"));
+            h.call("ui.click", json!({"x":p.x,"y":p.y}));
+            h.frames(2);
+        };
+        click(&mut h, "navigation_cube:control:home");
+        let home = h.app.cam;
+        for handle in ["navigation_cube:front", "navigation_cube:top", "navigation_cube:top_front_right", "navigation_cube:control:right"] {
+            click(&mut h, "navigation_cube:control:home");
+            click(&mut h, handle);
+            assert!((h.app.cam.distance - home.distance).abs() < 1e-6, "{handle}: {} vs Home's {}", h.app.cam.distance, home.distance);
+            assert!(h.app.cam.target.dist(home.target) < 1e-6, "{handle}: {:?} vs Home's {:?}", h.app.cam.target, home.target);
+        }
+        assert_eq!(h.app.session.undo.len(), undo, "a view change edits nothing");
     }
 
     #[test]

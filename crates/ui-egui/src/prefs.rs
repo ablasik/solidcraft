@@ -1248,6 +1248,14 @@ preference_settings! {
     network_hosts: Vec<String> = Vec::new(), PAGE_DESIGN;
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     middle_double_click: String = "home".into(), PAGE_NAVIGATION;
+    /// A view chosen on the navigator (a cube face, corner or arrow, an axis tip) also frames the
+    /// whole model, as Home does (#10091). Off by default: the view turns in place, keeping its
+    /// target and zoom.
+    navigator_fit: bool = false, PAGE_NAVIGATION;
+    /// How much of the view the model fills when Home, Fit, an opened design or a navigator
+    /// view change frames it (0.1 to 1; #10091): 1, the default, fills the room between the
+    /// panels, the compass and the navigation bar, as before.
+    home_fit_size: f32 = 1.0, PAGE_NAVIGATION, accept(0.1..=1.0);
     /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
     color_vision: crate::theme::ColorVision = crate::theme::ColorVision::Off, PAGE_INTERFACE;
     /// Check for updates at start and once a day (docs/updates.md).
@@ -3719,6 +3727,9 @@ pub fn migrate(mut p: Prefs) -> Prefs {
     if !accepted::wheel_zoom_speed(&p) {
         p.wheel_zoom_speed = Prefs::default().wheel_zoom_speed;
     }
+    if !accepted::home_fit_size(&p) {
+        p.home_fit_size = Prefs::default().home_fit_size;
+    }
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
         p.orbit_cursor = false;
@@ -3854,6 +3865,9 @@ fn prepare_preferences(
     if !accepted::wheel_zoom_speed(&new) {
         return Err("`wheel_zoom_speed` must be 0.25…4".into());
     }
+    if !accepted::home_fit_size(&new) {
+        return Err("`home_fit_size` must be 0.1…1".into());
+    }
     let new = migrate(new);
     if !UNITS.contains(&new.default_units.as_str()) {
         return Err(format!("units must be one of {}", UNITS.join(", ")));
@@ -3925,6 +3939,9 @@ fn prepare_preferences(
     }
     if !accepted::print_face_highlight(&new) {
         return Err("`print_face_highlight` must be 0…1".into());
+    }
+    if !accepted::home_fit_size(&new) {
+        return Err("`home_fit_size` must be 0.1…1".into());
     }
     if !accepted::perspective_fov(&new) {
         return Err("`perspective_fov` must be 15°…90° in radians (0.2618…1.5708)".into());
