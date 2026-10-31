@@ -708,6 +708,45 @@ fn fillet_and_chamfers() {
     assert!(s.execute("sketch.fillet", &json!({"a": l[0], "b": l[2], "radius": 1})).is_err(), "no shared corner");
 }
 
+/// #2500, #5951, #7805: the second fillet of a side with a radius of half its length takes all
+/// that is left of the line, so the line goes and the two arcs meet: a 20 × 10 rectangle with
+/// r = 5 becomes a slot, a 10 × 10 square a circle.
+#[test]
+fn fillets_of_half_a_side_meet_and_the_side_goes() {
+    for (w, h, area) in [(20.0, 10.0, 10.0 * 10.0 + std::f64::consts::PI * 25.0), (10.0, 10.0, std::f64::consts::PI * 25.0)] {
+        let mut s = new_sketch();
+        let l = ids(&run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [w, h]}))["curves"]);
+        let mut last = Value::Null;
+        for k in 0..4 {
+            last = run(&mut s, "sketch.fillet", json!({"a": l[k], "b": l[(k + 1) % 4], "radius": 5}));
+        }
+        assert_eq!(last["sketch"]["solved"], true, "{last}");
+        let sk = sketch(&s);
+        let lines = sk.curves.iter().filter(|c| !c.construction && matches!(c.kind, CurveKind::Line { .. })).count();
+        let arcs = sk.curves.iter().filter(|c| matches!(c.kind, CurveKind::Arc { .. })).count();
+        assert_eq!((lines, arcs), (if w > h { 2 } else { 0 }, 4), "{w} x {h}");
+        let a = profiles(&s);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!(close(a[0], area), "{w} x {h}: {a:?}");
+    }
+    // All four corners in one call: the arcs keep one radius dimension and equal constraints
+    // although the short sides go in between.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]}));
+    let f = run(&mut s, "sketch.fillet", json!({"points": ["l1.start", "l1.end", "l2.end", "l3.end"], "radius": 5}));
+    assert_eq!(ids(&f["curves"]).len(), 4, "{f}");
+    assert_eq!(f["sketch"]["solved"], true, "{f}");
+    let a = profiles(&s);
+    assert!(a.len() == 1 && close(a[0], 100.0 + std::f64::consts::PI * 25.0), "{a:?}");
+    let equal = sketch(&s).constraints.iter().filter(|c| matches!(c.kind, ConstraintKind::Equal { .. })).count();
+    assert!(equal >= 3, "the arcs stay equal to the first: {equal}");
+    // A radius past the line's length is still refused.
+    let mut s = new_sketch();
+    let l = ids(&run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]}))["curves"]);
+    run(&mut s, "sketch.fillet", json!({"a": l[0], "b": l[1], "radius": 5}));
+    assert!(s.execute("sketch.fillet", &json!({"a": l[1], "b": l[2], "radius": 5.1})).is_err());
+}
+
 #[test]
 fn offset_chain_mirror_patterns_move_scale() {
     let mut s = new_sketch();
@@ -1715,6 +1754,45 @@ fn fillet_a_line_and_an_arc_drawn_to_meet_at_a_point() {
     }
 }
 
+/// #7507: a line drawn on from another line's end by coordinates meets it through a Coincident
+/// constraint, and a dimension measures to the second line's own end at that corner. The corner
+/// is still rounded, by point and by naming the two lines, and the dimension keeps measuring to
+/// the sharp corner.
+#[test]
+fn fillet_a_coincident_corner_that_a_dimension_measures_to() {
+    for how in [json!({"point": "l1.end"}), json!({"a": "l1", "b": "l2"})] {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]]}));
+        run(&mut s, "sketch.line", json!({"points": [[40, 0], [100, -30]]}));
+        run(&mut s, "sketch.dimension", json!({"entities": ["origin", "l2.start"], "type": "horizontal", "value": "40"}));
+        let mut p = how.clone();
+        p["radius"] = json!(5);
+        let f = run(&mut s, "sketch.fillet", p);
+        let made = ids(&f["curves"]);
+        assert_eq!(made.len(), 1, "{how}: {f}");
+        let sk = sketch(&s);
+        let ai = sk.curve_index(&made[0]).unwrap();
+        assert!((sk.radius(ai).unwrap() - 5.0).abs() < 1e-7, "{how}");
+        // Tangent to both lines: 5 below the first and 5 from the second's line.
+        let c = sk.center(ai).unwrap();
+        let along = Vec2::new(60.0, -30.0).normalized().unwrap();
+        assert!((c.y + 5.0).abs() < 1e-6 && ((c - Vec2::new(40.0, 0.0)).cross(along).abs() - 5.0).abs() < 1e-6, "{how}: {c:?}");
+        // The dimension still measures 40 to the sharp corner, and the sketch solves.
+        let info = run(&mut s, "sketch.inspect", json!({}));
+        assert_eq!(info["status"], "solved", "{how}: {info}");
+        let (p, q) = sk
+            .constraints
+            .iter()
+            .find_map(|k| match k.kind {
+                ConstraintKind::DistanceX { p, q, .. } => Some((p, q)),
+                _ => None,
+            })
+            .unwrap();
+        assert!((sk.point(q).unwrap().x - sk.point(p).unwrap().x - 40.0).abs() < 1e-6, "{how}");
+        assert!(sk.point(q).unwrap().dist(Vec2::new(40.0, 0.0)) < 1e-6, "{how}");
+    }
+}
+
 #[test]
 fn chamfer_two_lines_drawn_to_meet_at_a_point() {
     let mut s = new_sketch();
@@ -2254,6 +2332,24 @@ fn offset_both_sides_of_a_circle_are_concentric() {
     assert!(close(r0, 7.0) && close(r1, 13.0), "{r0} {r1}");
     // A circle whose inward side would be offset away to nothing is refused, both sides with it.
     assert!(s.execute("sketch.offset", &json!({"curves": [c], "distance": 10, "symmetric": true})).is_err());
+}
+
+#[test]
+fn an_offset_circle_takes_its_radius_from_the_source() {
+    // #9264: the offset rebuilds a circle's radius from its source after the solve, but the
+    // solve still counted that radius as an unknown: a dimensioned circle and its offset
+    // reported 1 degree of freedom.
+    let mut s = new_sketch();
+    let c = ids(&run(&mut s, "sketch.circle.center", json!({"center": "origin", "radius": 25}))["curves"])[0].clone();
+    let d = run(&mut s, "sketch.dimension", json!({"entities": [c], "type": "diameter", "value": "d = 50"}));
+    assert_eq!(d["sketch"]["dof"], 0, "{d}");
+    let o = run(&mut s, "sketch.offset", json!({"curves": [c], "distance": 5, "side": [40, 0]}));
+    assert_eq!(o["sketch"]["dof"], 0, "the offset circle's radius follows its source: {o}");
+    let out = ids(&o["curves"])[0].clone();
+    run(&mut s, "parameters.change", json!({"name": "d", "expression": "60"}));
+    let sk = sketch(&s);
+    let CurveKind::Circle { r, .. } = sk.curves[sk.curve_index(&out).unwrap()].kind else { panic!("{out} is not a circle") };
+    assert!(close(r, 35.0), "30 mm source plus 5 mm: {r}");
 }
 
 #[test]
@@ -2917,7 +3013,7 @@ fn trim_piece_is_what_a_trim_there_takes_away() {
 /// refused (the trim used to report success and leave the curve whole). Trimming away a whole
 /// offset curve still works, and once the association is broken the trim cuts it.
 #[test]
-fn trim_and_extend_refuse_an_offsets_ends_until_its_association_is_broken() {
+fn trim_extend_and_break_refuse_an_offsets_ends_until_its_association_is_broken() {
     let mut s = new_sketch();
     run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]}));
     let out = ids(&run(&mut s, "sketch.offset", json!({"curves": ["l1", "l2", "l3", "l4"], "distance": "2 mm", "side": [-5, -5]}))["curves"]);
@@ -2928,6 +3024,10 @@ fn trim_and_extend_refuse_an_offsets_ends_until_its_association_is_broken() {
     assert!(e.contains("offset") && e.contains("break the offset association"), "{e}");
     let e = s.execute("sketch.extend", &json!({"curve": "l5", "at": [42, -2]})).unwrap_err().to_string();
     assert!(e.contains("offset"), "{e}");
+    for params in [json!({"curve": "l5", "at": [30, -2]}), json!({"curve": "l5", "points": [[20, -2]]})] {
+        let e = s.execute("sketch.break", &params).unwrap_err().to_string();
+        assert!(e.contains("offset") && e.contains("break the offset association"), "{params}: {e}");
+    }
     assert_eq!(serde_json::to_value(sketch(&s)).unwrap(), before, "a refused trim changes nothing");
 
     run(&mut s, "sketch.offset.break", json!({"curve": "l5"}));
