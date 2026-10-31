@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "自动",
   "prefs.graphics_card_missing": "已保存的显卡不可用；将使用自动选择。",
   "prefs.graphics_card_restart": "重启 SolidCraft 后生效。WGPU_ADAPTER_NAME 优先于此选择。",
+  "prefs.graphics_card_unused": "已保存的显卡未用于此窗口；实际使用的显卡显示在“帮助 › 关于”和状态栏中。请尝试“自动”，或将 WGPU_ADAPTER_NAME 设为显卡名称中的唯一部分。",
   "prefs.graphics_note": "在速度与平滑度之间取舍。每个选项均以示例展示效果。",
   "prefs.graphics_presets_note": "预设会同时设置以下选项。",
   "prefs.hide_constraint_glyphs_zoomed_out": "缩小时隐藏约束符号",

@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "Automatisch",
   "prefs.graphics_card_missing": "Die gespeicherte Grafikkarte ist nicht verfügbar. Stattdessen wird „Automatisch“ verwendet.",
   "prefs.graphics_card_restart": "Diese Einstellung wird nach einem Neustart von SolidCraft wirksam. Die Umgebungsvariable WGPU_ADAPTER_NAME hat Vorrang vor dieser Auswahl.",
+  "prefs.graphics_card_unused": "Die gespeicherte Grafikkarte wurde für dieses Fenster nicht verwendet; die tatsächlich genutzte Karte steht unter Hilfe › Info und in der Statuszeile. Versuchen Sie Automatisch, oder setzen Sie WGPU_ADAPTER_NAME auf einen eindeutigen Teil des Kartennamens.",
   "prefs.graphics_note": "Wägen Sie Leistung und Darstellungsqualität gegeneinander ab. Jede Option veranschaulicht ihre Wirkung anhand eines Beispiels.",
   "prefs.graphics_presets_note": "Mit den Profilen werden die unten aufgeführten Optionen gemeinsam eingestellt.",
   "prefs.hide_constraint_glyphs_zoomed_out": "Bindungssymbole bei starkem Herauszoomen ausblenden",

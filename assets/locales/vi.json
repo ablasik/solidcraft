@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "Tự động",
   "prefs.graphics_card_missing": "Card đồ họa đã lưu không khả dụng; chế độ Tự động đang được sử dụng.",
   "prefs.graphics_card_restart": "Có hiệu lực sau khi khởi động lại SolidCraft. Biến môi trường WGPU_ADAPTER_NAME sẽ ghi đè lựa chọn này.",
+  "prefs.graphics_card_unused": "Card đồ họa đã lưu không được dùng cho cửa sổ này; card đang dùng hiện trong Trợ giúp › Giới thiệu và trên dòng trạng thái. Thử Tự động, hoặc đặt WGPU_ADAPTER_NAME thành phần tên card mang tính duy nhất.",
   "prefs.graphics_note": "Cân đối giữa tốc độ và độ mượt mà. Mỗi tùy chọn đều hiển thị hiệu ứng trực quan trên mẫu thử.",
   "prefs.graphics_presets_note": "Các cấu hình định sẵn sẽ thiết lập đồng thời các tùy chọn bên dưới.",
   "prefs.hide_constraint_glyphs_zoomed_out": "Ẩn biểu tượng ràng buộc khi thu nhỏ",

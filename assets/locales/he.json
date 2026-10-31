@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "אוטומטי",
   "prefs.graphics_card_missing": "הכרטיס הגרפי השמור אינו זמין; נעשה שימוש באפשרות אוטומטי.",
   "prefs.graphics_card_restart": "ייכנס לתוקף אחרי הפעלה מחדש של SolidCraft. WGPU_ADAPTER_NAME גובר על בחירה זו.",
+  "prefs.graphics_card_unused": "כרטיס המסך השמור לא שימש לחלון זה; הכרטיס שבשימוש מוצג בעזרה › אודות ובשורת המצב. נסו אוטומטי, או הגדירו את WGPU_ADAPTER_NAME לחלק ייחודי משם הכרטיס.",
   "prefs.graphics_note": "איזון בין מהירות לחלקות. כל בחירה מציגה את השפעתה על דוגמה.",
   "prefs.graphics_presets_note": "הגדרות קבועות מראש קובעות יחד את הבחירות שלמטה.",
   "prefs.hide_constraint_glyphs_zoomed_out": "הסתרת סמלי אילוצים בהקטנה",

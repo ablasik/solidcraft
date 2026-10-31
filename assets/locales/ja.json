@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "自動",
   "prefs.graphics_card_missing": "保存されたグラフィックスカードが利用できないため、自動選択を使用します。",
   "prefs.graphics_card_restart": "SolidCraft の再起動後に有効になります。WGPU_ADAPTER_NAME がこの選択より優先されます。",
+  "prefs.graphics_card_unused": "保存したグラフィックスカードはこのウィンドウでは使われていません。使用中のカードは「ヘルプ › SolidCraft について」とステータス行に表示されます。自動を試すか、カード名の一意な部分を WGPU_ADAPTER_NAME に設定してください。",
   "prefs.graphics_note": "速度と滑らかさのバランスを調整します。各選択肢の効果をサンプルで確認できます。",
   "prefs.graphics_presets_note": "プリセットは以下の設定をまとめて変更します。",
   "prefs.hide_constraint_glyphs_zoomed_out": "ズームアウト時に拘束グリフを隠す",

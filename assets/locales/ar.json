@@ -2156,6 +2156,7 @@
   "prefs.graphics_card_auto": "تلقائي",
   "prefs.graphics_card_missing": "بطاقة الرسوميات المحفوظة غير متاحة؛ يُستخدم الخيار «تلقائي».",
   "prefs.graphics_card_restart": "يُطبَّق بعد إعادة تشغيل SolidCraft. يتجاوز WGPU_ADAPTER_NAME هذا الاختيار.",
+  "prefs.graphics_card_unused": "لم تُستخدم بطاقة الرسوميات المحفوظة لهذه النافذة؛ البطاقة المستخدمة تظهر في مساعدة › حول وفي شريط الحالة. جرّب تلقائي، أو عيّن WGPU_ADAPTER_NAME إلى جزء فريد من اسم البطاقة.",
   "prefs.graphics_note": "وازن بين السرعة والنعومة. كل خيار يعرض أثره على عيّنة.",
   "prefs.graphics_presets_note": "الإعدادات المسبقة تضبط الخيارات أدناه معًا.",
   "prefs.hide_constraint_glyphs_zoomed_out": "إخفاء رموز القيود عند التصغير",
