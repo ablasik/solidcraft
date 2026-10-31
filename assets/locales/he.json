@@ -3816,6 +3816,7 @@
   "sketch_text.formula": "התחילו ב־= כדי לבנות את הטקסט מפרמטרים: ='W' + number(Width)",
   "sketch_text.italic": "נטוי",
   "sketch_text.loading_fonts": "מחפש גופנים מותקנים…",
+  "sketch_text.no_bold": "לגופן המובנה אין משקל מודגש: בחר גופן מותקן",
   "sketch_text.on_path": "הטקסט עוקב אחר המסלול שלו: העקומה קובעת את מיקומו",
   "sketch_text.path_clear": "הסרת הטקסט מהעקומה",
   "sketch_text.path_hint": "עקומה בסקיצה שהטקסט עוקב אחריה: יש ללחוץ כאן ואז על העקומה",

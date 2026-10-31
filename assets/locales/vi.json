@@ -3816,6 +3816,7 @@
   "sketch_text.formula": "Bắt đầu bằng = để tạo chữ từ các tham số: ='W' + number(Width)",
   "sketch_text.italic": "In nghiêng",
   "sketch_text.loading_fonts": "Đang tìm kiếm các phông chữ đã cài đặt…",
+  "sketch_text.no_bold": "Phông chữ tích hợp không có kiểu in đậm: chọn một phông chữ đã cài đặt",
   "sketch_text.on_path": "Văn bản đi theo đường dẫn: đường cong định vị văn bản",
   "sketch_text.path_clear": "Gỡ văn bản khỏi đường cong dẫn",
   "sketch_text.path_hint": "Đường cong phác thảo mà văn bản chạy theo: nhấp vào đây, sau đó chọn đường cong",

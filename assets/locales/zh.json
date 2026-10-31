@@ -3816,6 +3816,7 @@
   "sketch_text.formula": "以 = 开头即可用参数组成文字：='W' + number(Width)",
   "sketch_text.italic": "斜体",
   "sketch_text.loading_fonts": "正在查找已安装字体…",
+  "sketch_text.no_bold": "内置字体没有粗体字形：请选择已安装的字体",
   "sketch_text.on_path": "文字沿路径排列：由曲线放置",
   "sketch_text.path_clear": "将文字移离其曲线",
   "sketch_text.path_hint": "文字所跟随的草图曲线：先单击此处，再选择曲线",

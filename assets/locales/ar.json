@@ -3816,6 +3816,7 @@
   "sketch_text.formula": "ابدأ بـ = لتكوين النص من المعاملات: ='W' + number(Width)",
   "sketch_text.italic": "مائل",
   "sketch_text.loading_fonts": "جارٍ البحث عن الخطوط المثبتة…",
+  "sketch_text.no_bold": "الخط المدمج لا يحتوي على نمط غامق: اختر خطاً مثبتاً",
   "sketch_text.on_path": "النص يتبع مساره: المنحنى يحدد موضعه",
   "sketch_text.path_clear": "فصل النص عن منحناه",
   "sketch_text.path_hint": "منحنى من الرسم يتبعه النص: انقر هنا ثم على المنحنى",

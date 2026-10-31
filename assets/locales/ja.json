@@ -3816,6 +3816,7 @@
   "sketch_text.formula": "= で始めるとパラメーターから文字列を組み立てられます: ='W' + number(Width)",
   "sketch_text.italic": "斜体",
   "sketch_text.loading_fonts": "インストール済みフォントを検索中…",
+  "sketch_text.no_bold": "組み込みフォントには太字がありません: インストール済みのフォントを選択してください",
   "sketch_text.on_path": "文字はパスに沿います: 位置は曲線で決まります",
   "sketch_text.path_clear": "文字を曲線から外す",
   "sketch_text.path_hint": "文字が沿うスケッチの曲線: ここをクリックしてから曲線をクリック",
