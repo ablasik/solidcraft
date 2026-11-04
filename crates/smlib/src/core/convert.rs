@@ -1832,7 +1832,7 @@ fn bspline_curve_from_arrays(points: &[Point3], weights: &[f64], knots: &[f64], 
 
 /// `smu_CreateSmBSplineSurface_FromArrays`: control points U-major; an unclamped knot vector goes
 /// through `SmBSplineSurface::CreateCanonical`.
-fn bspline_surface_from_arrays(
+pub(super) fn bspline_surface_from_arrays(
     points: &[Point3],
     weights: &[f64],
     u_knots: &[f64],
@@ -1958,9 +1958,10 @@ fn bspline_surface_3d(f: &In<'_>, c: &mut Cursor) -> Result<BSplineSurface> {
     s
 }
 
-/// `SameNurbs`: equal sizes and orders, knots and weights within rounding, control points within
-/// `tol`.
-fn same_nurbs(a: &NurbSurface, b: &NurbSurface, tol: f64) -> bool {
+/// `SameNurbs`: equal sizes and orders, knots within rounding, weights within rounding of the
+/// coordinates' size (a weight is the cosine of an arc's half angle, found from the points: their
+/// rounding grows with the coordinates, 4e-12 at 320), control points within `tol`.
+pub(super) fn same_nurbs(a: &NurbSurface, b: &NurbSurface, tol: f64) -> bool {
     let (mut fa, mut fb) = (Out::new(), Out::new());
     if add_bspline_surface(&mut fa, a).is_err() || add_bspline_surface(&mut fb, b).is_err() {
         return false;
@@ -1970,16 +1971,17 @@ fn same_nurbs(a: &NurbSurface, b: &NurbSurface, tol: f64) -> bool {
             return false;
         }
     }
+    let size = fa.r(FACE_NURBS_CVS).iter().fold(1.0_f64, |m, x| m.max(x.abs()));
     let close = |x: &[f64], y: &[f64], t: f64| x.len() == y.len() && x.iter().zip(y).all(|(a, b)| (a - b).abs() <= t * a.abs().max(1.0));
     close(fa.r(FACE_NURBS_U_KNOTS), fb.r(FACE_NURBS_U_KNOTS), 1e-12)
         && close(fa.r(FACE_NURBS_V_KNOTS), fb.r(FACE_NURBS_V_KNOTS), 1e-12)
-        && close(fa.r(FACE_NURBS_WEIGHTS), fb.r(FACE_NURBS_WEIGHTS), 1e-12)
+        && close(fa.r(FACE_NURBS_WEIGHTS), fb.r(FACE_NURBS_WEIGHTS), 1e-12 * size)
         && close(fa.r(FACE_NURBS_CVS), fb.r(FACE_NURBS_CVS), tol)
 }
 
 /// `AnalyticOfNurbs`: the analytic surface of kind `ty` SMLib's own test finds in `nurbs`, kept
 /// only when its NURBS is `nurbs` (the face's trims are in its parameters).
-fn analytic_of_nurbs(k: &Kernel, nurbs: &BSplineSurface, ty: i64, tol: f64) -> Result<Option<Surface>> {
+pub(super) fn analytic_of_nurbs(k: &Kernel, nurbs: &BSplineSurface, ty: i64, tol: f64) -> Result<Option<Surface>> {
     let found: Option<Surface> = if ty == SURFACE_CONE_I {
         answer(Cone::is_nurb_surface_cone(k, nurbs, 1.0)).map_err(sc("SmCone::IsNurbSurfaceCone"))?.flatten().map(Surface::from)
     } else if ty == SURFACE_SPHERE_I {

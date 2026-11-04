@@ -118,6 +118,7 @@ pub(crate) fn fixes() -> UpstreamFixes {
     f.fillet_nx1_opposite_continuation_side_edge = true;
     f.fillet_trace_rejects_short_step = true;
     f.torus_iso_circle_axis_from_midpoint = true;
+    f.iso_circle_planes_parallel_within_angle_tolerance = true;
     f.torus_keeps_inside_out = true;
     f.internal_pole_row_through_knot = true;
     f.extrusion_origin_scaled_zero = true;
