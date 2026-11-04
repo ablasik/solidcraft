@@ -1588,8 +1588,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.findBrowser" => {
             if let Some(b) = p.get("body").and_then(Value::as_str) {
-                crate::browser::reveal_body(app, b);
+                // Selected first: the rows above the body stay marked until the selection changes.
                 let _ = app.run("select.set", json!({"items": [{"type": "body", "name": b}]}));
+                crate::browser::reveal_body(app, b);
             }
         }
         "ui.findTimeline" => {
@@ -1705,9 +1706,14 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let _ = app.run("browser.visibility", json!({"visible": true, "paths": [p["path"]], "isolate": true}));
         }
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
-        "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.toolbarTab" | "ui.shortcutPin" => {
-            crate::toolbar_custom::run(app, &item.id, &p)
-        }
+        "ui.toolbarPin"
+        | "ui.toolbarRemove"
+        | "ui.toolbarReset"
+        | "ui.toolbarCustomize"
+        | "ui.toolbarTab"
+        | "ui.shortcutPin"
+        | "ui.quickAccessAdd"
+        | "ui.quickAccessRemove" => crate::toolbar_custom::run(app, &item.id, &p),
         "ui.navigatorStyle" => {
             if let Some(style) = p.get("style").and_then(|s| serde_json::from_value(s.clone()).ok()) {
                 crate::view_gizmo::pick_style(app, style);

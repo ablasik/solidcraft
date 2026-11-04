@@ -40,7 +40,11 @@ view.
   when the whole tree is collapsed). Components start closed, so a large assembly opens as a
   short list; open one with its fold arrow, or use **Find in Browser** on a body to open the rows
   down to it (**Preferences › Interface › Components start open** opens every component from the
-  start, as before). Rows drag into groups and other components. **Preferences ›
+  start, as before). **Preferences › Layout › Browser rows start closed** (off by default) starts
+  folders closed too, and components whatever **Components start open** says: they open with
+  their arrow, **Expand All**, or **Find in Browser** on a body, face or edge in the view, which
+  opens just the rows down to that body, and a pick in the view leaves the Browser as it is. Rows
+  drag into groups and other components. **Preferences ›
   Interface › Bodies folders** sets when a component's bodies sit in a Bodies folder of their own:
   **Several bodies only** (the default) lists a component's body straight under it when it has
   only one and no groups, **Never** lists every component's bodies and groups straight under it
@@ -205,6 +209,14 @@ camera, selection and design; Cancel and Restore page defaults work like other p
 General › **Show text under ribbon icons** is a separate, saved option for either
 layout. Turn it off for shorter icon-only command buttons; tooltips, section names
 and command menus remain available.
+
+**Quick-access bar.** Right-click any ribbon button, a row of a section's drop-down or a command
+search result and choose **Add to Quick Access**: the command's icon joins the application bar,
+after Save, Undo and Redo. A click starts the command as its ribbon button does; drag a button
+along the bar to reorder it; right-click it and choose **Remove from Quick Access** to take it off.
+The bar is empty, and so not shown, until a command is added, and holds up to 24 commands. Narrow
+windows hide it with Undo and Redo. It is saved with the toolbar's customisations, so it is
+exported with the keyboard shortcuts and carried by settings profiles.
 
 Interface › Layout › **Show origin and bodies at the top** (off by default) puts the active
 component's Bodies folder and the Origin (planes, axes and point) at the top of the History when

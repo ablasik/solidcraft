@@ -506,6 +506,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 FileAction::Redo.run(app);
             }
             x += step;
+            x = quick_access_bar(app, ui, r, x, step, shown);
         }
         if file {
             app.ui.palette_open = false;
@@ -1832,7 +1833,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let background_slot = painter.add(egui::Shape::Noop);
                 let accent = crate::theme::TabAccent::for_tab(&t, &tab);
                 let family_open = family.is_some_and(|f| egui::Popup::is_id_open(ui.ctx(), ui.id().with(("family", f.label)).with("popup")));
-                let neutral = if !finish
+                // The buttons that leave the sketch or the edit (Finish, Finish with AutoConstrain,
+                // Cancel, Finish Edit) never show pressed; a tool pinned into their group does.
+                let exit =
+                    finish && matches!(selected.id, "sketch.finish" | "sketch.finish_auto_constrain" | "sketch.cancel" | "component.finish_edit");
+                let neutral = if !exit
                     && (resp.is_pointer_button_down_on()
                         || (ribbon_shows_pressed(app, selected.id) && !(persistent && app.preferences.persistent_ribbon_pressed))
                         || family_open
@@ -2270,6 +2275,84 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         Container::paint_inset(ui.painter(), chrome.response.rect - frame.outer_margin, frame);
     }
+}
+
+/// A quick-access button being dragged along the bar (#10223).
+#[derive(Clone)]
+struct QuickAccessDrag(String);
+
+/// The quick-access bar (#10223): the commands added from a command's menu, after Save, Undo and
+/// Redo, each with its own icon. A click starts the command as its ribbon button does, a
+/// right-click opens the command's menu (Remove from Quick Access), and a drag along the bar
+/// reorders the buttons. Draws nothing while it is empty. Returns where the next control goes.
+fn quick_access_bar(app: &mut SolveApp, ui: &mut egui::Ui, bar: Rect, mut x: f32, step: f32, shown: bool) -> f32 {
+    let t = Tokens::get();
+    let ids: Vec<&'static solidcraft_engine::CommandSpec> =
+        app.toolbar_custom.quick_access.iter().filter_map(|id| solidcraft_engine::find_command(id)).collect();
+    if ids.is_empty() {
+        return x;
+    }
+    app_bar_separator(ui, bar, x - step / 2.0 + 8.0, "quick_access");
+    x += 8.0;
+    let first = x;
+    let mut buttons = Vec::with_capacity(ids.len());
+    let mut start = None;
+    let mut menu = None;
+    for c in &ids {
+        let br = Rect::from_center_size(pos2(x, bar.center().y), vec2(32.0, 32.0));
+        x += step;
+        let info = c.info(&app.session);
+        let enabled = shown && info.enabled;
+        let resp = ui.interact(br, ui.id().with(("quick_access", c.id)), Sense::click_and_drag());
+        let label = app.tr_label(info.label).to_string();
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+        crate::scenario::publish_target(&format!("appbar:quick:{}", c.id), br);
+        if enabled && (resp.hovered() || resp.has_focus()) {
+            ui.painter().rect_filled(br.shrink(3.0), t.radius_sm, t.app_bar_hover_button);
+        }
+        icons::paint_on(ui.painter(), Rect::from_center_size(br.center(), vec2(20.0, 20.0)), info.icon, Some(true), if enabled { 1.0 } else { 0.35 });
+        if resp.drag_started() {
+            egui::DragAndDrop::set_payload(ui.ctx(), QuickAccessDrag(c.id.to_string()));
+        }
+        if resp.secondary_clicked() {
+            menu = Some((resp.interact_pointer_pos().unwrap_or(br.left_bottom()), c.id));
+        }
+        let tip = match crate::keymap::display_for(app, c.id) {
+            Some(key) if !key.is_empty() => format!("{label} ({key})"),
+            _ => label.clone(),
+        };
+        let tip = if shown { tip } else { crate::i18n::format("ui.needs_design", &[("command", &label)]) };
+        if resp.on_hover_text(tip).clicked() && enabled {
+            start = Some((c.id, br));
+        }
+        buttons.push((c.id, br));
+    }
+    let span = Rect::from_min_max(pos2(first - step / 2.0, bar.top()), pos2(x - step / 2.0, bar.bottom()));
+    crate::scenario::publish_rect("appbar:quick_access", span);
+    // Dragged along the bar: the line shows where it goes; let go and it moves there.
+    if let Some(drag) = egui::DragAndDrop::payload::<QuickAccessDrag>(ui.ctx())
+        && let Some(p) = ui.input(|i| i.pointer.latest_pos())
+    {
+        let before = buttons.iter().find(|(_, br)| p.x < br.center().x).map(|(id, _)| *id);
+        let line = before.and_then(|b| buttons.iter().find(|(id, _)| *id == b)).map_or(span.right(), |(_, br)| br.left());
+        if span.expand2(vec2(step, 0.0)).contains(p) {
+            ui_kit::insertion_marker(ui.painter(), line, bar.top() + 6.0, bar.bottom() - 6.0);
+        }
+        if ui.input(|i| i.pointer.any_released()) {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            if span.expand2(vec2(step, 0.0)).contains(p) {
+                crate::toolbar_custom::quick_move(app, &drag.0, before);
+            }
+        }
+    }
+    if let Some((id, br)) = start {
+        // The exact pinned command, without replacing its family's remembered ribbon choice.
+        app.start_pinned(id, Some(br));
+    }
+    if let Some((at, id)) = menu {
+        crate::context_menu::open_for(app, at, crate::context_menu::Target::ToolbarCommand { id: id.to_string() });
+    }
+    x
 }
 
 /// A short divider between the brand, file actions and document tabs.
@@ -5087,6 +5170,48 @@ mod dropdown_toggle_tests {
         assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.line"));
     }
 
+    /// A tool pinned into the Finish Sketch group, the one at the ribbon's right edge, shows
+    /// pressed while it runs like any other tool button; only Finish and Cancel never do, not
+    /// even under a press.
+    #[test]
+    fn a_tool_pinned_into_the_finish_group_shows_pressed_while_it_runs() {
+        fn flat(shape: &egui::Shape, out: &mut Vec<egui::Shape>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| flat(s, out)),
+                s => out.push(s.clone()),
+            }
+        }
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        crate::toolbar_custom::reorder(&mut h.app, "SKETCH", "sketch.ellipse", "FINISH SKETCH", None);
+        h.settle();
+        h.step(&json!({"click": {"handle": "button:sketch.ellipse"}})).unwrap();
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.ellipse"), "the click starts the tool");
+        h.frames(3);
+        let soft = crate::theme::TabAccent::for_tab(&crate::theme::Tokens::get(), "SKETCH").soft;
+        let pressed = |h: &Harness, id: &str| {
+            let r = rect_of(&format!("button:{id}")).unwrap();
+            let mut all = Vec::new();
+            h.shapes.iter().for_each(|s| flat(&s.shape, &mut all));
+            all.iter().any(|s| matches!(s, egui::Shape::Rect(s) if s.rect == r && s.fill == soft))
+        };
+        assert!(pressed(&h, "sketch.ellipse"), "the running tool's button is pressed");
+        // A press lights any other button while the pointer is down; Finish, Cancel and Finish
+        // with AutoConstrain (a button only once pinned) stay plain. None runs as a tool or
+        // leaves a dialog, so a press is how they would light.
+        for exit in ["sketch.finish", "sketch.cancel", "sketch.finish_auto_constrain"] {
+            let mut h = Harness::new();
+            h.app.home.open = false;
+            h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+            crate::toolbar_custom::pin(&mut h.app, "SKETCH", exit).unwrap();
+            h.settle();
+            let at = crate::scenario::handle_at(&format!("button:{exit}")).unwrap();
+            h.frame_with(crate::test_support::pointer(at, true));
+            assert!(!pressed(&h, exit), "a press on {exit} does not show it pressed");
+        }
+    }
+
     /// A drop-down row's help tooltip names the key the command runs from now, not its default.
     #[test]
     fn a_drop_down_row_tooltip_names_a_rebound_key() {
@@ -6422,5 +6547,104 @@ mod persistent_ribbon_tests {
             no_tool_paint(&h);
             assert_paint(&h, "inspect.environment_map", true);
         }
+    }
+}
+
+#[cfg(test)]
+mod quick_access_tests {
+    use crate::scenario::{Harness, handle_at, rect_of};
+    use serde_json::json;
+
+    fn pick(h: &mut Harness, handle: &str, item: &str) {
+        h.frames(3);
+        h.step(&json!({"click":{"handle": handle},"button":"right"})).unwrap();
+        h.frames(3);
+        assert!(h.app.viewport.context_menu.is_some(), "{handle}: the right-click opens the command's menu");
+        h.step(&json!({"widget": item})).unwrap_or_else(|e| panic!("{handle}: {item}: {e}"));
+        h.frames(3);
+    }
+
+    /// The quick-access bar (#10223) is empty and not drawn by default; a ribbon button's menu
+    /// adds its command after Save, Undo and Redo, a drag along the bar reorders the buttons, a
+    /// click starts the command, and the button's own menu removes it. The list is kept with the
+    /// toolbar's saved customisations.
+    #[test]
+    fn ribbon_commands_are_added_reordered_started_and_removed_from_the_quick_access_bar() {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        h.frames(3);
+        assert!(h.app.toolbar_custom.quick_access.is_empty(), "empty by default");
+        assert!(rect_of("appbar:quick_access").is_none(), "and not drawn");
+
+        pick(&mut h, "button:solid.extrude", "Add to Quick Access");
+        pick(&mut h, "button:solid.fillet", "Add to Quick Access");
+        assert_eq!(h.app.toolbar_custom.quick_access, ["solid.extrude", "solid.fillet"]);
+        h.frames(2);
+        let bar = rect_of("appbar:quick_access").unwrap();
+        let redo = rect_of("appbar:redo").unwrap();
+        assert!(bar.left() >= redo.right() && bar.center().y == redo.center().y, "after Redo: {bar:?} {redo:?}");
+        let extrude = handle_at("appbar:quick:solid.extrude").unwrap();
+        let fillet = handle_at("appbar:quick:solid.fillet").unwrap();
+        assert!(extrude.x < fillet.x, "in the order they were added");
+
+        // Dragged before Extrude, Fillet comes first.
+        h.step(&json!({"drag": [[fillet.x, fillet.y], [extrude.x - 10.0, extrude.y]]})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.toolbar_custom.quick_access, ["solid.fillet", "solid.extrude"]);
+
+        // Saved with the toolbar and read back.
+        let saved = h.app.toolbar_custom.prefs();
+        let mut reloaded = crate::toolbar_custom::ToolbarCustom::default();
+        reloaded.load(&saved);
+        assert_eq!(reloaded.quick_access, ["solid.fillet", "solid.extrude"]);
+        reloaded.load(&json!({"version": 3, "quick_access": ["solid.extrude", "solid.extrude", 7, "", "no.such.command"]}));
+        assert_eq!(reloaded.quick_access, ["solid.extrude", "no.such.command"], "each once; unknown ids kept but not drawn");
+
+        // A click starts the command as its ribbon button does.
+        h.step(&json!({"click":{"handle":"appbar:quick:solid.extrude"}})).unwrap();
+        h.frames(2);
+        assert_eq!(
+            h.app.tool.as_ref().map(|t| t.cmd.to_string()).or_else(|| h.app.last_command.as_ref().map(|(id, _)| id.clone())).as_deref(),
+            Some("solid.extrude")
+        );
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.frames(2);
+
+        // The button's own menu takes it off; the last one gone, the bar goes too.
+        pick(&mut h, "appbar:quick:solid.extrude", "Remove from Quick Access");
+        assert_eq!(h.app.toolbar_custom.quick_access, ["solid.fillet"]);
+        pick(&mut h, "button:solid.fillet", "Remove from Quick Access");
+        assert!(h.app.toolbar_custom.quick_access.is_empty());
+        h.frames(2);
+        assert!(rect_of("appbar:quick_access").is_none());
+        assert!(h.app.session.doc.features.is_empty(), "nothing in the design changed");
+    }
+
+    /// A quick-access click starts exactly the pinned variant and leaves the family's remembered
+    /// ribbon choice alone.
+    #[test]
+    fn a_quick_access_click_on_a_family_variant_keeps_the_remembered_ribbon_choice() {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.settle();
+        h.app.start("sketch.rectangle.three_point");
+        h.settle();
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.preferences.sketch_variants.resolve("sketch.rectangle.two_point"), "sketch.rectangle.three_point");
+
+        h.app.toolbar_custom.quick_access = vec!["sketch.rectangle.center".to_string()];
+        h.frames(3);
+        h.step(&json!({"click":{"handle":"appbar:quick:sketch.rectangle.center"}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd.to_string()).as_deref(), Some("sketch.rectangle.center"));
+        assert_eq!(
+            h.app.preferences.sketch_variants.resolve("sketch.rectangle.two_point"),
+            "sketch.rectangle.three_point",
+            "the ribbon's Rectangle button still starts its remembered choice"
+        );
     }
 }

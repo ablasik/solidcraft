@@ -1236,6 +1236,11 @@ preference_settings! {
     reopen_designs: bool = true, PAGE_GENERAL;
     /// Those designs' files, in tab order, as the last quit left them.
     open_designs: Vec<String> = Vec::new(), PAGE_GENERAL;
+    /// Web app (#10220): keep each open design's unsaved changes current in the browser's
+    /// private storage, so closing or reloading the tab doesn't ask through the browser's own
+    /// "leave site?" box; the next visit offers them back. Off: the browser asks, as before.
+    keep_unsaved_in_browser: bool = false, PAGE_GENERAL;
+    keep_unsaved_also_asks: bool = true, PAGE_GENERAL;
     /// The largest STEP or import file opened, in MB (#4086): from the default (512) up to 16 GB.
     /// `--max-file-size` overrides it for one run. The browser keeps the default.
     max_step_file_mb: u64 = DEFAULT_STEP_MB, PAGE_GENERAL;
@@ -1379,6 +1384,14 @@ preference_settings! {
     /// Every component placement in the browser starts open, as before #9274, instead of closed
     /// until the user opens it. Off by default.
     browser_components_open: bool = false, PAGE_LAYOUT;
+    /// Folders in the Browser start closed, and placements too whatever "Components start open"
+    /// says, and they open only on request (#8768): with their arrow, Expand All or Find in
+    /// Browser, which opens just the rows down to its body and closes again the ones the last find
+    /// opened. A body picked in the 3D view leaves the Browser as it is, and only the body Find in
+    /// Browser found has the rows above it marked, so a large assembly's placements are not named
+    /// again after each edit. Off by default: folders start open, placements as "Components start
+    /// open" says, and a pick in the 3D view opens the Browser down to its body (#3005), as before.
+    browser_rows_start_closed: bool = false, PAGE_LAYOUT;
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, PAGE_NAVIGATION => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's center)");
     /// Speed multiplier for wheel zoom, independent of the 3D mouse.
@@ -4290,6 +4303,36 @@ mod tests {
         assert!(!app.preferences.invert_curved_roll_arrows);
     }
 
+    /// #10220: off by default, offered on Preferences › General only where designs are kept in
+    /// a browser (the web app), set through `ui.prefs` and saved with the settings.
+    #[test]
+    fn keep_unsaved_in_browser_is_off_and_only_the_web_app_offers_it() {
+        use serde_json::json;
+        assert!(!crate::prefs::Prefs::default().keep_unsaved_in_browser);
+        let label = crate::i18n::tr("prefs.keep_unsaved_in_browser").to_string();
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open":"General"}));
+        h.frames(5);
+        assert!(h.widget(&label).is_none(), "the desktop app keeps no designs in a browser");
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        h.app.services.browser_files = Some(Box::new(|| {}));
+        h.call("ui.prefs", json!({"open":"General"}));
+        h.frames(5);
+        assert!(h.widget(&label).is_some(), "the web app offers it beside the other saving options");
+        let ask = crate::i18n::tr("prefs.keep_unsaved_also_asks").to_string();
+        assert!(h.widget(&ask).is_none(), "still asking only means something once work is kept");
+        let reply = h.call("ui.prefs", json!({"keep_unsaved_in_browser": true}));
+        assert_eq!(reply["ok"], true, "{reply}");
+        h.frames(5);
+        assert!(h.widget(&ask).is_some(), "keeping work offers whether to still ask");
+        h.call("ui.prefs", json!({"button":"ok"}));
+        assert!(h.app.preferences.keep_unsaved_in_browser);
+        assert!(h.app.preferences.keep_unsaved_also_asks, "keeping work still asks unless told not to");
+        let mut restored = crate::SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(restored.preferences.keep_unsaved_in_browser, "it is saved with the settings");
+    }
+
     #[test]
     fn trackpad_zoom_modifier_roundtrips_and_validates_control_values() {
         assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Off);
@@ -6076,6 +6119,7 @@ mod tests {
             ("status_bar", json!(true), PAGE_LAYOUT),
             ("browser_eye_left", json!(true), PAGE_LAYOUT),
             ("browser_components_open", json!(true), PAGE_LAYOUT),
+            ("browser_rows_start_closed", json!(true), PAGE_LAYOUT),
             ("quick_measure", json!(true), PAGE_GRAPHICS),
             ("origin_plane_names", json!("top_front_right"), PAGE_DESIGN),
             ("direct_interaction", json!(true), PAGE_TOOLS),
