@@ -9,7 +9,7 @@ use solidcore_record::{Plane, Vec2};
 use solidcraft_doc::ProfileSel;
 use solidcraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, Wire, WireSpace, intersections, intersections_within};
 
-use super::sketch::{add_c, coincident_points, edit, ids_of, line_or_axis_ref, solve_current};
+use super::sketch::{add_c, coincident_points, dof_now, edit, ids_of, line_or_axis_ref, solve_current};
 use super::sketch_store;
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, expr, num, req_expr, req_vec2, str_, string_list, vec2, vec2_list};
@@ -375,9 +375,18 @@ fn rebind_endpoint_tangencies(sk: &mut Sketch, ci: usize, pieces: &[usize], tang
     }
 }
 
-/// The cut parameters bracketing `tq` on curve `ci`: (before, after) with their cutter curves.
-fn bracket(sk: &Sketch, ci: usize, tq: f64) -> (Vec<(f64, Vec2, usize)>, bool) {
-    let Some(sh) = sk.shape(ci) else { return (Vec::new(), false) };
+/// The cuts on a curve a trim chooses between, made once for any number of trim points
+/// ([`TrimCuts::around`]): crossings and touching ends, in order along the curve, the curve's own
+/// ends left out.
+#[derive(Clone, Debug, Default)]
+struct TrimCuts {
+    cuts: Vec<(f64, Vec2, usize)>,
+    /// A whole circle: the cuts wrap round.
+    full: bool,
+}
+
+fn trim_cuts(sk: &Sketch, ci: usize) -> TrimCuts {
+    let Some(sh) = sk.shape(ci) else { return TrimCuts::default() };
     let (t0, t1) = sh.range();
     let full = sh.is_full();
     let span = t1 - t0;
@@ -390,20 +399,82 @@ fn bracket(sk: &Sketch, ci: usize, tq: f64) -> (Vec<(f64, Vec2, usize)>, bool) {
         .filter(|(t, _, _)| full || (*t > t0 + 1e-9 * span && *t < t1 - 1e-9 * span && ends.iter().all(|e| e.dist(sh.point(*t)) >= TOL * 10.0)))
         .collect();
     cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    if full {
-        if cuts.len() < 2 {
-            return (Vec::new(), true);
+    TrimCuts { cuts, full }
+}
+
+impl TrimCuts {
+    /// The cuts bracketing parameter `tq`: (before, after) with their cutter curves, and whether
+    /// the curve is a whole circle.
+    fn around(&self, tq: f64) -> (Vec<(f64, Vec2, usize)>, bool) {
+        let cuts = &self.cuts;
+        if self.full {
+            if cuts.len() < 2 {
+                return (Vec::new(), true);
+            }
+            // Cuts around tq on the circle (wrapping).
+            let after = cuts.iter().position(|c| c.0 > tq).unwrap_or(0);
+            let before = (after + cuts.len() - 1) % cuts.len();
+            let mut two = vec![cuts[before], cuts[after]];
+            two.sort_by(|a, b| a.0.total_cmp(&b.0));
+            return (two, true);
         }
-        // Cuts around tq on the circle (wrapping).
-        let after = cuts.iter().position(|c| c.0 > tq).unwrap_or(0);
-        let before = (after + cuts.len() - 1) % cuts.len();
-        let mut two = vec![cuts[before], cuts[after]];
-        two.sort_by(|a, b| a.0.total_cmp(&b.0));
-        return (two, true);
+        let before = cuts.iter().rev().find(|c| c.0 < tq).copied();
+        let after = cuts.iter().find(|c| c.0 > tq).copied();
+        (before.into_iter().chain(after).collect(), false)
     }
-    let before = cuts.iter().rev().find(|c| c.0 < tq).copied();
-    let after = cuts.iter().find(|c| c.0 > tq).copied();
-    (before.into_iter().chain(after).collect(), false)
+}
+
+/// The cut parameters bracketing `tq` on curve `ci`: (before, after) with their cutter curves.
+fn bracket(sk: &Sketch, ci: usize, tq: f64) -> (Vec<(f64, Vec2, usize)>, bool) {
+    trim_cuts(sk, ci).around(tq)
+}
+
+/// What the Trim tool's hover needs of one curve, made once per sketch state: the curve and the
+/// cuts on it. Finding the cuts intersects the curve with every other one (free-form ones by
+/// their polylines), while the piece under the cursor ([`TrimHover::piece`]) only looks the
+/// cursor up among them, so the hover keeps this while the sketch is unchanged and asks it on
+/// each mouse move.
+#[derive(Clone, Debug)]
+pub struct TrimHover {
+    sh: Shape,
+    cuts: TrimCuts,
+}
+
+/// The [`TrimHover`] of `curve`. `None` where trim works otherwise (a free-form or infinite
+/// curve) or the curve isn't in the sketch: the tool shows the curve.
+pub fn trim_hover(sk: &Sketch, curve: &str) -> Option<TrimHover> {
+    let ci = sk.curve_index(curve)?;
+    let c = sk.curves.get(ci)?;
+    if c.infinite || c.kind.is_freeform() {
+        return None;
+    }
+    let sh = sk.shape(ci)?;
+    Some(TrimHover { sh, cuts: trim_cuts(sk, ci) })
+}
+
+impl TrimHover {
+    /// The piece a trim at `at` takes away, as [`trim_piece`] answers it.
+    pub fn piece(&self, at: Vec2) -> Option<Vec<Vec2>> {
+        let sh = &self.sh;
+        let tq = sh.param(sh.project(at));
+        let (t0, t1) = sh.range();
+        let (cuts, full) = self.cuts.around(tq);
+        let (a, b) = match (cuts.as_slice(), full) {
+            ([], _) => (t0, t1),
+            // A whole circle: the arc between the two crossings round `at`.
+            ([x, y], true) => {
+                if tq > x.0 && tq < y.0 {
+                    (x.0, y.0)
+                } else {
+                    (y.0, x.0 + TAU)
+                }
+            }
+            (_, true) => return None,
+            (cuts, false) => (cuts.iter().rev().find(|c| c.0 < tq).map_or(t0, |c| c.0), cuts.iter().find(|c| c.0 > tq).map_or(t1, |c| c.0)),
+        };
+        let n = if matches!(sh, Shape::Line { .. }) { 1 } else { 64 };
+        Some((0..=n).map(|i| sh.point(a + (b - a) * f64::from(i) / f64::from(n))).collect())
+    }
 }
 
 /// The piece of `curve` a trim at `at` takes away, as points along it, for the Trim tool to show
@@ -411,30 +482,7 @@ fn bracket(sk: &Sketch, ci: usize, tq: f64) -> (Vec<(f64, Vec2, usize)>, bool) {
 /// cuts it, or the whole curve where nothing crosses it. `None` where trim works otherwise (a
 /// free-form or infinite curve) or the curve isn't in the sketch: the tool shows the curve.
 pub fn trim_piece(sk: &Sketch, curve: &str, at: Vec2) -> Option<Vec<Vec2>> {
-    let ci = sk.curve_index(curve)?;
-    let c = sk.curves.get(ci)?;
-    if c.infinite || c.kind.is_freeform() {
-        return None;
-    }
-    let sh = sk.shape(ci)?;
-    let tq = sh.param(sh.project(at));
-    let (t0, t1) = sh.range();
-    let (cuts, full) = bracket(sk, ci, tq);
-    let (a, b) = match (cuts.as_slice(), full) {
-        ([], _) => (t0, t1),
-        // A whole circle: the arc between the two crossings round `at`.
-        ([x, y], true) => {
-            if tq > x.0 && tq < y.0 {
-                (x.0, y.0)
-            } else {
-                (y.0, x.0 + TAU)
-            }
-        }
-        (_, true) => return None,
-        (cuts, false) => (cuts.iter().rev().find(|c| c.0 < tq).map_or(t0, |c| c.0), cuts.iter().find(|c| c.0 > tq).map_or(t1, |c| c.0)),
-    };
-    let n = if matches!(sh, Shape::Line { .. }) { 1 } else { 64 };
-    Some((0..=n).map(|i| sh.point(a + (b - a) * f64::from(i) / f64::from(n))).collect())
+    trim_hover(sk, curve)?.piece(at)
 }
 
 /// Trim and extend refuse an offset's output: its ends are recomputed from its source curves on
@@ -555,6 +603,14 @@ fn release_source_line_offsets(sk: &mut Sketch, doc: &solidcraft_doc::Document, 
     Ok(released)
 }
 
+/// Whether the sketch already holds point `m` at the middle of line `l`, though no constraint says
+/// so: adding that Midpoint takes away no degree of freedom (a center rectangle's centre, held on
+/// one diagonal, is the other's middle too because the diagonals bisect each other).
+fn middle_implied(sk: &Sketch, m: usize, l: usize) -> bool {
+    let mut with = sk.clone();
+    add_c(&mut with, ConstraintKind::Midpoint { p: m, l }).is_ok() && dof_now(&with) == dof_now(sk)
+}
+
 /// Remove the piece of curve `ci` around `at`: between the nearest intersections on either
 /// side, or the whole curve when nothing crosses it. Returns what `sketch.trim` reports and the
 /// removed piece as a polyline.
@@ -597,6 +653,18 @@ fn remove_piece(sk: &mut Sketch, ci: usize, at: Vec2, cmd: &str) -> Result<(Valu
             .then(|| dimension.id.clone())
         })
         .collect();
+    // Points held at the middle of the trimmed line (a center rectangle's centre on its first
+    // diagonal): `release_extent` drops that hold, so remember them for the cuts below.
+    let midpoints: Vec<usize> = sk
+        .constraints
+        .iter()
+        .filter_map(|k| match k.kind {
+            ConstraintKind::Midpoint { p, l } if l == ci => Some(p),
+            _ => None,
+        })
+        .collect();
+    // The sketch as it was, for `middle_implied`: only needed when a midpoint can be cut.
+    let before = (!midpoints.is_empty()).then(|| sk.clone());
     release_extent(sk, ci);
     let tangencies = endpoint_tangencies(sk, ci);
     let ts: Vec<f64> = cuts.iter().map(|c| c.0).collect();
@@ -608,8 +676,40 @@ fn remove_piece(sk: &mut Sketch, ci: usize, at: Vec2, cmd: &str) -> Result<(Valu
     } else {
         ts.iter().filter(|t| **t < tq).count()
     };
+    // A cut on a point already held there ends the piece on that point: no second point.
+    let mut welds: Vec<(usize, usize)> = Vec::new();
     for (pi, c) in pts.iter().zip(&cuts) {
-        pin(sk, *pi, c.2)?;
+        let cutter = c.2;
+        let Some(at) = sk.point(*pi) else { continue };
+        let near = |sk: &Sketch, p: usize| sk.point(p).is_some_and(|q| q.dist(at) < TOL * 10.0);
+        // The cutter's middle, held there, is taken as its ends are (`pin`).
+        let held = sk.constraints.iter().find_map(|k| match k.kind {
+            ConstraintKind::Midpoint { p, l } if l == cutter && near(sk, p) => Some(p),
+            _ => None,
+        });
+        if let Some(m) = held {
+            welds.push((*pi, m));
+        } else if let Some(m) = midpoints.iter().copied().find(|m| near(sk, *m)) {
+            // The trimmed line's middle: it moves to the cutter's middle when the sketch makes it
+            // that too (a center rectangle's diagonals bisect each other), else it stays on the
+            // cutter. A cutter whose middle is there only by chance gets no hold it never had.
+            welds.push((*pi, m));
+            let middle = match sk.curves.get(cutter).map(|c| &c.kind) {
+                Some(CurveKind::Line { a, b }) => sk.point(*a).zip(sk.point(*b)).map(|(a, b)| (a + b) * 0.5),
+                _ => None,
+            };
+            let implied = match &before {
+                Some(was) if middle.is_some_and(|q| q.dist(at) < TOL * 10.0) => middle_implied(was, m, cutter),
+                _ => false,
+            };
+            if implied {
+                add_c(sk, ConstraintKind::Midpoint { p: m, l: cutter })?;
+            } else {
+                pin(sk, m, cutter)?;
+            }
+        } else {
+            pin(sk, *pi, cutter)?;
+        }
     }
     let gone = pieces.get(k).copied().ok_or_else(|| bad(cmd, "piece"))?;
     let keep: Vec<usize> = pieces.iter().copied().filter(|x| *x != gone).collect();
@@ -632,6 +732,13 @@ fn remove_piece(sk: &mut Sketch, ci: usize, at: Vec2, cmd: &str) -> Result<(Valu
     };
     rebind_endpoint_tangencies(sk, ci, &pieces, &tangencies);
     let keep: Vec<usize> = pieces.iter().copied().filter(|x| *x != gone).collect();
+    for &(from, to) in &welds {
+        for piece in &keep {
+            if let Some(c) = sk.curves.get_mut(*piece) {
+                c.kind.map_points(&|p| if p == from { to } else { p });
+            }
+        }
+    }
     tie(sk, &keep)?;
     if let Some((a, _)) = sk.curves.get(ci).and_then(|c| c.kind.ends()) {
         for dimension in &mut sk.constraints {
@@ -983,6 +1090,16 @@ fn line_aim(sk: &Sketch, ci: usize, at: Vec2) -> Result<Option<LineAim>> {
 /// (the end is connected to a line running on from it).
 pub fn extend_preview(sk: &solidcraft_sketch::Sketch, ci: usize, hover_pos: Vec2) -> Option<Vec2> {
     line_aim(sk, ci, hover_pos).ok().flatten().map(|aim| aim.hit)
+}
+
+/// Which end of line or arc `ci` an Extend at `at` grows, as `sketch.extend` and its previews
+/// choose it: `Some(true)` for its `b` end. Unless the sketch has an infinite line (which is cut
+/// short about the cursor), [`extend_preview`] and [`extend_arc_preview`] depend on `at` only
+/// through this choice, so a hover may keep a preview while the cursor stays nearer that end.
+pub fn extend_end_at(sk: &Sketch, ci: usize, at: Vec2) -> Option<bool> {
+    let (CurveKind::Line { a, b } | CurveKind::Arc { a, b, .. }) = sk.curves.get(ci)?.kind else { return None };
+    let (qa, qb) = (sk.point(a)?, sk.point(b)?);
+    Some(at.dist(qb) <= at.dist(qa))
 }
 
 /// One end of an arc growing along the arc's own circle, as a new arc, and what stops it.
