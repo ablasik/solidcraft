@@ -459,9 +459,9 @@ fn page_path(index: usize) -> String {
 
 fn search_header(ui: &mut egui::Ui, app: &mut SolveApp) {
     let typed = drive_search(ui, app);
-    let field = ui_kit::preferences_search_field(ui, egui::Id::new("prefs_search"), &mut app.prefs_window.filter, crate::i18n::tr("prefs.search"));
+    let field = ui_kit::preferences_search_field(ui, egui::Id::unique("prefs_search"), &mut app.prefs_window.filter, crate::i18n::tr("prefs.search"));
     if typed {
-        place_search_cursor(ui.ctx(), egui::Id::new("prefs_search"), app.prefs_window.filter.chars().count());
+        place_search_cursor(ui.ctx(), egui::Id::unique("prefs_search"), app.prefs_window.filter.chars().count());
     }
     crate::scenario::publish_handle("prefs:search", field.rect.center());
     if field.has_focus() {
@@ -478,7 +478,7 @@ fn drive_search(ui: &mut egui::Ui, app: &mut SolveApp) -> bool {
     if crate::keymap::capturing(app) {
         return false;
     }
-    let id = egui::Id::new("prefs_search");
+    let id = egui::Id::unique("prefs_search");
     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
         ctx.memory_mut(|memory| memory.request_focus(id));
     }
@@ -1025,6 +1025,9 @@ macro_rules! preference_settings {
     (@control $app:ident, $ui:ident, $field:ident, check_id($label:literal)) => {
         ui_kit::checkbox($ui, $app.tr($label), &mut $app.preferences.$field)
     };
+    (@control $app:ident, $ui:ident, $field:ident, check_id_help($label:literal, $help:literal)) => {
+        ui_kit::checkbox($ui, $app.tr($label), &mut $app.preferences.$field).on_hover_text($app.tr($help))
+    };
     (@control $app:ident, $ui:ident, $field:ident, number($label:literal, $range:expr)) => {
         ui_kit::row($ui, $app.tr($label), |ui| {
             ui_kit::number_field(ui, &mut $app.preferences.$field, $range, 1.0, "")
@@ -1445,6 +1448,8 @@ preference_settings! {
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");
+    /// Reuse a command's safe values and options after it succeeds, until the app closes. Off by default: each dialog opens with its usual defaults.
+    remember_dialog_values: bool = false, PAGE_TOOLS => check_id_help("prefs.remember_dialog_values", "prefs.remember_dialog_values.help");
     /// Placing a Single hole snaps to the middle of the face and the centres of its round edges
     /// (`hole_place`). Off by default: a hole goes where it is clicked.
     hole_snaps: bool = false, PAGE_TOOLS => check("Snap to face and edge centres");
@@ -1668,6 +1673,11 @@ preference_settings! {
     ellipse_axes: bool = true, PAGE_SKETCH;
     /// Drive Joints shows the moved parts' old place as a ghost (its Show ghost box, #5905).
     drive_joints_ghost: bool = true, PAGE_TOOLS => check_tr("prefs.design_tools.ghost");
+    /// While Move's triad drags a component drawn as a layer of its own, what is under the pointer
+    /// is still picked and highlighted, as before #7273. Off by default: such a drag picks nothing,
+    /// so a step neither meshes the dragged bodies where they stand nor looks up the Browser row a
+    /// highlight follows (`drag_layer::holds_pointer`).
+    move_drag_highlights: bool = false, PAGE_TOOLS => check_id("prefs.move_drag_highlights");
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
 }
@@ -2732,7 +2742,7 @@ impl SettingReset {
 /// when a font was picked, and egui keeps that in the saved window state: it then opened as its
 /// title bar alone, for good (#1800). Unfold it.
 fn unfold(ctx: &egui::Context) {
-    if let Some(mut body) = egui::collapsing_header::CollapsingState::load(ctx, egui::Id::new("sc_prefs").with("collapsing"))
+    if let Some(mut body) = egui::collapsing_header::CollapsingState::load(ctx, egui::Id::unique("sc_prefs").with("collapsing"))
         && !body.is_open()
     {
         body.set_open(true);
@@ -2777,7 +2787,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let before = app.preferences.clone();
     let capturing = crate::keymap::capturing(app);
     let pending = apply_pending(app);
-    let window = ui_kit::Window::new(egui::Id::new("sc_prefs"), "settings", app.tr("ui.preferences"))
+    let window = ui_kit::Window::new(egui::Id::unique("sc_prefs"), "settings", app.tr("ui.preferences"))
         .cards(10.0 / 3.0)
         .page_rows(24.0)
         .page_header_in_titlebar()
@@ -3193,7 +3203,7 @@ fn button_job_picker(
         [None, Some(ButtonJob::Settings)].into_iter().chain(views.into_iter().chain(keys).chain(commands).map(Some)).collect();
     let entries: Vec<(String, String)> = jobs.iter().map(|job| (button_job_value(job.as_ref()), button_job_label(app, job.as_ref()))).collect();
     let options: Vec<_> = entries.iter().map(|(value, label)| ui_kit::SearchOption { value, label, handle: None }).collect();
-    let filter_id = egui::Id::new(("sc_space_mouse_button_filter", number));
+    let filter_id = egui::Id::unique(("sc_space_mouse_button_filter", number));
     let mut filter: String = ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
     let id = format!("sc_space_mouse_button_{number}");
     let chosen = ui_kit::searchable_dropdown(ui, &id, &button_job_label(app, current), &mut filter, &options, None, None);
@@ -4369,6 +4379,7 @@ mod tests {
             restored.load_prefs(&app.prefs());
             assert_eq!(restored.preferences.trackpad_zoom_modifier, value);
         }
+
         for invalid in [json!("super"), json!(""), json!(42), json!(null)] {
             assert!(set(&mut app, &json!({"trackpad_zoom_modifier": invalid})).is_err());
             assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
@@ -4379,6 +4390,21 @@ mod tests {
         app.preferences.trackpad_zoom_modifier = TrackpadZoomModifier::Cmd;
         reset_preferences(&mut app.preferences, PAGE_NAVIGATION);
         assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+    }
+
+    #[test]
+    fn command_dialog_value_memory_defaults_off_persists_and_resets() {
+        assert!(!Prefs::default().remember_dialog_values);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert!(!app.preferences.remember_dialog_values);
+        app.preferences.remember_dialog_values = true;
+        assert_eq!(serde_json::to_value(&app.preferences).unwrap()["remember_dialog_values"], true);
+
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&app.prefs());
+        assert!(restored.preferences.remember_dialog_values);
+        reset_preferences(&mut app.preferences, PAGE_TOOLS);
+        assert!(!app.preferences.remember_dialog_values);
     }
 
     #[test]
@@ -4996,7 +5022,7 @@ mod tests {
         assert!(h.app.space_mouse.calibrating.is_some() && h.app.prefs_window.open);
         let window = crate::scenario::rect_of("dialog:window").expect("the calibration window is the last window drawn");
         let top = h.ctx.layer_id_at(window.center());
-        assert!(top.is_some_and(|layer| layer.id == egui::Id::new("sc_space_mouse_calibration")), "top is {top:?}");
+        assert!(top.is_some_and(|layer| layer.id == egui::Id::unique("sc_space_mouse_calibration")), "top is {top:?}");
     }
 
     /// Scrolls vertically to the handle, then clicks after the wheel animation settles.
@@ -5019,6 +5045,7 @@ mod tests {
             }
             h.app.synthetic.push(egui::Event::PointerMoved(body.center()));
             h.app.synthetic.push(egui::Event::MouseWheel {
+                source: egui::MouseWheelSource::Unknown,
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, if target.is_some_and(|at| at.y < body.top()) { 60.0 } else { -60.0 }),
                 modifiers: egui::Modifiers::NONE,
@@ -6660,10 +6687,11 @@ mod tests {
                 ..Default::default()
             };
             let app = &mut h.app;
-            let out = h.ctx.run_ui(raw, |ui| {
+            let mut out = h.ctx.run_ui(raw, |ui| {
                 app.logic(ui.ctx());
                 app.ui(ui);
             });
+            out.textures_delta.clear();
             let commands = out.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default();
             commands.into_iter().filter_map(|c| if let egui::ViewportCommand::SetTheme(t) = c { Some(t) } else { None }).collect::<Vec<_>>()
         };
@@ -8261,7 +8289,7 @@ mod tests {
     fn picking_a_font_keeps_the_preferences_window_unfolded() {
         use egui::collapsing_header::CollapsingState;
         use serde_json::json;
-        let body = egui::Id::new("sc_prefs").with("collapsing");
+        let body = egui::Id::unique("sc_prefs").with("collapsing");
         let folded = |h: &crate::scenario::Harness| CollapsingState::load(&h.ctx, body).is_some_and(|s| !s.is_open());
         let mut h = crate::scenario::Harness::new();
         h.call("ui.prefs", json!({"open":"Interface"}));

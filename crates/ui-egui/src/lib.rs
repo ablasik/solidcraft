@@ -568,6 +568,8 @@ pub struct SolveApp {
     pub render_workspace: render_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
+    /// Each command dialog's options and values as last applied (this session only).
+    pub(crate) remembered_commands: Vec<dialogs::RememberedCommand>,
     /// The Change Parameters window, when open.
     pub params: Option<params_dialog::ParamsDialog>,
     /// The Design Properties window, when open.
@@ -741,6 +743,8 @@ pub struct SolveApp {
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
+    /// A click that came in the same frame as typing before it, held for the next frame.
+    held_click: Vec<egui::Event>,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Control requests that change the design, held while a file loads or an agent's design
     /// change computes.
@@ -758,6 +762,9 @@ pub struct SolveApp {
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     shot_chat_turns: std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     queued_shots: Vec<(u64, f64, u32)>,
+    /// Screenshots egui hands back, by token; egui calls back, `collect_screenshots` reads them.
+    shot_tx: std::sync::mpsc::Sender<(u64, std::sync::Arc<egui::ColorImage>)>,
+    shot_rx: std::sync::mpsc::Receiver<(u64, std::sync::Arc<egui::ColorImage>)>,
     shot_token: u64,
     styled: bool,
     fitted: bool,
@@ -813,6 +820,7 @@ impl SolveApp {
         #[cfg(not(target_arch = "wasm32"))]
         solidcraft_engine::slicer_files::clean_old();
         let tree = browser::TreeState::for_session(session.uid);
+        let (shot_tx, shot_rx) = std::sync::mpsc::channel();
         let mut app = SolveApp {
             panel_runtime: None,
             viewport_status: Default::default(),
@@ -839,6 +847,7 @@ impl SolveApp {
             render_workspace,
             tool: None,
             dialog: None,
+            remembered_commands: Vec::new(),
             params: None,
             design_properties: None,
             sketch_report: None,
@@ -923,6 +932,7 @@ impl SolveApp {
             frame_rate: frame_rate::FrameRate::default(),
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
+            held_click: Vec::new(),
             control_rx: None,
             agent_chat: Default::default(),
             ai_connect: Default::default(),
@@ -933,6 +943,8 @@ impl SolveApp {
             pending_shots: Vec::new(),
             shot_chat_turns: Default::default(),
             queued_shots: Vec::new(),
+            shot_tx,
+            shot_rx,
             shot_token: 0,
             styled: false,
             fitted: false,
@@ -2210,6 +2222,12 @@ impl SolveApp {
             self.edit_sketch(id);
             return;
         }
+        // Nothing here knows what it holds: it says so, and waits for the build that does.
+        if let FeatureKind::NewerFileFeature { raw } = &f.kind {
+            let why = raw.why();
+            self.set_status(why, true);
+            return;
+        }
         let Some(idx) = self.session.doc.feature_index(id) else { return };
         let marker = self.finish_sketch_for_edit();
         self.tool = None;
@@ -2514,6 +2532,23 @@ impl SolveApp {
         self.status_undo = false;
     }
 
+    /// Tell the user when the open design came from a newer SolidCraft: the notice on the status
+    /// line, and what this version couldn't read in the messages.
+    pub(crate) fn say_newer_file(&mut self) {
+        let Some(file) = self.session.doc.newer_file.clone() else { return };
+        for what in &file.not_understood {
+            let text = i18n::format("document.newer_file_not_read", &[("what", what)]);
+            self.messages.push(&text, false, now_ms());
+        }
+        let text = if file.format <= file.reads_up_to && !file.unknown_changes.is_empty() {
+            let change = file.unknown_changes.first().map_or("", String::as_str);
+            i18n::format("document.newer_file_change", &[("format", &file.format.to_string()), ("change", change)])
+        } else {
+            i18n::format("document.newer_file", &[("format", &file.format.to_string()), ("reads", &file.reads_up_to.to_string())])
+        };
+        self.set_status(text, false);
+    }
+
     pub fn open_path(&mut self, path: &str) {
         match documents::reuse_path(self, path) {
             Ok(true) => return,
@@ -2531,6 +2566,7 @@ impl SolveApp {
             self.cam.set_view(StandardView::Iso);
             self.fit_view();
             stand_up::offer(self, path, &[], Some(&r));
+            self.say_newer_file();
         }
     }
 
@@ -2985,7 +3021,7 @@ impl SolveApp {
         self.return_from_extrude_view();
         agent_cursor::step(self, ctx);
         browser::eye_drag_frame(self, ctx);
-        if !self.synthetic.is_empty() {
+        if !self.synthetic.is_empty() || !self.held_click.is_empty() {
             ctx.request_repaint();
         }
         issue_report::tick(self, ctx);
@@ -3025,7 +3061,26 @@ impl SolveApp {
     /// capture hides the report waits for it (the control channel's typing too).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         self.synthetic_input(raw);
+        finite_input(raw);
+        self.hold_click_after_typing(raw);
         issue_report::hold_input(self, raw);
+    }
+
+    /// A pointer button after typing in the same frame (a slow frame) waits for the next frame,
+    /// with the events after it. egui 0.37 drops a field's focus on a click elsewhere before the
+    /// field reads the frame's typing, which lost what was typed. Drop once emilk/egui#8763 is fixed.
+    fn hold_click_after_typing(&mut self, raw: &mut egui::RawInput) {
+        if !self.held_click.is_empty() {
+            let mut events = std::mem::take(&mut self.held_click);
+            events.append(&mut raw.events);
+            raw.events = events;
+        }
+        let button = raw.events.iter().position(|e| matches!(e, egui::Event::PointerButton { .. }));
+        if let Some(i) = button
+            && raw.events[..i].iter().any(issue_report::typing)
+        {
+            self.held_click = raw.events.split_off(i);
+        }
     }
 
     /// Inject synthetic events (one pointer event per frame).
@@ -3417,10 +3472,15 @@ impl SolveApp {
         // A view that just moved is drawn with fewer AO samples: shoot the full-quality frame
         // that follows (#7165), or after half a second a view that keeps moving as it is.
         let settled = viewport::ao_settled(self, ctx);
+        let shot_tx = &self.shot_tx;
         self.queued_shots.retain_mut(|(token, at, frames)| {
             *frames += 1;
             if now >= *at && *frames >= 3 && (settled || now >= *at + 500.0) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(*token)));
+                let (token, tx, ctx2) = (*token, shot_tx.clone(), ctx.clone());
+                ctx.request_screenshot(move |image| {
+                    let _ = tx.send((token, image));
+                    ctx2.request_repaint();
+                });
                 false
             } else {
                 true
@@ -3445,23 +3505,13 @@ impl SolveApp {
                 true
             }
         });
+        // Drained every frame: a shot that comes after its request was cancelled or timed out
+        // is dropped here instead of waiting in the channel.
+        let shots: Vec<_> = self.shot_rx.try_iter().collect();
         if self.pending_shots.is_empty() && !issue_report::pending(self) {
             return;
         }
-        let events: Vec<_> = ctx.input(|i| {
-            i.raw
-                .events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Screenshot { user_data, image, .. } => {
-                        let token = user_data.data.as_ref().and_then(|d| d.downcast_ref::<u64>()).copied()?;
-                        Some((token, image.clone()))
-                    }
-                    _ => None,
-                })
-                .collect()
-        });
-        for (token, image) in events {
+        for (token, image) in shots {
             issue_report::receive(self, token, image.clone());
             if let Some(i) = self.pending_shots.iter().position(|(t, ..)| *t == token) {
                 let (_, path, reply, _) = self.pending_shots.remove(i);
@@ -3481,6 +3531,17 @@ impl SolveApp {
             false
         });
     }
+}
+
+/// Drop pointer, wheel and gesture events that carry a non-finite number: egui 0.37 asserts on them.
+fn finite_input(raw: &mut egui::RawInput) {
+    raw.events.retain(|event| match event {
+        egui::Event::PointerMoved(pos) | egui::Event::PointerButton { pos, .. } | egui::Event::MiddleClickPaste { pos, .. } => pos.is_finite(),
+        egui::Event::MouseMoved(delta) | egui::Event::MouseWheel { delta, .. } => delta.is_finite(),
+        egui::Event::Zoom(amount) | egui::Event::Rotate(amount) => amount.is_finite(),
+        egui::Event::Touch { pos, force, .. } => pos.is_finite() && force.is_none_or(f32::is_finite),
+        _ => true,
+    });
 }
 
 /// The window is minimised or fully covered, so it presents no frames (#1677). Unknown counts as
