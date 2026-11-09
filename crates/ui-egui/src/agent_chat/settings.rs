@@ -519,7 +519,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             permissions_section(app, ui);
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let browsing = !crate::ui_kit::settings_search::querying(ui) || app.prefs_window.section == crate::prefs::PAGE_ASSISTANT;
+                let browsing = !crate::ui_kit::settings_search::querying(ui) || app.prefs_window.shell.section == crate::prefs::PAGE_ASSISTANT;
                 if app.preferences.ai_features && browsing && app.agent_chat.detection.is_none() && app.agent_chat.detecting.is_none() {
                     refresh(app, &ui.ctx().clone());
                 }
@@ -618,7 +618,7 @@ fn permissions_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             let names: std::collections::HashMap<_, _> = agents::entries(app).into_iter().map(|entry| (entry.id, entry.name)).collect();
             for (agent, tools) in remembered {
-                let t = crate::theme::Tokens::get();
+                let t = solidcraft_theme::Tokens::get();
                 ui_kit::settings_block(ui, names.get(&agent).unwrap_or(&agent), t.space_24 * 6.0 + t.space_6, |ui| {
                     ui.horizontal(|ui| {
                         let reset = ui_kit::button(ui, tr("ui.ai_reset"), ui_kit::Button::Small);
@@ -635,7 +635,7 @@ fn permissions_section(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 fn panel_section(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     ui_kit::settings_section(ui, "panel", tr("ui.ai_panel"), |ui| {
         let label_width = [tr("ui.agent_chat_side"), tr("ui.agent_chat_turn_limit")]
             .iter()
@@ -702,7 +702,7 @@ fn pointer_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     .backing_on_hover_text(solidcraft_ui_text::tr_label("Show the pointer an AI agent moves (#35)"));
                 crate::scenario::publish_target("prefs:agent_pointer_show", response.rect);
                 ui.add_enabled_ui(app.ui.agent_cursor.show, |ui| {
-                    let speed_label_width = ui_kit::ContentWidth::label(ui, tr("ai.prefs.pointer_speed")) + crate::theme::Tokens::get().space_4;
+                    let speed_label_width = ui_kit::ContentWidth::label(ui, tr("ai.prefs.pointer_speed")) + solidcraft_theme::Tokens::get().space_4;
                     ui_kit::settings_form(ui, speed_label_width, |ui| {
                         ui_kit::row(ui, tr("ai.prefs.pointer_speed"), |ui| {
                             let name = tr("prefs.assistant_pointer_speed");
@@ -767,7 +767,7 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut retimed: Option<(String, u64)> = None;
     let mut reeffort: Option<(String, String)> = None;
     let mut picked_model: Option<(String, ui_kit::Picked)> = None;
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     ui_kit::settings_section_count(ui, "agents", tr("ui.ai_agents"), Some(&all.len().to_string()), |ui| {
         if app.agent_chat.detecting.is_some() {
             ui_kit::text(ui, tr("ui.agent_chat_detecting"), ui_kit::Text::Hint("detecting"));
@@ -1496,7 +1496,7 @@ mod card_tests {
                                     .job
                                     .sections
                                     .iter()
-                                    .all(|section| section.format.font_id.size == crate::theme::Tokens::get().font_page_heading);
+                                    .all(|section| section.format.font_id.size == solidcraft_theme::Tokens::get().font_page_heading);
                         }
                     });
                 }
@@ -1513,7 +1513,7 @@ mod card_tests {
             for key in ["assistant_availability", "permissions", "agents", "instructions", "panel", "assistant_connecting", "agent_pointer"] {
                 let section = scenario::rect_of(&format!("prefs:section:{key}")).unwrap();
                 assert!((section.left() - body.left()).abs() <= 1.0 && (section.right() - body.right()).abs() <= 1.0);
-                assert!((section.height() - (crate::theme::Tokens::get().control_height + crate::theme::Tokens::get().space_2)).abs() <= 1.0);
+                assert!((section.height() - (solidcraft_theme::Tokens::get().control_height + solidcraft_theme::Tokens::get().space_2)).abs() <= 1.0);
                 if let Some(bottom) = previous {
                     assert!((section.top() - bottom - 38.0).abs() <= 1.0, "{theme}: {key} retains the page section rhythm");
                 }
@@ -1536,7 +1536,7 @@ mod card_tests {
                 h.call("ui.resize", json!({"width":1600,"height":1400}));
                 h.call("ui.prefs", json!({"open":"General","theme":theme}));
                 for query in ["Speed", "Pointer speed", "Motion speed"] {
-                    h.app.prefs_window.filter = query.into();
+                    h.app.prefs_window.shell.filter = query.into();
                     h.frames(6);
                     let (_, _, hits) = nav(&h.ctx);
                     let matches: Vec<_> = hits.iter().enumerate().filter(|(_, hit)| hit.page == crate::prefs::PAGE_ASSISTANT).collect();
@@ -1545,8 +1545,8 @@ mod card_tests {
                     h.frames(2);
                     h.step(&json!({"key":"Enter"})).unwrap();
                     h.frames(30);
-                    assert_eq!(h.app.prefs_window.section, crate::prefs::PAGE_ASSISTANT);
-                    assert!(h.app.prefs_window.filter.is_empty());
+                    assert_eq!(h.app.prefs_window.shell.section, crate::prefs::PAGE_ASSISTANT);
+                    assert!(h.app.prefs_window.shell.filter.is_empty());
                     let slider = scenario::rect_of("prefs:agent_pointer_speed").unwrap();
                     assert_eq!(slider, scenario::rect_of("dialog:slider:Pointer speed").unwrap());
                     let body = scenario::rect_of("dialog:page_body").unwrap();
@@ -1607,7 +1607,7 @@ mod card_tests {
             h.call("ui.resize", json!({"width":1600,"height":1800}));
             h.call("ui.prefs", json!({"open":"General","theme":theme}));
             for query in ["public", "api-public", "public-model"] {
-                h.app.prefs_window.filter = query.into();
+                h.app.prefs_window.shell.filter = query.into();
                 h.frames(6);
                 let (_, _, hits) = nav(&h.ctx);
                 let matches: Vec<_> = hits.iter().enumerate().filter(|(_, hit)| hit.page == crate::prefs::PAGE_ASSISTANT).collect();
@@ -1616,14 +1616,14 @@ mod card_tests {
                 h.frames(2);
                 h.step(&json!({"key":"Enter"})).unwrap();
                 h.frames(30);
-                assert_eq!(h.app.prefs_window.section, crate::prefs::PAGE_ASSISTANT);
-                assert!(h.app.prefs_window.filter.is_empty());
+                assert_eq!(h.app.prefs_window.shell.section, crate::prefs::PAGE_ASSISTANT);
+                assert!(h.app.prefs_window.shell.filter.is_empty());
                 let card = scenario::rect_of("prefs:ai_card:api-public").unwrap();
                 assert!(scenario::rect_of("dialog:page_body").unwrap().contains_rect(card));
                 assert!(scenario::handle_at("prefs:revealed").unwrap().distance(card.center()) <= 1.0, "{query} reveals the same complete card");
             }
             for (query, handle) in [("Request timeout", "prefs:ai_timeout:api-public"), ("Reasoning effort", "prefs:ai_reasoning:api-public")] {
-                h.app.prefs_window.filter = query.into();
+                h.app.prefs_window.shell.filter = query.into();
                 h.frames(6);
                 let (_, _, hits) = nav(&h.ctx);
                 let matches: Vec<_> =
@@ -1633,10 +1633,10 @@ mod card_tests {
                 h.frames(2);
                 h.step(&json!({"key":"Enter"})).unwrap();
                 h.frames(30);
-                assert!(h.app.prefs_window.filter.is_empty());
+                assert!(h.app.prefs_window.shell.filter.is_empty());
                 assert!(scenario::rect_of("dialog:page_body").unwrap().contains_rect(scenario::rect_of(handle).unwrap()));
             }
-            h.app.prefs_window.filter = "Permissions".into();
+            h.app.prefs_window.shell.filter = "Permissions".into();
             h.frames(6);
             let (_, _, hits) = nav(&h.ctx);
             assert!(
@@ -1689,7 +1689,7 @@ mod card_tests {
         h.app.preferences.agent_chat_turn_limit = 37;
         h.call("ui.resize", json!({"width":1600,"height":1400}));
         h.call("ui.prefs", json!({"open":"Assistant"}));
-        h.app.prefs_window.filter = tr("ui.agent_chat_turn_limit").into();
+        h.app.prefs_window.shell.filter = tr("ui.agent_chat_turn_limit").into();
         h.frames(4);
         for limit in [1, 37, 199, 200] {
             h.app.preferences.agent_chat_turn_limit = limit;
@@ -1764,7 +1764,7 @@ mod card_tests {
         h.app.preferences.agent_always_allow.insert("api-public".into(), vec!["view.fit".into()]);
         h.call("ui.resize", json!({"width":1600,"height":1400}));
         h.call("ui.prefs", json!({"open":"Assistant"}));
-        h.app.prefs_window.filter = "Public endpoint".into();
+        h.app.prefs_window.shell.filter = "Public endpoint".into();
         h.frames(4);
         assert_eq!(keys.reads.load(Ordering::SeqCst), 0, "rendering never retrieves a stored key");
         assert!(rx.try_recv().is_err(), "a noncurrent card does not probe or test its endpoint");
@@ -2392,6 +2392,10 @@ mod card_tests {
 
         h.step(&json!({"click":{"handle":"ai_add:preset"}})).unwrap();
         h.frames(3);
+        // The presets outgrow the popup's height: scroll its list to the end, where OpenRouter is.
+        let top = scenario::handle_at("ai_add:preset:Ollama").unwrap();
+        h.call("ui.scroll", json!({"x":top.x,"y":top.y,"delta":-1000}));
+        h.frames(10);
         h.step(&json!({"click":{"handle":"ai_add:preset:OpenRouter"}})).unwrap();
         list_settled(&mut h);
         assert_eq!(requests().last().cloned(), Some(("https://openrouter.ai/api/v1/models".to_string(), false)));

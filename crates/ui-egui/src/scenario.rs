@@ -317,7 +317,7 @@ impl Harness {
         for _ in 0..32 {
             let point = find(self).ok_or_else(|| format!("no widget `{text}` on screen"))?;
             let at = egui::pos2(point[0] as f32, point[1] as f32);
-            let page = self.app.prefs_window.open.then(|| rect_of("prefs:page_body")).flatten();
+            let page = self.app.prefs_window.shell.open.then(|| rect_of("prefs:page_body")).flatten();
             let chrome = ["prefs:ok", "prefs:apply", "prefs:cancel", "prefs:search"].iter().any(|key| handle_at(key) == Some(at));
             let Some(page) = page.filter(|page| !chrome && page.x_range().contains(at.x)) else { return Ok(point) };
             if page.contains(at) {
@@ -835,7 +835,7 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 if r.width() < lo - 0.5 || r.width() > hi + 0.5 {
                     return Err(format!("dialog width {:.0}, want {lo}..{hi}", r.width()));
                 }
-                let clearance = if rect_of("dialog:header").is_some() { crate::theme::Tokens::get().space_8 } else { 0.0 };
+                let clearance = if rect_of("dialog:header").is_some() { solidcraft_theme::Tokens::get().space_8 } else { 0.0 };
                 if (r.right() - (vp.right() - clearance)).abs() > 0.5 || r.top() < vp.top() || r.bottom() > vp.bottom() + 1.0 {
                     return Err(format!("dialog {r:?} is not docked right inside the viewport {vp:?}"));
                 }
@@ -1082,8 +1082,8 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
             }
             "theme_colors" => {
                 // Read the applied tokens after the scenario frame, not the source theme file.
-                let tokens = crate::theme::Tokens::get();
-                let resolved = crate::theme_files::export("Scenario", crate::theme_files::Base::Dark, &tokens);
+                let tokens = solidcraft_theme::Tokens::get();
+                let resolved = crate::theme_files::export("Scenario", crate::theme_files::Base::Dark, &tokens, None);
                 for (key, want) in v.as_object().into_iter().flatten() {
                     if resolved["colors"][key] != *want {
                         return Err(format!("theme colour {key}: got {}, want {want}", resolved["colors"][key]));

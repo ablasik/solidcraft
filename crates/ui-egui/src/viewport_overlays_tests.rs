@@ -185,7 +185,7 @@ fn details_native_value_edits_run_real_commands_without_design_history() {
         h.step(&json!({"click":{"handle":format!("viewport_status:{owner}:setting")}})).unwrap();
         h.frames(3);
         let rect = crate::scenario::rect_of(&format!("details:field:{field}")).unwrap();
-        let at = if field == "stripes" { rect.right_center() - vec2(crate::theme::Tokens::get().space_24, 0.0) } else { rect.center() };
+        let at = if field == "stripes" { rect.right_center() - vec2(solidcraft_theme::Tokens::get().space_24, 0.0) } else { rect.center() };
         h.call("ui.click", json!({"x":at.x,"y":at.y,"double":true}));
         h.step(&json!({"key":"A","ctrl":true})).unwrap();
         h.step(&json!({"text":text})).unwrap();
@@ -370,7 +370,7 @@ fn details_grouped_continuity_key_contains_the_actual_sharp_and_gap_tokens() {
             let effect = h.app.session.status_items().remove(0);
             let details = crate::viewport_details::description(&h.app, &effect);
             let key = &details.key[2];
-            let tokens = crate::theme::Tokens::get();
+            let tokens = solidcraft_theme::Tokens::get();
             assert_eq!(key.value, "12");
             assert_eq!(key.colour, tokens.continuity[2], "actual cube creases use the Sharp scene token");
             assert_eq!(key.pattern_colour, Some(tokens.continuity[3]), "the grouped key also carries the actual Gap scene token");
@@ -462,13 +462,13 @@ fn viewport_status_specimens_clear_and_open_keys_without_engine_changes() {
 #[test]
 fn viewport_status_kinds_keep_shape_outline_and_typography_across_themes() {
     use crate::ui_kit::{StatusItem, StatusKind, StatusPresentation, viewport_status_item};
-    let previous = (crate::theme::is_dark(), crate::theme::vision());
+    let previous = (solidcraft_theme::is_dark(), solidcraft_theme::vision());
     assert_ne!(StatusKind::Mode.icon(), StatusKind::Result.icon());
     assert_ne!(StatusKind::Result.icon(), StatusKind::Attention.icon());
     for dark in [false, true] {
-        for vision in crate::theme::ColorVision::ALL {
-            crate::theme::set_dark(dark);
-            crate::theme::set_vision(vision);
+        for vision in solidcraft_theme::ColorVision::ALL {
+            solidcraft_theme::set_dark(dark);
+            solidcraft_theme::set_vision(vision);
             let t = Tokens::get();
             for (kind, outline) in [(StatusKind::Mode, t.accent), (StatusKind::Result, t.border), (StatusKind::Attention, t.warning)] {
                 let ctx = crate::fonts::test_context();
@@ -484,7 +484,12 @@ fn viewport_status_kinds_keep_shape_outline_and_typography_across_themes() {
                             mono = text.galley.job.sections.first().is_some_and(|s| s.format.font_id.family == egui::FontFamily::Monospace);
                         }
                         Shape::Text(text) if text.galley.job.text == item.name => {
-                            name = text.galley.job.sections.first().is_some_and(|s| s.format.font_id == crate::fonts::semibold(t.font_label));
+                            name = text
+                                .galley
+                                .job
+                                .sections
+                                .first()
+                                .is_some_and(|s| s.format.font_id == crate::ui_kit::type_face::semibold(t.font_label));
                         }
                         _ => {}
                     });
@@ -493,18 +498,18 @@ fn viewport_status_kinds_keep_shape_outline_and_typography_across_themes() {
             }
         }
     }
-    crate::theme::set_dark(previous.0);
-    crate::theme::set_vision(previous.1);
+    solidcraft_theme::set_dark(previous.0);
+    solidcraft_theme::set_vision(previous.1);
 }
 
 #[test]
 fn viewport_status_every_part_is_centred_within_its_pill_in_every_theme() {
     use crate::ui_kit::{StatusItem, StatusKind, StatusPresentation, viewport_status_item};
-    let previous = (crate::theme::is_dark(), crate::theme::vision());
+    let previous = (solidcraft_theme::is_dark(), solidcraft_theme::vision());
     for dark in [false, true] {
-        for vision in crate::theme::ColorVision::ALL {
-            crate::theme::set_dark(dark);
-            crate::theme::set_vision(vision);
+        for vision in solidcraft_theme::ColorVision::ALL {
+            solidcraft_theme::set_dark(dark);
+            solidcraft_theme::set_vision(vision);
             for kind in [StatusKind::Mode, StatusKind::Result, StatusKind::Attention] {
                 for (name, setting, has_key, editable) in [
                     ("Zebra", "12 stripes", false, false),
@@ -550,8 +555,8 @@ fn viewport_status_every_part_is_centred_within_its_pill_in_every_theme() {
             }
         }
     }
-    crate::theme::set_dark(previous.0);
-    crate::theme::set_vision(previous.1);
+    solidcraft_theme::set_dark(previous.0);
+    solidcraft_theme::set_vision(previous.1);
 }
 
 // These tests inspect shapes without submitting their texture uploads to a renderer.
@@ -585,11 +590,11 @@ fn viewport_status_close_hover_has_a_theme_fill_and_native_space_action_in_every
         found
     }
 
-    let previous = (crate::theme::is_dark(), crate::theme::vision());
+    let previous = (solidcraft_theme::is_dark(), solidcraft_theme::vision());
     for dark in [false, true] {
-        for vision in crate::theme::ColorVision::ALL {
-            crate::theme::set_dark(dark);
-            crate::theme::set_vision(vision);
+        for vision in solidcraft_theme::ColorVision::ALL {
+            solidcraft_theme::set_dark(dark);
+            solidcraft_theme::set_vision(vision);
             let t = Tokens::get();
             let ctx = crate::fonts::test_context();
             let item = StatusItem {
@@ -616,8 +621,8 @@ fn viewport_status_close_hover_has_a_theme_fill_and_native_space_action_in_every
             assert_eq!(keyboard, Some(StatusAction::Clear(item.id.clone())), "hover decoration must preserve native Space activation");
         }
     }
-    crate::theme::set_dark(previous.0);
-    crate::theme::set_vision(previous.1);
+    solidcraft_theme::set_dark(previous.0);
+    solidcraft_theme::set_vision(previous.1);
 }
 
 fn draw(ctx: &egui::Context, paint: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
@@ -678,14 +683,14 @@ fn compass_keeps_signed_targets_hover_and_clicks_at_both_scales() {
 #[test]
 fn compass_negative_ends_are_hollow_and_positive_ends_are_chunkier() {
     for dark in [false, true] {
-        let t = Tokens::themed(dark, crate::theme::ColorVision::Off);
+        let t = Tokens::themed(dark, solidcraft_theme::ColorVision::Off);
         for (name, direction, positive) in [("x", Vec3::X, true), ("-x", -Vec3::X, false)] {
             let ctx = crate::fonts::test_context();
             let c = pos2(100.0, 100.0);
             let original = c + vec2(38.0, 0.0);
             let painted = c + (original - c) * 0.84;
             let output = draw(&ctx, |ui| {
-                crate::icons::navigation::axis_tip(ui.painter(), c, name, &direction, painted, 0.5, false, t);
+                crate::icons::navigation::axis_tip(ui.painter(), c, name, direction.into(), painted, 0.5, false, t);
             });
             let circles: Vec<_> = output.shapes.iter().filter_map(|s| if let Shape::Circle(c) = &s.shape { Some(c) } else { None }).collect();
             let end = circles.iter().find(|circle| circle.center == painted).unwrap();
@@ -702,7 +707,7 @@ fn compass_negative_ends_are_hollow_and_positive_ends_are_chunkier() {
                     .collect();
                 assert_eq!(letters.len(), 1, "each axis letter is painted once");
                 let letter = letters[0];
-                assert_eq!(letter.galley.job.sections[0].format.font_id, crate::fonts::bold(Tokens::get().font_compass));
+                assert_eq!(letter.galley.job.sections[0].format.font_id, crate::ui_kit::type_face::bold(Tokens::get().font_compass));
                 assert_eq!(letter.pos.x.fract(), 0.0);
                 assert_eq!(letter.pos.y.fract(), 0.0);
             } else {
@@ -892,7 +897,7 @@ fn sketch_previews_selection_band_and_number_focus_follow_sketch_accent() {
             let output = draw(&h.ctx, |ui| {
                 let r = ui.add(egui::TextEdit::singleline(&mut String::from("20")));
                 r.request_focus();
-                crate::theme::TabAccent::number_focus(ui, &r);
+                solidcraft_theme::TabAccent::number_focus(ui, &r);
             });
             assert!(output.shapes.iter().any(|s| matches!(&s.shape, Shape::Rect(r) if r.stroke.color == t.sketch_accent)));
         }
@@ -922,14 +927,14 @@ fn three_dimensional_sketch_rubber_band_uses_sketch_accent() {
 #[test]
 fn a_hovered_compass_end_turns_white_and_its_letter_takes_the_axis_colour() {
     for dark in [false, true] {
-        let t = Tokens::themed(dark, crate::theme::ColorVision::Off);
+        let t = Tokens::themed(dark, solidcraft_theme::ColorVision::Off);
         for (name, direction, positive) in [("x", Vec3::X, true), ("-x", -Vec3::X, false)] {
             let ctx = crate::fonts::test_context();
             let c = pos2(100.0, 100.0);
             let original = c + vec2(38.0, 0.0);
             let painted = c + (original - c) * 0.84;
             let output = draw(&ctx, |ui| {
-                crate::icons::navigation::axis_tip(ui.painter(), c, name, &direction, painted, 0.5, true, t);
+                crate::icons::navigation::axis_tip(ui.painter(), c, name, direction.into(), painted, 0.5, true, t);
             });
             let circles: Vec<_> = output.shapes.iter().filter_map(|s| if let Shape::Circle(c) = &s.shape { Some(c) } else { None }).collect();
             assert!(circles.iter().any(|circle| circle.center == painted && circle.fill == t.on_accent), "{name}: the hovered end is filled white");
@@ -991,7 +996,8 @@ fn the_shared_toast_draws_old_callers_exactly_as_before() {
             draw(&ctx, |ui| {
                 let t = Tokens::get();
                 let text = "A message that is long enough to wrap in the narrow cases, and not in the wide ones".to_string();
-                let galley = ui.painter().layout(text.clone(), crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
+                let galley =
+                    ui.painter().layout(text.clone(), crate::ui_kit::type_face::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
                 let size = galley.size() + vec2(40.0, 16.0);
                 let expected = Rect::from_center_size(pos2(free.center().x, free.bottom() - size.y * 0.5), size);
                 let got = paint_toast(ui, free, text, error, computing);
@@ -2003,7 +2009,7 @@ fn analysis_status_preferences_take_first_escape_and_release_the_next_frame() {
         }
     });
     h.step(&json!({"key":"Escape"})).unwrap();
-    assert!(!h.app.prefs_window.open);
+    assert!(!h.app.prefs_window.shell.open);
     assert!(h.app.session.analysis.is_some(), "Preferences owns the first Escape even without text focus");
     h.step(&json!({"key":"Escape"})).unwrap();
     assert!(h.app.session.analysis.is_none(), "the next idle frame may end the effect");
@@ -2068,7 +2074,7 @@ fn analysis_status_escape_owner_survives_egui_layout_repasses() {
         );
         assert!(passes >= 2, "the frame must actually repeat its layout");
         assert_eq!(h.app.session.status_items(), before, "{owner} owns one Escape over every pass");
-        assert!(!h.app.prefs_window.open && h.app.dialog.is_none() && h.app.tool.is_none() && !h.app.ui.palette_open);
+        assert!(!h.app.prefs_window.shell.open && h.app.dialog.is_none() && h.app.tool.is_none() && !h.app.ui.palette_open);
         assert!(h.app.viewport_status.open_key.is_none());
         h.frame();
         h.step(&json!({"key":"Escape"})).unwrap();
@@ -2108,7 +2114,7 @@ fn analysis_status_row_and_key_stay_below_preferences_and_cannot_steal_its_click
         }
         let at = crate::scenario::handle_at(&format!("viewport_status:{}:close", item.id)).unwrap();
         h.call("ui.click", json!({"x":at.x,"y":at.y}));
-        assert!(h.app.prefs_window.open);
+        assert!(h.app.prefs_window.shell.open);
         assert!(h.app.session.analysis.is_some(), "an occluded HUD close never receives the window's click");
     }
 }
@@ -2213,7 +2219,7 @@ fn analysis_status_preferences_cancel_can_restore_either_policy_without_reusing_
         h.call("ui.prefs", json!({"open":"Interface"}));
         h.call("ui.prefs", json!({"viewport_analysis_status":!saved}));
         analysis_escape_relayout_frame(&mut h, |app| {
-            assert!(!app.prefs_window.open);
+            assert!(!app.prefs_window.shell.open);
             assert_eq!(app.preferences.viewport_analysis_status, saved, "Cancel restores policy in pass one");
             assert!(app.session.analysis.is_some());
         });
@@ -2236,7 +2242,7 @@ fn analysis_status_preferences_restore_false_keeps_underlying_dialog_through_the
     h.call("ui.prefs", json!({"open":"Interface"}));
     h.call("ui.prefs", json!({"viewport_analysis_status":true}));
     analysis_escape_relayout_frame(&mut h, |app| {
-        assert!(!app.prefs_window.open);
+        assert!(!app.prefs_window.shell.open);
         assert!(!app.preferences.viewport_analysis_status, "Cancel restores false before pass two");
         assert!(app.dialog.is_some(), "Preferences shields the existing command dialog in pass one");
     });
@@ -2352,7 +2358,7 @@ fn section_only_status_modal_owners_take_first_escape_across_real_layout_repasse
         let cut = h.app.session.section;
         analysis_escape_relayout_frame(&mut h, |app| {
             assert_eq!(app.session.section, cut, "{owner} owns the tap in pass one");
-            assert!(!app.prefs_window.open && app.dialog.is_none() && app.tool.is_none() && !app.ui.palette_open);
+            assert!(!app.prefs_window.shell.open && app.dialog.is_none() && app.tool.is_none() && !app.ui.palette_open);
         });
         assert_eq!(h.app.session.section, cut, "{owner} keeps the cut through the discarded frame");
         h.step(&json!({"key":"Escape"})).unwrap();
@@ -2421,7 +2427,7 @@ fn section_only_preferences_cancel_restores_either_policy_and_shields_existing_d
         h.call("ui.prefs", json!({"viewport_section_status":!saved}));
         let cut = h.app.session.section;
         analysis_escape_relayout_frame(&mut h, |app| {
-            assert!(!app.prefs_window.open);
+            assert!(!app.prefs_window.shell.open);
             assert_eq!(app.preferences.viewport_section_status, saved);
             assert!(!app.preferences.viewport_analysis_status);
             assert_eq!(app.dialog.is_some(), !saved, "enabled routing protects the existing form in pass one");
@@ -2452,7 +2458,7 @@ fn section_only_status_stays_below_preferences_for_paint_and_hit_testing() {
     assert!(crate::scenario::rect_of("prefs:window").unwrap().contains(at));
     assert_eq!(h.ctx.layer_id_at(at).unwrap().order, egui::Order::Middle);
     h.call("ui.click", json!({"x":at.x,"y":at.y}));
-    assert!(h.app.prefs_window.open && h.app.session.section.is_some());
+    assert!(h.app.prefs_window.shell.open && h.app.session.section.is_some());
 }
 
 // Summary fixtures below exercise component kinds unavailable from current production producers.
@@ -2626,7 +2632,7 @@ fn summary_menu_yields_to_preferences_and_command_dialog_without_resuming_or_ste
             assert!(!h.app.viewport_status.owns_focus(&h.ctx));
         }
         h.step(&json!({"key":"Escape"})).unwrap();
-        assert!(!h.app.prefs_window.open);
+        assert!(!h.app.prefs_window.shell.open);
         assert_eq!(h.app.dialog.is_some(), owner == "stacked", "one Escape closes only the highest owner");
         assert_eq!(h.app.session.status_items(), effects);
         assert_eq!(h.app.session.newest_status_item(&eligible), newest);

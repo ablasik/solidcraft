@@ -583,7 +583,7 @@ fn act(app: &mut SolveApp, id: &str, params: Value, done: &'static str) {
 
 /// General's saved profiles and row actions. All mutations still use settings.profile.*.
 pub(crate) fn section(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let count = solidcraft_ui_text::format("prefs.reports_saved", &[("n", &app.settings_profiles.list.len().to_string())]);
     ui_kit::settings_section_count(ui, "profiles", app.tr("ui.profiles"), Some(&count), |ui| {
         let names = app.settings_profiles.names();
@@ -754,7 +754,7 @@ pub(crate) fn section(app: &mut SolveApp, ui: &mut egui::Ui) {
 /// Run before the Preferences window so Escape belongs to this editor, including in a scrolled
 /// page. A separate popup container keeps the shared rename menu accessible and unclipped.
 pub(crate) fn rename_popup(app: &mut SolveApp, ctx: &egui::Context) {
-    if !app.prefs_window.open || app.prefs_window.section != prefs::PAGE_GENERAL || !app.prefs_window.filter.is_empty() {
+    if !app.prefs_window.shell.open || app.prefs_window.shell.section != prefs::PAGE_GENERAL || !app.prefs_window.shell.filter.is_empty() {
         app.settings_profiles.rename = None;
         return;
     }
