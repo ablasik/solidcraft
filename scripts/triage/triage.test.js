@@ -31,6 +31,7 @@ function fake(world = {}) {
         addLabels: rec('addLabels'),
         removeLabel: rec('removeLabel'),
         createComment: rec('comment'),
+        listEvents: async ({ issue_number }) => ({ data: (world.events || {})[issue_number] || [] }),
         listForRepo: async () => ({ data: world.items || [] }),
         listLabelsForRepo: async () => ({
           data: (world.labels || ['bug', 'enhancement', 'area:kernel', 'priority:P1', 'priority:P2', 'needs-triage']).map(
@@ -132,7 +133,7 @@ test('an opened PR is labelled from its paths and never gets needs-triage', asyn
   assert.deepEqual(find(calls, 'addLabels')[1], { ...repo, issue_number: 9, labels: ['area:sketch'] });
 });
 
-test('a draft marked ready is labelled from its paths unless it already has an area', async () => {
+test('a draft marked ready is labelled from its paths unless it has or had an area', async () => {
   let w = fake({ files: ['crates/sketch/src/solve.rs'] });
   const pull_request = { number: 9, state: 'open', title: 'Sketch: thing', body: '', labels: labels(['approved-for-ci']) };
   const ready = (pr) => ({ repo, payload: { action: 'ready_for_review', pull_request: pr } });
@@ -140,6 +141,14 @@ test('a draft marked ready is labelled from its paths unless it already has an a
   w = fake({ files: ['crates/sketch/src/solve.rs', 'crates/io/src/step.rs'] });
   const sorted = { ...pull_request, labels: labels(['area:sketch']) };
   assert.deepEqual(await triage.handleOpened({ github: w.github, context: ready(sorted) }), []);
+  assert.equal(all(w.calls, 'addLabels').length, 0);
+  // A maintainer removed the last area: it stays removed.
+  const removed = [
+    { event: 'labeled', label: { name: 'area:sketch' } },
+    { event: 'unlabeled', label: { name: 'area:sketch' } },
+  ];
+  w = fake({ files: ['crates/sketch/src/solve.rs'], events: { 9: removed } });
+  assert.deepEqual(await triage.handleOpened({ github: w.github, context: ready(pull_request) }), []);
   assert.equal(all(w.calls, 'addLabels').length, 0);
 });
 
@@ -192,15 +201,18 @@ test('bots and other comments are ignored', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('backfill touches unlabelled issues and PRs with no area, and the dry run writes nothing', async () => {
+test('backfill touches unlabelled issues and PRs that never had an area, and the dry run writes nothing', async () => {
   const items = [
     { number: 1, title: 'EXTRUDE: operation failed', body: '', labels: [] },
     { number: 2, title: 'Already sorted', body: '', labels: labels(['bug']) },
     { number: 3, title: 'x', body: '', labels: [], pull_request: {} },
     { number: 4, title: 'y', body: '', labels: labels(['area:ui']), pull_request: {} },
     { number: 5, title: 'z', body: '', labels: labels(['approved-for-ci']), pull_request: {} },
+    { number: 6, title: 'w', body: '', labels: [], pull_request: {} },
   ];
-  let w = fake({ items, files: ['crates/io/src/step.rs'] });
+  // #6's area was removed by a maintainer.
+  const events = { 6: [{ event: 'labeled', label: { name: 'area:io' } }, { event: 'unlabeled', label: { name: 'area:io' } }] };
+  let w = fake({ items, events, files: ['crates/io/src/step.rs'] });
   const plan = await triage.backfill({ github: w.github, context: { repo }, dryRun: true });
   assert.deepEqual(
     plan.map((p) => [p.number, p.labels]),
@@ -211,7 +223,7 @@ test('backfill touches unlabelled issues and PRs with no area, and the dry run w
     ],
   );
   assert.equal(w.calls.length, 0);
-  w = fake({ items, files: ['crates/io/src/step.rs'] });
+  w = fake({ items, events, files: ['crates/io/src/step.rs'] });
   await triage.backfill({ github: w.github, context: { repo }, dryRun: false });
   assert.deepEqual(all(w.calls, 'addLabels').map((c) => c[1].issue_number), [1, 3, 5]);
 });

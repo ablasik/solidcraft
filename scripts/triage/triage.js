@@ -104,6 +104,18 @@ function hasArea(item) {
   return labelNames(item).some((l) => l.startsWith('area:'));
 }
 
+// Whether a PR's area is settled: it carries an `area:*` label, or one was ever added (so a
+// maintainer who removed the last one is not overruled). A claim opens with no paths and no area.
+async function areaSettled(github, context, item) {
+  if (hasArea(item)) return true;
+  const events = await github.paginate(github.rest.issues.listEvents, {
+    ...repoArgs(context),
+    issue_number: item.number,
+    per_page: 100,
+  });
+  return events.some((e) => e.event === 'labeled' && e.label && e.label.name.startsWith('area:'));
+}
+
 function hasPriority(names) {
   return names.some((n) => n.startsWith('priority:'));
 }
@@ -208,8 +220,8 @@ async function handleOpened({ github, context }) {
   const pull = context.payload.pull_request;
   const item = issue || (pull && { ...pull, pull_request: {} });
   if (!item || item.state !== 'open') return [];
-  // Marked ready: a claim opened with no paths. Once it has an area, a maintainer's removal stands.
-  if (context.payload.action === 'ready_for_review' && hasArea(item)) return [];
+  // Marked ready: a claim opened with no paths. Once it has had an area, a maintainer's change stands.
+  if (context.payload.action === 'ready_for_review' && (await areaSettled(github, context, item))) return [];
   const labels = await proposal(github, context, item);
   await apply(github, context, item.number, labels);
   return labels;
@@ -313,8 +325,8 @@ async function backfill({ github, context, dryRun = true }) {
   });
   const plan = [];
   for (const item of items) {
-    // A PR is labelled while it has no area, whatever else it carries (`approved-for-ci`, ...).
-    if (item.locked || (item.pull_request ? hasArea(item) : labelNames(item).length)) continue;
+    // A PR is labelled while it has never had an area, whatever else it carries (`approved-for-ci`, ...).
+    if (item.locked || (item.pull_request ? await areaSettled(github, context, item) : labelNames(item).length)) continue;
     const labels = await proposal(github, context, item);
     plan.push({ number: item.number, pull: Boolean(item.pull_request), title: item.title, labels });
     if (!dryRun) await apply(github, context, item.number, labels);
