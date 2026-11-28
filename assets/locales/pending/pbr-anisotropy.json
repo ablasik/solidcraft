@@ -1,32 +1,42 @@
 {
   "en": {
-    "appearance.anisotropy": "Anisotropy"
+    "appearance.anisotropy": "Anisotropy",
+    "appearance.anisotropy_angle": "Anisotropy angle"
   },
   "pl": {
-    "appearance.anisotropy": "Anizotropia"
+    "appearance.anisotropy": "Anizotropia",
+    "appearance.anisotropy_angle": "Kąt anizotropii"
   },
   "de": {
-    "appearance.anisotropy": "Anisotropie"
+    "appearance.anisotropy": "Anisotropie",
+    "appearance.anisotropy_angle": "Anisotropiewinkel"
   },
   "fr": {
-    "appearance.anisotropy": "Anisotropie"
+    "appearance.anisotropy": "Anisotropie",
+    "appearance.anisotropy_angle": "Angle d’anisotropie"
   },
   "es": {
-    "appearance.anisotropy": "Anisotropía"
+    "appearance.anisotropy": "Anisotropía",
+    "appearance.anisotropy_angle": "Ángulo de anisotropía"
   },
   "ar": {
-    "appearance.anisotropy": "تباين الخواص"
+    "appearance.anisotropy": "تباين الخواص",
+    "appearance.anisotropy_angle": "زاوية تباين الخواص"
   },
   "he": {
-    "appearance.anisotropy": "אניזוטרופיה"
+    "appearance.anisotropy": "אניזוטרופיה",
+    "appearance.anisotropy_angle": "זווית אניזוטרופיה"
   },
   "ja": {
-    "appearance.anisotropy": "異方性"
+    "appearance.anisotropy": "異方性",
+    "appearance.anisotropy_angle": "異方性の角度"
   },
   "vi": {
-    "appearance.anisotropy": "Dị hướng"
+    "appearance.anisotropy": "Dị hướng",
+    "appearance.anisotropy_angle": "Góc dị hướng"
   },
   "zh": {
-    "appearance.anisotropy": "各向异性"
+    "appearance.anisotropy": "各向异性",
+    "appearance.anisotropy_angle": "各向异性角度"
   }
 }

@@ -608,7 +608,8 @@ fn look_pbr_schema(_: &mut SchemaGenerator) -> Schema {
             "metallic": {"description": "0 (a dielectric) to 1 (a metal).", "type": "number"},
             "roughness": {"description": "0 (smooth) to 1 (rough).", "type": "number"},
             "dielectric_ior": {"description": "The refractive index of its dielectric part.", "type": "number"},
-            "anisotropy": {"description": "Brushed-groove strength, 0 (none) to 1.", "type": "number"}
+            "anisotropy": {"description": "Brushed-groove strength, 0 (none) to 1.", "type": "number"},
+            "anisotropy_angle": {"description": "Degrees the straight brushed grooves turn about the face normal.", "type": "number"}
         },
         "required": ["metallic", "roughness", "dielectric_ior"]
     })

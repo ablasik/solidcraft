@@ -181,7 +181,7 @@ fn look() -> Value {
             "name": {"type": "string"},
             "color": {"description": "Red, green and blue, 0 to 255.", "type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
             "opacity": {"type": "number", "minimum": 0, "maximum": 1},
-            "pbr": {"description": "metallic (0 to 1), roughness (0.045 to 1) and dielectric_ior (1 to 3), optional anisotropy (0 to 1, default 0).", "type": "object"}
+            "pbr": {"description": "metallic (0 to 1), roughness (0.045 to 1) and dielectric_ior (1 to 3), optional anisotropy (0 to 1, default 0) and anisotropy_angle (degrees, -180 to 180, default 0).", "type": "object"}
         },
         "required": ["name", "color", "opacity"]
     })

@@ -119,6 +119,9 @@ pub struct Material {
     pub pbr: bool,
     /// Strength of brushed grooves, 0 (none) to 1 (glTF `anisotropyStrength`); their direction is the shader's or `turn`'s.
     pub anisotropy: f32,
+    /// The angle straight brushed grooves turn about the normal, in radians (glTF
+    /// `anisotropyRotation`); turned faces keep their rings.
+    pub anisotropy_angle: f32,
     /// Lit on both sides: where the eye sees the face's back, it is lit as its front (an open
     /// sheet's back would otherwise be black). Off for solids, which never show their back.
     pub two_sided: bool,
@@ -129,7 +132,7 @@ pub struct Material {
 }
 
 /// Texel rows a palette row of materials takes in the material texture ([`Material::texels`]).
-const MATERIAL_TEXEL_ROWS: u32 = 4;
+const MATERIAL_TEXEL_ROWS: u32 = 5;
 
 impl Material {
     /// The surface `s` as the shader takes it.
@@ -142,13 +145,15 @@ impl Material {
             ior: s.dielectric_ior() as f32,
             pbr: true,
             anisotropy: 0.0,
+            anisotropy_angle: 0.0,
             two_sided: false,
             turn: None,
         }
     }
 
-    /// Its texels in the material texture: base and flag, the optical parameters, then the turn
-    /// axis's point (w 1 when there is one) and direction.
+    /// Its texels in the material texture: base and flag, the optical parameters, the turn
+    /// axis's point (w 1 when there is one), its direction (w the anisotropy), then the
+    /// anisotropy angle.
     fn texels(&self) -> [[f32; 4]; MATERIAL_TEXEL_ROWS as usize] {
         let [at, along] = self.turn.unwrap_or_default();
         [
@@ -156,6 +161,7 @@ impl Material {
             [self.metallic, self.roughness, self.ior, if self.two_sided { 1.0 } else { 0.0 }],
             [at[0], at[1], at[2], if self.turn.is_some() { 1.0 } else { 0.0 }],
             [along[0], along[1], along[2], self.anisotropy],
+            [self.anisotropy_angle, 0.0, 0.0, 0.0],
         ]
     }
 }
@@ -7916,8 +7922,17 @@ mod glass_tests {
             let mut b = BlockBuilder::default();
             // In z = 0, its normal away from the eye at +Z.
             b.triangle([[-20.0, -20.0, 0.0], [20.0, -20.0, 0.0], [0.0, 20.0, 0.0]], [[0.0, 0.0, -1.0]; 3], PaletteIndex(0), TriClass::Pbr);
-            let material =
-                Material { base: [0.6, 0.6, 0.6], metallic: 0.0, roughness: 0.6, ior: 1.5, pbr: true, anisotropy: 0.0, two_sided, turn: None };
+            let material = Material {
+                base: [0.6, 0.6, 0.6],
+                metallic: 0.0,
+                roughness: 0.6,
+                ior: 1.5,
+                pbr: true,
+                anisotropy: 0.0,
+                anisotropy_angle: 0.0,
+                two_sided,
+                turn: None,
+            };
             GpuScene {
                 palette: Arc::new(Palette::with_stable(vec![[150, 150, 150, 255]]).with_materials(vec![material])),
                 blocks: vec![SceneBlock { key: 3, bytes: b.freeze() }],
@@ -7951,12 +7966,23 @@ mod glass_tests {
         assert_eq!([3, 4, 5].map(|k| word(k, TRI_VALUE_AT)), [NO_VALUE; 3]);
     }
 
-    /// A material's anisotropy goes to the shader in the w of its turn axis's direction row.
+    /// A material's anisotropy goes to the shader in the w of its turn axis's direction row, its
+    /// angle in the row after it.
     #[test]
-    fn a_materials_anisotropy_is_the_last_texel_of_its_axis_row() {
-        let m = Material { base: [0.5; 3], metallic: 1.0, roughness: 0.3, ior: 1.5, pbr: true, anisotropy: 0.6, two_sided: false, turn: None };
-        assert_eq!(m.texels()[3][3], 0.6);
-        assert_eq!(Material { anisotropy: 0.0, ..m }.texels()[3][3], 0.0);
+    fn a_materials_anisotropy_and_angle_have_their_texels() {
+        let m = Material {
+            base: [0.5; 3],
+            metallic: 1.0,
+            roughness: 0.3,
+            ior: 1.5,
+            pbr: true,
+            anisotropy: 0.6,
+            anisotropy_angle: 0.5,
+            two_sided: false,
+            turn: None,
+        };
+        assert_eq!((m.texels()[3][3], m.texels()[4][0]), (0.6, 0.5));
+        assert_eq!(Material { anisotropy: 0.0, anisotropy_angle: 0.0, ..m }.texels()[3..], [[0.0; 4]; 2]);
     }
 
     /// A product scene whose PBR material changes (the same blocks, another material table)
@@ -7980,6 +8006,7 @@ mod glass_tests {
             ior: 1.5,
             pbr: true,
             anisotropy: 0.0,
+            anisotropy_angle: 0.0,
             two_sided: false,
             turn: None,
         };

@@ -145,15 +145,16 @@ fn turned_by(m: u32, n: vec3<f32>) -> vec3<f32> {
     return turned(n + vec3<f32>(dot(motion_row(m, 0).xyz, n), dot(motion_row(m, 1).xyz, n), dot(motion_row(m, 2).xyz, n)));
 }
 
-// The palette's PBR materials (`Material` in view.rs): for palette row r, texel row 4r holds each
-// entry's linear base colour and a PBR flag, row 4r + 1 its metallic fraction, roughness and IOR,
-// row 4r + 2 a point on its turn axis (w 1 when it has one) and row 4r + 3 the axis's direction
-// (w: its anisotropy, the strength of brushed grooves).
+// The palette's PBR materials (`Material` in view.rs): for palette row r, texel row 5r holds each
+// entry's linear base colour and a PBR flag, row 5r + 1 its metallic fraction, roughness and IOR,
+// row 5r + 2 a point on its turn axis (w 1 when it has one), row 5r + 3 the axis's direction
+// (w: its anisotropy, the strength of brushed grooves) and row 5r + 4 the angle of its straight
+// grooves about the normal, in radians (x).
 @group(0) @binding(2) var pbr_materials: texture_2d<f32>;
 
 /// Where palette entry `i`'s first material texel is.
 fn material_at(i: u32) -> vec2<u32> {
-    return vec2<u32>(i & 2047u, (i >> 11u) * 4u);
+    return vec2<u32>(i & 2047u, (i >> 11u) * 5u);
 }
 
 /// Palette entry `i`'s hatch word (`hatch`, under 256) with the entry's PBR finish packed above
@@ -162,7 +163,7 @@ fn material_at(i: u32) -> vec2<u32> {
 /// defined).
 fn finish_h(i: u32, hatch: u32) -> u32 {
     let at = material_at(i);
-    if (at.y + 3u >= textureDimensions(pbr_materials).y || textureLoad(pbr_materials, at, 0).w < 0.5) { return hatch; }
+    if (at.y + 4u >= textureDimensions(pbr_materials).y || textureLoad(pbr_materials, at, 0).w < 0.5) { return hatch; }
     let p = clamp(textureLoad(pbr_materials, at + vec2<u32>(0u, 1u), 0).xy, vec2<f32>(0.0), vec2<f32>(1.0));
     let q = vec2<u32>(round(p * 255.0));
     let a = u32(round(clamp(textureLoad(pbr_materials, at + vec2<u32>(0u, 3u), 0).w, 0.0, 1.0) * 127.0));
@@ -170,16 +171,19 @@ fn finish_h(i: u32, hatch: u32) -> u32 {
 }
 
 /// Palette entry `i`'s turn axis in the scene's frame: a point on it (w 1 when the entry has one,
-/// 0 for none) and its direction.
+/// 0 for none), its direction, and the angle its straight brushed grooves turn about the normal
+/// (radians).
 struct Turn {
     at: vec4<f32>,
     along: vec3<f32>,
+    angle: f32,
 }
 
 fn turn_of(i: u32) -> Turn {
     let at = material_at(i);
-    if (at.y + 3u >= textureDimensions(pbr_materials).y) { return Turn(vec4<f32>(0.0), vec3<f32>(0.0)); }
-    return Turn(textureLoad(pbr_materials, at + vec2<u32>(0u, 2u), 0), textureLoad(pbr_materials, at + vec2<u32>(0u, 3u), 0).xyz);
+    if (at.y + 4u >= textureDimensions(pbr_materials).y) { return Turn(vec4<f32>(0.0), vec3<f32>(0.0), 0.0); }
+    let along = textureLoad(pbr_materials, at + vec2<u32>(0u, 3u), 0).xyz;
+    return Turn(textureLoad(pbr_materials, at + vec2<u32>(0u, 2u), 0), along, textureLoad(pbr_materials, at + vec2<u32>(0u, 4u), 0).x);
 }
 
 /// A palette entry's colour bytes as byte/255 (the old Unorm8x4 conversion, bit for bit).
@@ -214,9 +218,10 @@ struct TOut {
     @location(4) v: f32,
     @location(5) @interpolate(flat) hv: u32,
     // The face's turn axis in the world (`turn_of`): a point on it, w 1 when it has one (0 for
-    // every vertex shader that gives none), and its direction.
+    // every vertex shader that gives none), and its direction; w: the angle of straight brushed
+    // grooves about the normal (`Turn::angle`).
     @location(6) @interpolate(flat) turn_at: vec4<f32>,
-    @location(7) @interpolate(flat) turn_along: vec3<f32>,
+    @location(7) @interpolate(flat) turn_along: vec4<f32>,
 };
 
 /// A built triangle's vertex: its value word is an f32's bits, or all ones for none
@@ -249,7 +254,7 @@ fn tri_vertex(local: vec3<f32>, n: vec3<f32>, c: u32) -> TOut {
     o.wp = p;
     let t = turn_of(c);
     o.turn_at = vec4<f32>(placed_by(m, t.at.xyz), t.at.w);
-    o.turn_along = turned_by(m, t.along);
+    o.turn_along = vec4<f32>(turned_by(m, t.along), t.angle);
     return o;
 }
 
@@ -291,6 +296,7 @@ fn vs_tri_inst(
     o.c = placement_color(word, e);
     o.h = finish_h(c, e.y & 255u);
     o.wp = wp;
+    o.turn_along = vec4<f32>(0.0, 0.0, 0.0, turn_of(c).angle);
     // shortcut: no turn axis (a copy's brushing picks a world axis), since the palette's axis is
     // in the first copy's frame; move it from the definition's frame if copies of turned metal
     // parts need rings.
@@ -308,6 +314,8 @@ struct FOut {
     @location(0) rp: vec3<f32>,
     @location(1) c: vec4<f32>,
     @location(2) @interpolate(flat) h: u32,
+    // The angle of straight brushed grooves about the normal (`Turn::angle`).
+    @location(3) @interpolate(flat) grain: f32,
 };
 
 @vertex
@@ -328,6 +336,7 @@ fn vs_tri_inst_flat(
     o.rp = wp - u.eye.xyz;
     o.c = placement_color(word, e);
     o.h = finish_h(c, e.y & 255u);
+    o.grain = turn_of(c).angle;
     return o;
 }
 
@@ -345,6 +354,7 @@ fn flat_fragment(i: FOut, front: bool) -> TOut {
     o.c = i.c;
     o.h = i.h;
     o.wp = i.rp + u.eye.xyz;
+    o.turn_along = vec4<f32>(0.0, 0.0, 0.0, i.grain);
     return o;
 }
 
@@ -1029,7 +1039,8 @@ fn ibl_ggx_fresnel(nv: f32, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
 /// carry no UVs or tangents). A face with a turn axis is turned: the grooves run around the axis,
 /// rings on a round face and circles about the centre on a flat face across it. Elsewhere they run
 /// around the world axis the normal is most across, so an upright cylinder still gets rings and a
-/// flat face straight strokes. `across` points across the grooves, `grain` is -0.5..0.5 per
+/// flat face straight strokes, turned about the normal by the look's anisotropy angle (turned
+/// faces keep their rings). `across` points across the grooves, `grain` is -0.5..0.5 per
 /// groove, `strength` is the look's anisotropy (0: unbrushed).
 struct Brush {
     across: vec3<f32>,
@@ -1103,17 +1114,19 @@ fn px_per_mm(p: vec3<f32>, d: vec3<f32>) -> f32 {
     return length((b.xy / b.w - a.xy / a.w) * 0.5 * u.screen.xy);
 }
 
-fn brushing(p: vec3<f32>, n: vec3<f32>, strength: f32, turn_at: vec4<f32>, turn_along: vec3<f32>) -> Brush {
+fn brushing(p: vec3<f32>, n: vec3<f32>, strength: f32, turn_at: vec4<f32>, turn_along: vec4<f32>) -> Brush {
     // Ties go to Z, then Y: an upright face's strokes run level, a flat face's along X.
     let m = abs(n) + vec3<f32>(2e-3, 1e-3, 0.0);
     var axis = vec3<f32>(0.0, 0.0, 1.0);
     if (m.y < m.z && m.y <= m.x) { axis = vec3<f32>(0.0, 1.0, 0.0); }
     if (m.x < m.z && m.x < m.y) { axis = vec3<f32>(1.0, 0.0, 0.0); }
-    var across = cross(n, normalize(cross(n, axis)));
+    let level = cross(n, normalize(cross(n, axis)));
+    // The look's anisotropy angle turns the straight strokes about the normal.
+    var across = level * cos(turn_along.w) + cross(n, level) * sin(turn_along.w);
     var s = dot(p, across);
     var along = Along(dot(p, cross(across, n)), 0.0, 0.0);
-    if (turn_at.w > 0.5 && dot(turn_along, turn_along) > 1e-12) {
-        let a = normalize(turn_along);
+    if (turn_at.w > 0.5 && dot(turn_along.xyz, turn_along.xyz) > 1e-12) {
+        let a = normalize(turn_along.xyz);
         let r = p - turn_at.xyz;
         let radial = r - a * dot(r, a);
         let flat_across = radial - n * dot(radial, n);

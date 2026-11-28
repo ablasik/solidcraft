@@ -457,7 +457,7 @@ fn usage_for<'a>(entry: &Value, used: &'a [Value]) -> Option<&'a Value> {
         look["name"].as_str() == Some(&name)
             && crate::dialogs_appearance::parse_color(&look["color"]) == Some(color)
             && look["opacity"].as_f64() == parameters["opacity"].as_f64()
-            && ["metallic", "roughness", "dielectric_ior", "anisotropy"]
+            && ["metallic", "roughness", "dielectric_ior", "anisotropy", "anisotropy_angle"]
                 .iter()
                 .all(|key| look["pbr"][*key].as_f64() == parameters["pbr"][*key].as_f64())
     })

@@ -1871,6 +1871,7 @@ fn hash_look(look: Option<&solidcraft_engine::doc::appearance::Look>, h: &mut im
                     p.roughness().to_bits().hash(h);
                     p.dielectric_ior().to_bits().hash(h);
                     p.anisotropy().to_bits().hash(h);
+                    p.anisotropy_angle().to_bits().hash(h);
                 }
                 None => 0u8.hash(h),
             }
@@ -3565,6 +3566,7 @@ fn finish(color: Color32, pbr: Option<solidcraft_engine::doc::pbr_appearance::Pb
         roughness: p.roughness() as f32,
         ior: p.dielectric_ior() as f32,
         anisotropy: p.anisotropy() as f32,
+        anisotropy_angle: p.anisotropy_angle().to_radians() as f32,
         pbr: true,
         two_sided: false,
         turn: None,
@@ -14174,8 +14176,9 @@ mod tests {
         let metal = PbrParameters::new(1.0, 0.3, 1.5).unwrap();
         let plain = finish(Color32::GRAY, Some(metal));
         assert!(plain.pbr && plain.anisotropy == 0.0 && !brushed(&plain));
-        let brushed_look = finish(Color32::GRAY, Some(metal.with_anisotropy(0.6).unwrap()));
+        let brushed_look = finish(Color32::GRAY, Some(metal.with_anisotropy(0.6).unwrap().with_anisotropy_angle(90.0).unwrap()));
         assert!((brushed_look.anisotropy - 0.6).abs() < 1e-6 && brushed(&brushed_look));
+        assert!((brushed_look.anisotropy_angle - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
         assert!(!brushed(&finish(Color32::GRAY, None)));
     }
 
