@@ -13,5 +13,20 @@
   },
   "es": {
     "appearance.anisotropy": "Anisotropía"
+  },
+  "ar": {
+    "appearance.anisotropy": "تباين الخواص"
+  },
+  "he": {
+    "appearance.anisotropy": "אניזוטרופיה"
+  },
+  "ja": {
+    "appearance.anisotropy": "異方性"
+  },
+  "vi": {
+    "appearance.anisotropy": "Dị hướng"
+  },
+  "zh": {
+    "appearance.anisotropy": "各向异性"
   }
 }
