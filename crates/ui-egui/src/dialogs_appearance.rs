@@ -444,10 +444,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         let mut metallic = parameters.metallic();
         let mut roughness = parameters.roughness();
         let mut ior = parameters.dielectric_ior();
+        let mut anisotropy = parameters.anisotropy();
         for (label, handle, value, range) in [
             ("appearance.metallic", "appearance:metallic", &mut metallic, 0.0..=1.0),
             ("appearance.roughness", "appearance:roughness", &mut roughness, 0.045..=1.0),
             ("appearance.dielectric_ior", "appearance:ior", &mut ior, 1.0..=3.0),
+            ("appearance.anisotropy", "appearance:anisotropy", &mut anisotropy, 0.0..=1.0),
         ] {
             let response = ui_kit::row(ui, app.tr(label), |ui| ui_kit::scalar_field(ui, value, range));
             crate::scenario::publish_handle(handle, response.rect.center());
@@ -456,7 +458,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
                 k.remove_override = false;
             }
         }
-        if let Ok(parameters) = PbrParameters::new(metallic, roughness, ior) {
+        if let Ok(parameters) = PbrParameters::new(metallic, roughness, ior).and_then(|p| p.with_anisotropy(anisotropy)) {
             k.pbr = Some(parameters);
         }
     }

@@ -117,6 +117,8 @@ pub struct Material {
     pub roughness: f32,
     pub ior: f32,
     pub pbr: bool,
+    /// Strength of brushed grooves, 0 (none) to 1 (glTF `anisotropyStrength`); their direction is the shader's or `turn`'s.
+    pub anisotropy: f32,
     /// Lit on both sides: where the eye sees the face's back, it is lit as its front (an open
     /// sheet's back would otherwise be black). Off for solids, which never show their back.
     pub two_sided: bool,
@@ -139,6 +141,7 @@ impl Material {
             roughness: s.roughness() as f32,
             ior: s.dielectric_ior() as f32,
             pbr: true,
+            anisotropy: 0.0,
             two_sided: false,
             turn: None,
         }
@@ -152,7 +155,7 @@ impl Material {
             [self.base[0], self.base[1], self.base[2], if self.pbr { 1.0 } else { 0.0 }],
             [self.metallic, self.roughness, self.ior, if self.two_sided { 1.0 } else { 0.0 }],
             [at[0], at[1], at[2], if self.turn.is_some() { 1.0 } else { 0.0 }],
-            [along[0], along[1], along[2], 0.0],
+            [along[0], along[1], along[2], self.anisotropy],
         ]
     }
 }
@@ -7913,7 +7916,8 @@ mod glass_tests {
             let mut b = BlockBuilder::default();
             // In z = 0, its normal away from the eye at +Z.
             b.triangle([[-20.0, -20.0, 0.0], [20.0, -20.0, 0.0], [0.0, 20.0, 0.0]], [[0.0, 0.0, -1.0]; 3], PaletteIndex(0), TriClass::Pbr);
-            let material = Material { base: [0.6, 0.6, 0.6], metallic: 0.0, roughness: 0.6, ior: 1.5, pbr: true, two_sided, turn: None };
+            let material =
+                Material { base: [0.6, 0.6, 0.6], metallic: 0.0, roughness: 0.6, ior: 1.5, pbr: true, anisotropy: 0.0, two_sided, turn: None };
             GpuScene {
                 palette: Arc::new(Palette::with_stable(vec![[150, 150, 150, 255]]).with_materials(vec![material])),
                 blocks: vec![SceneBlock { key: 3, bytes: b.freeze() }],
@@ -7947,6 +7951,14 @@ mod glass_tests {
         assert_eq!([3, 4, 5].map(|k| word(k, TRI_VALUE_AT)), [NO_VALUE; 3]);
     }
 
+    /// A material's anisotropy goes to the shader in the w of its turn axis's direction row.
+    #[test]
+    fn a_materials_anisotropy_is_the_last_texel_of_its_axis_row() {
+        let m = Material { base: [0.5; 3], metallic: 1.0, roughness: 0.3, ior: 1.5, pbr: true, anisotropy: 0.6, two_sided: false, turn: None };
+        assert_eq!(m.texels()[3][3], 0.6);
+        assert_eq!(Material { anisotropy: 0.0, ..m }.texels()[3][3], 0.0);
+    }
+
     /// A product scene whose PBR material changes (the same blocks, another material table)
     /// uploads the changed material rows and no geometry.
     #[test]
@@ -7961,8 +7973,16 @@ mod glass_tests {
         let mut b = BlockBuilder::default();
         b.triangle([[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [[0.0, 0.0, 1.0]; 3], PaletteIndex(0), TriClass::Pbr);
         let bytes = b.freeze();
-        let material =
-            |roughness: f32| Material { base: [0.5, 0.3, 0.2], metallic: 1.0, roughness, ior: 1.5, pbr: true, two_sided: false, turn: None };
+        let material = |roughness: f32| Material {
+            base: [0.5, 0.3, 0.2],
+            metallic: 1.0,
+            roughness,
+            ior: 1.5,
+            pbr: true,
+            anisotropy: 0.0,
+            two_sided: false,
+            turn: None,
+        };
         let scene = |m: Material| GpuScene {
             palette: Arc::new(Palette::with_stable(vec![[180, 120, 70, 255]]).with_materials(vec![m])),
             blocks: vec![SceneBlock { key: 3, bytes: bytes.clone() }],

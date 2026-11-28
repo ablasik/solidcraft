@@ -560,7 +560,8 @@
           "pbr": {
             "metallic": 1.0,
             "roughness": 0.34,
-            "dielectric_ior": 1.5
+            "dielectric_ior": 1.5,
+            "anisotropy": 0.6
           }
         },
         "value_basis": "Original, unmeasured preview choices; no grade-specific optical constants.",

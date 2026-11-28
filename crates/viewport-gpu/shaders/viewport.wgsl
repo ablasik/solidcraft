@@ -147,7 +147,8 @@ fn turned_by(m: u32, n: vec3<f32>) -> vec3<f32> {
 
 // The palette's PBR materials (`Material` in view.rs): for palette row r, texel row 4r holds each
 // entry's linear base colour and a PBR flag, row 4r + 1 its metallic fraction, roughness and IOR,
-// row 4r + 2 a point on its turn axis (w 1 when it has one) and row 4r + 3 the axis's direction.
+// row 4r + 2 a point on its turn axis (w 1 when it has one) and row 4r + 3 the axis's direction
+// (w: its anisotropy, the strength of brushed grooves).
 @group(0) @binding(2) var pbr_materials: texture_2d<f32>;
 
 /// Where palette entry `i`'s first material texel is.
@@ -156,14 +157,16 @@ fn material_at(i: u32) -> vec2<u32> {
 }
 
 /// Palette entry `i`'s hatch word (`hatch`, under 256) with the entry's PBR finish packed above
-/// it: metallic in bits 8-15, roughness in 16-23, bit 24 set when the entry has one. An entry
-/// past the material texture has none (a load out of range is not defined).
+/// it: metallic in bits 8-15, roughness in 16-23, bit 24 set when the entry has one, anisotropy
+/// in 25-31 (7 bits). An entry past the material texture has none (a load out of range is not
+/// defined).
 fn finish_h(i: u32, hatch: u32) -> u32 {
     let at = material_at(i);
     if (at.y + 3u >= textureDimensions(pbr_materials).y || textureLoad(pbr_materials, at, 0).w < 0.5) { return hatch; }
     let p = clamp(textureLoad(pbr_materials, at + vec2<u32>(0u, 1u), 0).xy, vec2<f32>(0.0), vec2<f32>(1.0));
     let q = vec2<u32>(round(p * 255.0));
-    return hatch | (q.x << 8u) | (q.y << 16u) | (1u << 24u);
+    let a = u32(round(clamp(textureLoad(pbr_materials, at + vec2<u32>(0u, 3u), 0).w, 0.0, 1.0) * 127.0));
+    return hatch | (q.x << 8u) | (q.y << 16u) | (1u << 24u) | (a << 25u);
 }
 
 /// Palette entry `i`'s turn axis in the scene's frame: a point on it (w 1 when the entry has one,
@@ -1022,12 +1025,12 @@ fn ibl_ggx_fresnel(nv: f32, roughness: f32, f0: vec3<f32>) -> vec3<f32> {
     return fss_ess + fms_ems;
 }
 
-/// A satin metal's brushing, worked out from the face and its turn axis (the viewport's meshes
+/// A brushed look's grooves, worked out from the face and its turn axis (the viewport's meshes
 /// carry no UVs or tangents). A face with a turn axis is turned: the grooves run around the axis,
 /// rings on a round face and circles about the centre on a flat face across it. Elsewhere they run
 /// around the world axis the normal is most across, so an upright cylinder still gets rings and a
 /// flat face straight strokes. `across` points across the grooves, `grain` is -0.5..0.5 per
-/// groove, `strength` is 0 off satin metals.
+/// groove, `strength` is the look's anisotropy (0: unbrushed).
 struct Brush {
     across: vec3<f32>,
     grain: f32,
@@ -1100,10 +1103,7 @@ fn px_per_mm(p: vec3<f32>, d: vec3<f32>) -> f32 {
     return length((b.xy / b.w - a.xy / a.w) * 0.5 * u.screen.xy);
 }
 
-fn brushing(p: vec3<f32>, n: vec3<f32>, metallic: f32, roughness: f32, turn_at: vec4<f32>, turn_along: vec3<f32>) -> Brush {
-    // shortcut: no appearance says "brushed", so every metal between polished and blasted is; a
-    // brushed flag in the look is the upgrade if polished-but-rough metals need to stay plain.
-    let strength = smoothstep(0.5, 1.0, metallic) * smoothstep(0.18, 0.28, roughness) * (1.0 - smoothstep(0.6, 0.75, roughness));
+fn brushing(p: vec3<f32>, n: vec3<f32>, strength: f32, turn_at: vec4<f32>, turn_along: vec3<f32>) -> Brush {
     // Ties go to Z, then Y: an upright face's strokes run level, a flat face's along X.
     let m = abs(n) + vec3<f32>(2e-3, 1e-3, 0.0);
     var axis = vec3<f32>(0.0, 0.0, 1.0);
@@ -1152,17 +1152,18 @@ fn brushing(p: vec3<f32>, n: vec3<f32>, metallic: f32, roughness: f32, turn_at: 
 }
 
 /// An opaque face with a material finish, lit by the studio (image-based, split-sum, as the
-/// Khronos glTF Sample Renderer): the PBR appearance's metallic and roughness (`finish_h`), else
+/// Khronos glTF Sample Renderer): the PBR appearance's metallic, roughness and anisotropy (`finish_h`), else
 /// a plain dielectric of roughness 0.5 (a product choice: satin). The studio turns with
 /// the viewer (its frame is the view's, kept level: `front` toward the eye), so whatever faces the
 /// eye is lit the same from any orbit angle. Ambient occlusion (`visibility`) shades the diffuse
 /// light and, by Lagarde's approximation, the specular (Filament). Khronos PBR Neutral, then
 /// encoded as `lit_color` does.
 fn finished(i: TOut, n: vec3<f32>, visibility: f32, base: vec4<f32>) -> vec4<f32> {
-    let pbr = (i.h >> 24u) != 0u;
+    let pbr = ((i.h >> 24u) & 1u) != 0u;
+    let anisotropy = f32(i.h >> 25u) / 127.0;
     let metallic = select(0.0, f32((i.h >> 8u) & 255u) / 255.0, pbr);
     let satin = select(0.5, f32((i.h >> 16u) & 255u) / 255.0, pbr);
-    let brush = brushing(i.wp, n, metallic, satin, i.turn_at, i.turn_along);
+    let brush = brushing(i.wp, n, select(0.0, anisotropy, pbr), i.turn_at, i.turn_along);
     let roughness = clamp(satin + BRUSH_ROUGHNESS * brush.grain, 0.045, 1.0);
     let a = roughness * roughness;
     // The view per pixel in perspective: a flat face then reflects a gradient, not one colour.

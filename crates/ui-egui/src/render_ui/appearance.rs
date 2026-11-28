@@ -564,10 +564,12 @@ fn draw(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, selected: &Targe
             let mut metallic = p.metallic();
             let mut roughness = p.roughness();
             let mut ior = p.dielectric_ior();
+            let mut anisotropy = p.anisotropy();
             let mut optical_edit = false;
             for (key, value, range, mixed) in [
                 ("appearance.metallic", &mut metallic, 0.0..=1.0, mixed(&looks, |l| l.pbr.unwrap_or_default().metallic())),
                 ("appearance.roughness", &mut roughness, 0.045..=1.0, mixed(&looks, |l| l.pbr.unwrap_or_default().roughness())),
+                ("appearance.anisotropy", &mut anisotropy, 0.0..=1.0, mixed(&looks, |l| l.pbr.unwrap_or_default().anisotropy())),
             ] {
                 ui_kit::row(ui, app.tr(key), |ui| {
                     let response = ui_kit::mixed_slider(ui, value, range, mixed.then(|| app.tr("render.tree_mixed")));
@@ -597,7 +599,7 @@ fn draw(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, selected: &Targe
                 commit |= ended(&response, ui);
             });
             ui_kit::text(ui, app.tr("render.inspector_opaque_help"), ui_kit::Text::Note("render.inspector_opaque_help"));
-            if optical_edit && let Ok(parameters) = PbrParameters::new(metallic, roughness, ior) {
+            if optical_edit && let Ok(parameters) = PbrParameters::new(metallic, roughness, ior).and_then(|p| p.with_anisotropy(anisotropy)) {
                 p = parameters;
                 draft.pbr = Some(p);
                 draft.opacity = 1.0;

@@ -1870,6 +1870,7 @@ fn hash_look(look: Option<&solidcraft_engine::doc::appearance::Look>, h: &mut im
                     p.metallic().to_bits().hash(h);
                     p.roughness().to_bits().hash(h);
                     p.dielectric_ior().to_bits().hash(h);
+                    p.anisotropy().to_bits().hash(h);
                 }
                 None => 0u8.hash(h),
             }
@@ -3563,16 +3564,16 @@ fn finish(color: Color32, pbr: Option<solidcraft_engine::doc::pbr_appearance::Pb
         metallic: p.metallic() as f32,
         roughness: p.roughness() as f32,
         ior: p.dielectric_ior() as f32,
+        anisotropy: p.anisotropy() as f32,
         pbr: true,
         two_sided: false,
         turn: None,
     })
 }
 
-/// Whether the viewport brushes a finish: a metal between polished and blasted (the shader's
-/// `brushing` strength is above zero).
+/// Whether the viewport brushes a finish: its look sets anisotropy above zero.
 fn brushed(m: &crate::gpu::Material) -> bool {
-    m.pbr && m.metallic > 0.5 && m.roughness > 0.18 && m.roughness < 0.75
+    m.pbr && m.anisotropy > 0.0
 }
 
 /// The axis face `face` of `body` was turned about, as `Material::turn` takes it: its cylinder's,
@@ -14163,6 +14164,19 @@ mod tests {
         let shown = from_cpu.chunks(4).filter(|p| p[..3] != from_cpu[..3]).count();
         assert!(shown > 2000, "the bodies are in view ({shown} px)");
         assert!(differ * 100 < shown, "{differ} of {shown} px differ between the plan and CPU pictures");
+    }
+
+    /// Only a look with anisotropy brushes: the material carries it, and the turn axis is attached
+    /// for it alone.
+    #[test]
+    fn a_metal_is_brushed_only_by_its_anisotropy() {
+        use solidcraft_engine::doc::pbr_appearance::PbrParameters;
+        let metal = PbrParameters::new(1.0, 0.3, 1.5).unwrap();
+        let plain = finish(Color32::GRAY, Some(metal));
+        assert!(plain.pbr && plain.anisotropy == 0.0 && !brushed(&plain));
+        let brushed_look = finish(Color32::GRAY, Some(metal.with_anisotropy(0.6).unwrap()));
+        assert!((brushed_look.anisotropy - 0.6).abs() < 1e-6 && brushed(&brushed_look));
+        assert!(!brushed(&finish(Color32::GRAY, None)));
     }
 
     /// A hovered face with an appearance of its own (a machined metal bore in a painted body) is

@@ -12,11 +12,12 @@ pub struct PbrParameters {
     metallic: f64,
     roughness: f64,
     dielectric_ior: f64,
+    anisotropy: f64,
 }
 
 impl Default for PbrParameters {
     fn default() -> Self {
-        Self { metallic: 0.0, roughness: 0.5, dielectric_ior: 1.5 }
+        Self { metallic: 0.0, roughness: 0.5, dielectric_ior: 1.5, anisotropy: 0.0 }
     }
 }
 
@@ -26,12 +27,27 @@ struct Parameters {
     metallic: f64,
     roughness: f64,
     dielectric_ior: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    anisotropy: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl PbrParameters {
     pub fn new(metallic: f64, roughness: f64, dielectric_ior: f64) -> Result<Self, SurfaceError> {
         OpaqueSurface::new(Vec3::ZERO, metallic, roughness, dielectric_ior)?;
-        Ok(Self { metallic, roughness, dielectric_ior })
+        Ok(Self { metallic, roughness, dielectric_ior, anisotropy: 0.0 })
+    }
+
+    /// Strength of brushed grooves, 0 (none) to 1; the viewport picks their direction.
+    pub fn with_anisotropy(mut self, anisotropy: f64) -> Result<Self, SurfaceError> {
+        if !(0.0..=1.0).contains(&anisotropy) {
+            return Err(SurfaceError::Anisotropy);
+        }
+        self.anisotropy = anisotropy;
+        Ok(self)
     }
 
     /// Decode the containing look's sRGB8 base color once, for the actual consumer.
@@ -49,17 +65,20 @@ impl PbrParameters {
     pub fn dielectric_ior(self) -> f64 {
         self.dielectric_ior
     }
+    pub fn anisotropy(self) -> f64 {
+        self.anisotropy
+    }
 }
 
 impl TryFrom<Parameters> for PbrParameters {
     type Error = SurfaceError;
     fn try_from(p: Parameters) -> Result<Self, Self::Error> {
-        Self::new(p.metallic, p.roughness, p.dielectric_ior)
+        Self::new(p.metallic, p.roughness, p.dielectric_ior)?.with_anisotropy(p.anisotropy)
     }
 }
 impl From<PbrParameters> for Parameters {
     fn from(p: PbrParameters) -> Self {
-        Self { metallic: p.metallic, roughness: p.roughness, dielectric_ior: p.dielectric_ior }
+        Self { metallic: p.metallic, roughness: p.roughness, dielectric_ior: p.dielectric_ior, anisotropy: p.anisotropy }
     }
 }
 
@@ -73,11 +92,25 @@ mod tests {
         let p = PbrParameters::new(1.0, 0.3, 1.5).unwrap();
         let saved = serde_json::to_value(p).unwrap();
         assert_eq!(serde_json::from_value::<PbrParameters>(saved.clone()).unwrap(), p);
-        for (key, value) in [("metallic", json!(1.1)), ("roughness", json!(0)), ("dielectric_ior", json!(0.9)), ("extra", json!(true))] {
+        for (key, value) in [
+            ("metallic", json!(1.1)),
+            ("roughness", json!(0)),
+            ("dielectric_ior", json!(0.9)),
+            ("extra", json!(true)),
+            ("anisotropy", json!(1.5)),
+            ("anisotropy", json!(-0.1)),
+        ] {
             let mut bad = saved.clone();
             bad[key] = value;
             assert!(serde_json::from_value::<PbrParameters>(bad).is_err());
         }
+        assert!(saved.get("anisotropy").is_none());
+        let brushed = p.with_anisotropy(0.6).unwrap();
+        let saved = serde_json::to_value(brushed).unwrap();
+        assert_eq!(saved["anisotropy"], json!(0.6));
+        assert_eq!(serde_json::from_value::<PbrParameters>(saved).unwrap(), brushed);
+        assert!(p.with_anisotropy(f64::NAN).is_err());
+        assert!(p.with_anisotropy(1.01).is_err());
         assert!(PbrParameters::new(f64::NAN, 0.3, 1.5).is_err());
         assert!(PbrParameters::new(0.0, f64::INFINITY, 1.5).is_err());
         let surface = p.surface([128, 0, 255]).unwrap();

@@ -159,7 +159,7 @@ impl JsonSchema for LookLabel {
     }
 }
 
-/// An opaque PBR response, exactly `metallic`, `roughness` and `dielectric_ior`, checked as
+/// An opaque PBR response, `metallic`, `roughness` and `dielectric_ior`, plus an optional `anisotropy`, checked as
 /// the handler checks it (`attach_pbr`), with its messages.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PbrParam(pub PbrParameters);
@@ -169,12 +169,19 @@ impl<'de> Deserialize<'de> for PbrParam {
         let value = Value::deserialize(d)?;
         let object = value
             .as_object()
-            .filter(|o| o.len() == 3 && o.keys().all(|k| matches!(k.as_str(), "metallic" | "roughness" | "dielectric_ior")))
-            .ok_or_else(|| D::Error::custom(whole("`pbr` requires exactly metallic, roughness and dielectric_ior")))?;
+            .filter(|o| {
+                ["metallic", "roughness", "dielectric_ior"].iter().all(|k| o.contains_key(*k))
+                    && o.keys().all(|k| matches!(k.as_str(), "metallic" | "roughness" | "dielectric_ior" | "anisotropy"))
+            })
+            .ok_or_else(|| D::Error::custom(whole("`pbr` requires metallic, roughness and dielectric_ior, and optionally anisotropy")))?;
         let number = |key: &str| {
             object.get(key).and_then(Value::as_f64).ok_or_else(|| D::Error::custom(whole(format!("`pbr.{key}` must be a finite number"))))
         };
-        PbrParameters::new(number("metallic")?, number("roughness")?, number("dielectric_ior")?).map(PbrParam).map_err(|e| D::Error::custom(whole(e)))
+        let anisotropy = if object.contains_key("anisotropy") { number("anisotropy")? } else { 0.0 };
+        PbrParameters::new(number("metallic")?, number("roughness")?, number("dielectric_ior")?)
+            .and_then(|p| p.with_anisotropy(anisotropy))
+            .map(PbrParam)
+            .map_err(|e| D::Error::custom(whole(e)))
     }
 }
 
@@ -189,7 +196,8 @@ impl JsonSchema for PbrParam {
             "properties": {
                 "metallic": {"type": "number", "minimum": 0, "maximum": 1},
                 "roughness": {"type": "number", "minimum": 0.045, "maximum": 1},
-                "dielectric_ior": {"type": "number", "minimum": 1, "maximum": 3}
+                "dielectric_ior": {"type": "number", "minimum": 1, "maximum": 3},
+                "anisotropy": {"description": "Brushed-groove strength, 0 (none, the default) to 1.", "type": "number", "minimum": 0, "maximum": 1}
             },
             "required": ["metallic", "roughness", "dielectric_ior"],
             "additionalProperties": false
@@ -203,11 +211,18 @@ pub struct PbrReply {
     pub metallic: f64,
     pub roughness: f64,
     pub dielectric_ior: f64,
+    /// Brushed-groove strength, 0 (none) to 1; left out when 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub anisotropy: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl From<PbrParameters> for PbrReply {
     fn from(p: PbrParameters) -> Self {
-        PbrReply { metallic: p.metallic(), roughness: p.roughness(), dielectric_ior: p.dielectric_ior() }
+        PbrReply { metallic: p.metallic(), roughness: p.roughness(), dielectric_ior: p.dielectric_ior(), anisotropy: p.anisotropy() }
     }
 }
 
